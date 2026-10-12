@@ -1,0 +1,23 @@
+# Environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Builds
+build/
+dist/
+*.egg-info/
+
+# Databricks and local tools
+.databricks/
+.tools/
+
+# Local-only files: credentials and notes that must never be committed
+.env
+.env.*
+CLAUDE.local.md
+.claude/settings.local.json

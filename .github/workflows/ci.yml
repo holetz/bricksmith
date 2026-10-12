@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      - name: Sync the workspace
+        run: uv sync --all-packages --locked
+      - name: Lint
+        run: uv run ruff check
+      - name: Format
+        run: uv run ruff format --check
+      - name: Types
+        run: uv run pyright
+      - name: Tests
+        run: uv run pytest
+      # The private denylist never leaves the developer machine; CI runs the generic patterns
+      # and gitleaks as a second line behind the local pre-commit and pre-push hooks.
+      - name: Leak gate (generic patterns)
+        run: python3 scripts/leak_check.py --all --generic-only
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

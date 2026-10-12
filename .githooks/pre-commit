@@ -1,0 +1,6 @@
+#!/bin/sh
+# Refuse the commit when staged content or the author email matches a leak pattern.
+python3 scripts/leak_check.py --staged || {
+  echo "pre-commit: commit blocked by the leak gate." >&2
+  exit 1
+}

@@ -1,0 +1,56 @@
+[project]
+name = "bricksmith-workspace"
+version = "0.0.0"
+description = "Development workspace for the bricksmith distributions."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+
+[dependency-groups]
+dev = [
+  "bricksmith",
+  "bricksmith-mlops",
+  "bricksmith-monitor",
+  "bricksmith-registry",
+  "pyright",
+  "pytest",
+  "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+bricksmith = { workspace = true }
+bricksmith-mlops = { workspace = true }
+bricksmith-monitor = { workspace = true }
+bricksmith-registry = { workspace = true }
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ALL"]
+# D203/D213 conflict with D211/D212; COM812 and ISC001 conflict with the formatter.
+# CPY001: the license is declared once, in LICENSE.
+ignore = ["COM812", "CPY001", "D203", "D213", "ISC001"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["D", "INP001", "PLR2004", "S101", "S603", "S607"]
+"scripts/**" = ["INP001", "S603", "S607", "T201"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+include = ["packages", "scripts", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "tests"]
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+markers = ["databricks: needs a Databricks workspace (Free Edition in CI)"]
