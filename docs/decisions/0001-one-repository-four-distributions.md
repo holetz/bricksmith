@@ -1,6 +1,6 @@
 # 0001. One repository, four distributions, one namespace
 
-- Status: accepted
+- Status: superseded by [0009](0009-one-library-shared-task-scopes.md) on 2026-10-13
 - Date: 2026-10-11
 
 ## Context

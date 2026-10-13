@@ -2,52 +2,13 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
-[manifest]
-members = [
-    "bricksmith",
-    "bricksmith-mlops",
-    "bricksmith-monitor",
-    "bricksmith-registry",
-    "bricksmith-workspace",
-]
-
 [[package]]
 name = "bricksmith"
 version = "0.0.0"
-source = { editable = "packages/bricksmith" }
-
-[[package]]
-name = "bricksmith-mlops"
-version = "0.0.0"
-source = { editable = "packages/bricksmith-mlops" }
-dependencies = [
-    { name = "bricksmith" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "bricksmith", editable = "packages/bricksmith" }]
-
-[[package]]
-name = "bricksmith-monitor"
-version = "0.0.0"
-source = { editable = "packages/bricksmith-monitor" }
-
-[[package]]
-name = "bricksmith-registry"
-version = "0.0.0"
-source = { editable = "packages/bricksmith-registry" }
-
-[[package]]
-name = "bricksmith-workspace"
-version = "0.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 
 [package.dev-dependencies]
 dev = [
-    { name = "bricksmith" },
-    { name = "bricksmith-mlops" },
-    { name = "bricksmith-monitor" },
-    { name = "bricksmith-registry" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
@@ -57,10 +18,6 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "bricksmith", editable = "packages/bricksmith" },
-    { name = "bricksmith-mlops", editable = "packages/bricksmith-mlops" },
-    { name = "bricksmith-monitor", editable = "packages/bricksmith-monitor" },
-    { name = "bricksmith-registry", editable = "packages/bricksmith-registry" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },

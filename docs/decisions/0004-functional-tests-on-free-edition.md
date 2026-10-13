@@ -1,44 +1,52 @@
-# 0004. Functional tests run on Databricks Free Edition
+# 0004. Free-first functional tests with supplementary corporate proof
 
-- Status: accepted (authentication to be confirmed in phase 0b)
+- Status: accepted; environment and authentication policy amended by
+  [0011](0011-delivery-surfaces-and-test-environments.md) on 2026-10-13
 - Date: 2026-10-11
+- Remote authentication, compute and deployment: pending BS-00 proof
 
 ## Context
 
-The framework has to be proven against a real workspace, and the examples double as usage
-documentation. Databricks Free Edition is available at no cost, with constraints documented as of
-2026-09-29:
-
-- serverless compute only, no classic clusters;
-- at most five concurrent tasks per account;
-- one SQL warehouse, size 2X-Small;
-- one active pipeline per pipeline type;
-- a daily fair-usage quota whose numbers are not published; exceeding it shuts compute down for
-  the rest of the day;
-- non-commercial use only; no account console and no account-level APIs.
+The library and rendered examples need proof against Databricks. Free Edition is the primary
+personal development/test environment, but it cannot validate every platform capability. Its
+current constraints include serverless-only compute, a maximum of five concurrent job tasks,
+quota restrictions and unavailable account-level administration. These are checked against
+[official limits](https://docs.databricks.com/aws/en/getting-started/free-edition-limitations);
+feature availability is recorded per actual workspace, not assumed.
 
 ## Decision
 
-Three test layers:
-
-| Layer | Scope | When |
+| Layer | Scope | Execution policy |
 |---|---|---|
-| Unit | Registry, naming checks, `load_resources` snapshots, dependency inference, planning | Every pull request, no workspace |
-| Functional | Table writes, SCD2, COMMENT and CHECK, MLflow registration, monitoring metrics, through Databricks Connect serverless with one schema per run | Push to `main` and on demand |
-| End to end | Render the template, `bundle deploy -t ci`, run the example jobs, assert on the data, `bundle destroy` | Nightly and on demand |
+| Unit | Registry, metadata/resources, graph, configuration and planning | Every pull request, no workspace or credentials |
+| Functional | Writes/history, metadata, models, monitoring and other platform behavior | Free Edition where supported; deliberately selected corporate test scope for unavailable required capabilities |
+| End to end | Render/update the template, deploy target `ci`, run synthetic jobs, inspect results and destroy | Free Edition as the primary scenario; supplementary corporate scenarios run explicitly |
 
-- Functional and end-to-end runs share a single concurrency group and are not required checks on
-  pull requests, so a quota hit never blocks review.
-- Each run writes to its own schema and drops it, whatever the outcome.
-- Example data is synthetic and generated inside the job from a fixed seed: no egress, no
-  dependency on sample catalogs.
-- CI authenticates with a service principal over OAuth machine-to-machine; GitHub OIDC federation
-  needs account-level APIs Free Edition does not expose. A personal access token is the fallback
-  if the service principal route fails in practice.
-- The framework defaults to serverless; classic compute is opt-in.
+- `.env` may register both profile names, expected workspace hosts and test destinations. The
+  selected environment is explicit and independent of the bundle target; `free` is the initial
+  test selection. Missing configuration never uses `DEFAULT` or another configured workspace.
+- Authentication uses the selected Databricks unified-auth configuration. Local interactive OAuth
+  is attempted and verified on the actual workspace. Unattended CI OAuth, federation or PAT support
+  is a feasibility question, not a guaranteed Free Edition capability or an automatic fallback.
+- Functional and end-to-end runs serialize per workspace and start with two concurrent tasks.
+  Quota exhaustion, missing permissions and unsupported features are reported distinctly. A failed
+  free run never silently retries on corporate Databricks.
+- Unit CI remains available without remote credentials. Free remote CI is enabled after its auth
+  proof. Corporate CI has a separate environment, credentials and explicit run selection.
+- Every remote run creates unique, owned synthetic schemas and artifacts in an explicitly
+  configured test catalog. Cleanup targets only those resources and reports leftovers on failure.
+- Corporate testing is supplementary product-validation work in a test scope; no production jobs,
+  corporate source data, private models or enterprise identifiers are required by the examples.
+- A required feature skipped on Free Edition needs recorded passing evidence in the selected
+  corporate environment or an explicit narrowing of supported behavior. A skip is not proof.
+- Serverless is the default compute policy. Classic compute is a separately configured corporate
+  validation case, never an inferred fallback.
 
 ## Consequences
 
-- Examples never need more than five parallel tasks, and tests avoid the SQL warehouse where a
-  Databricks Connect session will do.
-- The documentation states that Free Edition is for development and demonstration only.
+- The [test environment guide](../development/databricks-tests.md) and [.env.example](../../.env.example)
+  define local configuration and the required setup proofs.
+- A configured profile, a successful identity request, a working compute query and a successful
+  deploy/run/cleanup are separate states. Only actual test assertions establish feature coverage.
+- Free Edition's usage conditions and unsupported capabilities remain visible in documentation;
+  support claims are limited to independently measured free/corporate evidence.

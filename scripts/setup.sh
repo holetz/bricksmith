@@ -3,7 +3,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 git config core.hooksPath .githooks
-uv sync --all-packages
+uv sync --locked
 denylist="${BRICKSMITH_DENYLIST_FILE:-$HOME/.config/bricksmith/denylist.txt}"
 if [ ! -f "$denylist" ]; then
   echo "setup: no denylist at $denylist — commits will be refused until you create one." >&2

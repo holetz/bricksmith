@@ -19,5 +19,7 @@ dist/
 # Local-only files: credentials and notes that must never be committed
 .env
 .env.*
+!.env.example
 CLAUDE.local.md
+.reference-analysis/
 .claude/settings.local.json

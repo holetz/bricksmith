@@ -23,8 +23,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
-      - name: Sync the workspace
-        run: uv sync --all-packages --locked
+      - name: Sync the library
+        run: uv sync --locked
       - name: Lint
         run: uv run ruff check
       - name: Format
@@ -33,6 +33,8 @@ jobs:
         run: uv run pyright
       - name: Tests
         run: uv run pytest
+      - name: Build the library
+        run: uv build
       # The private denylist never leaves the developer machine; CI runs the generic patterns
       # and gitleaks as a second line behind the local pre-commit and pre-push hooks.
       - name: Leak gate (generic patterns)

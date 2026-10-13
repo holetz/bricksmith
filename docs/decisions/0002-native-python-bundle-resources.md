@@ -23,10 +23,9 @@ committed.
 
 ## Consequences
 
-- Discovery runs on every `bundle validate`, `deploy` and `run`. Measured on the reference
-  implementation: 8.7 s for 1,142 tasks (2.1 s for catalogs and schemas, 6.6 s for importing tasks
-  and inferring dependencies). A project with tens of tasks should stay well under a second; at
-  that scale a cache keyed by a source hash is warranted.
+- Discovery runs on every `bundle validate`, `deploy` and `run`. Benchmark independently designed
+  synthetic projects before setting a performance budget or adding a source-hash cache; reference
+  timings are not evidence of bricksmith performance.
 - Pull requests no longer show a YAML diff. A snapshot of `load_resources` output for the examples
   lives in the tests, and a `plan` command prints jobs, tasks and dependencies.
 - Deploying needs a virtual environment with the framework importable, and the Databricks CLI and

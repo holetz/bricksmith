@@ -1,37 +1,67 @@
 # bricksmith
 
-A Python framework and project template for Databricks data projects.
+A Python library, project template and optional Claude Code plugin for Databricks data projects.
 
 A bricksmith project is a folder tree: catalogs, schemas and tasks are discovered from where they
 live, task dependencies are inferred from the code that reads them, and Databricks bundle
 resources (jobs, schemas, volumes) are built natively in Python — nothing is generated to YAML.
-On top of that sit a column registry with a naming grammar, a model development flow and data
-and model monitoring, each with agent skills that cover the work end to end.
+The same library grows to include a column registry with a naming grammar, a model development
+flow and data and model monitoring, with agent skills that cover the work end to end.
 
-> **Status:** planning. Private repository, nothing released. See the [roadmap](docs/roadmap.md).
+> **Status:** planning. Private repository, nothing released. See the [roadmap](docs/roadmap.md)
+> and [development epic](docs/epics/0001-bricksmith-library.md).
 
-## Distributions
+## One library, growing capabilities
 
-All four share the `bricksmith` namespace and are released as separate wheels.
+`bricksmith` ships as one Python distribution with one version and release. Internal modules
+organize related code; capabilities share abstractions and integrate where useful.
 
-| Distribution | Import | Depends on | Purpose |
-|---|---|---|---|
-| `bricksmith-registry` | `bricksmith.registry` | — | Column registry and naming grammar checks. Pure Python, no Spark. |
-| `bricksmith` | `bricksmith.*` | registry | Core: discovery, tables, tasks, jobs, the dependency runner and native bundle resources. |
-| `bricksmith-mlops` | `bricksmith.mlops` | core, monitor (optional) | Samples, slices, exclusions, the model chain and MLflow on Unity Catalog. |
-| `bricksmith-monitor` | `bricksmith.monitor` | — | Binning, PSI/CSI, discrimination, calibration and alert rules. DataFrame in, DataFrame out. |
+| Capability | Purpose |
+|---|---|
+| Framework and bundle integration | Discovery, tables, tasks, jobs, the dependency runner and native bundle resources. |
+| Registry | Column registry and naming grammar checks that run without Spark. |
+| MLOps | Samples, slices, exclusions, the model chain and MLflow on Unity Catalog. |
+| Monitoring | Binning, PSI/CSI, discrimination, calibration and alert rules. DataFrame in, DataFrame out. |
+
+Data, MLOps and monitoring tasks use the same discovery, dependency graph and runner. A task's
+type describes its behavior; its location defines its catalog and schema. A model training task
+can live beside feature preparation and monitoring tasks in the same scope. A project may choose
+dedicated scopes for these tasks, but the framework does not require them or derive a scope from
+the task type.
+
+For example, a schema may contain all of these tasks together:
+
+```text
+catalogs/analytics/customer/
+  features.py
+  train_model.py
+  predictions.py
+  monitor_predictions.py
+```
+
+This is the planned layout contract; task discovery is planned in slice BS-02. The template will
+show both shared and dedicated scopes. Heavy external integrations may have optional dependency
+extras within `bricksmith`; installing a capability will not require a separate bricksmith wheel.
+See [decision 0009](docs/decisions/0009-one-library-shared-task-scopes.md).
+
+Development uses generic behavioral requirements and independently designed examples and tests.
+The [capability review](docs/planning/capability-review.md) feeds the epic without carrying private
+source code, vocabulary or history into the library. See
+[decision 0010](docs/decisions/0010-behavior-derived-independent-development.md).
 
 ## Layout
 
 ```
-packages/      the four distributions (uv workspace members)
-tests/         workspace-level contracts (namespace, dependency direction, leak gate)
-scripts/       setup and the leak gate
-docs/          roadmap and decision records
+src/bricksmith/ the library and its internal modules
+tests/          library tests and the leak gate
+scripts/        setup and the leak gate
+docs/           roadmap and decision records
 ```
 
 Planned: `template/` (copier template for a new data project), `examples/` (the rendered template,
-deployed by the end-to-end tests) and `plugins/` (agent skills for Claude Code and Codex).
+deployed by the end-to-end tests) and `plugins/bricksmith/` (the optional Claude Code plugin).
+The three delivery contracts and installation/update proofs are specified in
+[delivery contracts](docs/planning/delivery-contracts.md). Additional agent adapters are extensions.
 
 ## Development
 
@@ -45,6 +75,12 @@ uv run pytest
 Commits and pushes go through a leak gate (`scripts/leak_check.py`): generic patterns plus a
 private denylist kept outside the repository. See
 [decision 0003](docs/decisions/0003-private-first-with-a-leak-gate.md).
+
+For remote tests, configure [.env.example](.env.example) as an ignored `.env`. It can register
+both a primary Free Edition profile and a supplementary corporate profile, with explicit test
+destinations. Select one environment per run; the library will not load dotenv or authenticate
+on import. The profile/context runner is still planned. See
+[test setup and proof stages](docs/development/databricks-tests.md).
 
 ## License
 

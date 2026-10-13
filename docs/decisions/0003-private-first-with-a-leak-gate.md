@@ -21,7 +21,7 @@ history for good.
 - The author email is part of the check, so a commit cannot be signed with a non-personal address.
 - CI runs the generic patterns and gitleaks as a second line; the denylist never leaves the
   developer machine.
-- Every distribution carries the `Private :: Do Not Upload` classifier, which PyPI rejects, until
+- The distribution carries the `Private :: Do Not Upload` classifier, which PyPI rejects, until
   the project goes public.
 - Going public is gated by a full-history scan with the denylist.
 

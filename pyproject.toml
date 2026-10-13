@@ -1,33 +1,32 @@
 [project]
-name = "bricksmith-workspace"
+name = "bricksmith"
 version = "0.0.0"
-description = "Development workspace for the bricksmith distributions."
+description = "Python framework for Databricks data projects, with registry, MLOps and monitoring capabilities."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
+authors = [{ name = "Israel Holetz", email = "holetz@gmail.com" }]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Private :: Do Not Upload",
+]
+dependencies = []
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bricksmith"]
 
 [dependency-groups]
 dev = [
-  "bricksmith",
-  "bricksmith-mlops",
-  "bricksmith-monitor",
-  "bricksmith-registry",
   "pyright",
   "pytest",
   "ruff",
 ]
-
-[tool.uv]
-package = false
-
-[tool.uv.workspace]
-members = ["packages/*"]
-
-[tool.uv.sources]
-bricksmith = { workspace = true }
-bricksmith-mlops = { workspace = true }
-bricksmith-monitor = { workspace = true }
-bricksmith-registry = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -48,9 +47,9 @@ pythonVersion = "3.12"
 typeCheckingMode = "standard"
 venvPath = "."
 venv = ".venv"
-include = ["packages", "scripts", "tests"]
+include = ["src", "scripts", "tests"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages", "tests"]
+testpaths = ["tests"]
 addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
 markers = ["databricks: needs a Databricks workspace (Free Edition in CI)"]
