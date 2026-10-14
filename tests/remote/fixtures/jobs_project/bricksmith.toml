@@ -1,0 +1,56 @@
+# Synthetic project for the remote job proof. The catalog and schema names come from bundle
+# variables the test supplies; the wheel path is rewritten by the test to the locally built wheel.
+[mappings.catalogs]
+main = "${var.catalog}"
+
+[mappings.schemas]
+fixture = "${var.schema}"
+
+[bundle]
+wheel = "dist/__WHEEL__"
+
+[jobs.ordered]
+name = "bricksmith_fixture_ordered"
+select = ["main.fixture.*"]
+max_concurrent_runs = 1
+timeout_seconds = 1800
+schedule = "0 0 3 * * ?"
+timezone = "UTC"
+paused = true
+tags = { purpose = "fixture" }
+
+[[jobs.ordered.steps]]
+key = "gate"
+kind = "condition"
+left = "1"
+right = "1"
+after = ["main.fixture.second"]
+
+[[jobs.ordered.steps]]
+key = "finish"
+kind = "script"
+path = "src/finish.py"
+after = ["gate:true"]
+
+[[jobs.ordered.steps]]
+key = "note"
+kind = "notebook"
+path = "src/note.py"
+parameters = ["label=fixture"]
+after = ["finish"]
+
+[[jobs.ordered.steps]]
+key = "launch_child"
+kind = "run_job"
+job = "child"
+after = ["gate:true"]
+
+[jobs.child]
+name = "bricksmith_fixture_child"
+select = []
+max_concurrent_runs = 1
+
+[[jobs.child.steps]]
+key = "child_script"
+kind = "script"
+path = "src/finish.py"

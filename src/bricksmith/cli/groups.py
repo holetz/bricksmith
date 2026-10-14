@@ -6,4 +6,5 @@ GROUPS: tuple[str, ...] = (
     "bricksmith.registry.cli",
     "bricksmith.cli.tasks_group",
     "bricksmith.runner.cli",
+    "bricksmith.dab.cli",
 )
