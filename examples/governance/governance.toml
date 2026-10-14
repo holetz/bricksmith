@@ -1,0 +1,46 @@
+# Neutral governance policy example. Every name here is synthetic; principals are logical names
+# mapped per environment, so no real identity belongs in this file.
+version = 1
+categories = ["internal", "restricted"]      # "unclassified" is always available and is the default
+
+[tag_keys]
+classification = "sensitivity"
+owner = "owner"
+retention = "retention"
+
+[retention]
+short = 30        # days; recorded as the tag value `short`, enforcement is the project's job
+long = 365
+
+[principals.readers]
+free = "account users"                        # a built-in group on the free workspace
+prod = { name = "reporting-readers", expires = "2027-06-30" }
+
+[principals.stewards]
+free = "account users"
+prod = "data-stewards"
+
+# A declared rule: every managed resource classified "restricted" gets these controls.
+[[policy]]
+name = "restricted-baseline"
+classification = "restricted"
+tags = { review = "required" }
+
+[[resource]]
+object = "{catalog}.{schema}.orders"
+managed = true
+classification = "restricted"
+owner = "stewards"
+retention = "short"
+comment = "Order facts (synthetic)"
+tags = { domain = "sales" }
+grants = [{ principal = "readers", privileges = ["SELECT"] }]
+
+[[resource]]
+object = "{catalog}.{schema}.scratch"         # declared but not managed: never changed
+managed = false
+
+[severity]                                    # error | warning | off, by rule or glob
+"governance.drift" = "error"
+"governance.external" = "warning"
+"governance.unclassified" = "error"
