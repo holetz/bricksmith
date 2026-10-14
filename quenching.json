@@ -1,0 +1,8 @@
+{
+  "specs": {
+    "card": {
+      "provider": "github",
+      "at": "capture"
+    }
+  }
+}
