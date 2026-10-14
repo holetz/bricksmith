@@ -30,7 +30,7 @@ the grant; the backend repeats it). Refusal writes nothing.
 `WritePlan` (ordered `guard`, `check`, `create`, `mutate`, `post_check` steps with their SQL). `SparkTableIO`
 reports the plan (`plans`, `reporter`, log) before the first mutating step; `explain` returns it without effects.
 The input is registered as a temporary view only. A target whose columns differ from the input is rejected;
-evolution is BS-05.
+evolution is BS-05: a declared `evolution` policy in the write metadata admits compatible changes (see [BS-05](bs-05-evolution.md)).
 
 **Repeat-run semantics.** Every strategy is one atomic Delta commit and is idempotent for the same input:
 `overwrite`/`static_refresh` replace everything; `replace_partitions` replaces only the named partitions

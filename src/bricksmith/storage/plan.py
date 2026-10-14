@@ -353,7 +353,8 @@ def _table_steps(  # noqa: C901, PLR0912, PLR0915 - one branch per strategy
     if target_columns is not None and set(target_columns) != expected:
         msg = (
             f"target columns differ from the input (missing {sorted(expected - set(target_columns))}, "
-            f"extra {sorted(set(target_columns) - expected)}); schema evolution is a separate, explicit step"
+            f"extra {sorted(set(target_columns) - expected)}); "
+            "schema evolution needs an evolution policy in the write metadata or an explicit migration"
         )
         raise WriteSpecError(msg)
     base = [c for c in target_columns if c in cols] if target_columns is not None else cols

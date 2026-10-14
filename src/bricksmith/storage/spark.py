@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from bricksmith.context import ExecutionContext
+    from bricksmith.evolution.planner import MigrationPlan
     from bricksmith.registry.model import Registry
 
 LOG = logging.getLogger("bricksmith.storage")
@@ -64,6 +65,7 @@ class Prepared:
     data: Any
     empty: bool
     skip: str = ""
+    migration: MigrationPlan | None = None
 
 
 Hook = "Callable[[HookEvent], None]"
@@ -97,6 +99,7 @@ class SparkTableIO:
         self.reporter = reporter
         self.plans: list[WritePlan] = []
         self.results: list[WriteResult] = []
+        self.migrations: list[MigrationPlan] = []
 
     @classmethod
     def for_context(cls, context: ExecutionContext) -> SparkTableIO:
@@ -148,6 +151,9 @@ class SparkTableIO:
         spark = self.spark
         exists = bool(spark.catalog.tableExists(physical))
         target_columns = list(spark.table(physical).columns) if exists else None
+        migration = self._migration(physical, data, spec.strategy, opts) if exists else None
+        if migration is not None and not migration.empty:
+            target_columns = list(migration.projected_columns)
         empty = len(data.limit(1).collect()) == 0
         values: list[dict[str, object]] | None = None
         if spec.strategy == "replace_partitions" and spec.window is None and not spec.partitions:
@@ -176,7 +182,18 @@ class SparkTableIO:
             protected=protected,
             granted=granted,
         )
-        return Prepared(spec, plan, data, empty, skip)
+        return Prepared(spec, plan, data, empty, skip, migration)
+
+    def _migration(self, physical: str, data: Any, strategy: str, opts: dict[str, object]) -> MigrationPlan | None:  # noqa: ANN401
+        """Plan the schema change a declared ``evolution`` policy allows; ``None`` without a policy."""
+        if "evolution" not in opts:
+            return None
+        if strategy == "scd2":
+            msg = "evolution is not supported for scd2 targets (generated history columns)"
+            raise WriteSpecError(msg)
+        from bricksmith.evolution.bridge import plan_for_write  # noqa: PLC0415 - keep the root import light
+
+        return plan_for_write(self.spark, physical, data, opts)
 
     def _count(self, sql: str, view: str) -> int:
         return int(self.spark.sql(sql.replace(INPUT, quote(view))).collect()[0][0])
@@ -216,6 +233,12 @@ class SparkTableIO:
             for hook in self.pre_hooks:
                 hook(event)
             self._report(plan)
+            if prepared.migration is not None and not prepared.migration.empty:
+                from bricksmith.evolution.apply import apply_plan  # noqa: PLC0415 - keep the root import light
+
+                self.migrations.append(prepared.migration)
+                LOG.info("schema evolution %s: %d operation(s)", physical, len(prepared.migration.operations))
+                apply_plan(spark, prepared.migration)
             for step in plan.steps:
                 if step.mutates:
                     self._run(step.sql.replace(INPUT, quote(view)), spec.strategy)
