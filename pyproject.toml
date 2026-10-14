@@ -7,9 +7,11 @@ requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Israel Holetz", email = "holetz@gmail.com" }]
 classifiers = [
-  "Development Status :: 1 - Planning",
+  "Development Status :: 2 - Pre-Alpha",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
   "Private :: Do Not Upload",
 ]
 dependencies = []
@@ -36,6 +38,12 @@ dev = [
   "pytest",
   "ruff",
 ]
+# Heavy integrations for tests/remote; deliberately not a default group (see docs/specs/bs-00-foundation.md).
+remote = [
+  "databricks-bundles",
+  "databricks-connect>=17.3,<18",
+  "databricks-sdk",
+]
 
 [tool.ruff]
 line-length = 120
@@ -57,8 +65,12 @@ typeCheckingMode = "standard"
 venvPath = "."
 venv = ".venv"
 include = ["src", "scripts", "tests"]
+exclude = ["tests/remote/fixtures"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
-markers = ["databricks: needs a Databricks workspace (Free Edition in CI)"]
+markers = [
+  "databricks: needs a Databricks workspace (Free Edition in CI)",
+  "slow: builds and installs the package into clean environments",
+]

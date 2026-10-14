@@ -1,0 +1,13 @@
+# Minimal bundle for the remote deployment proof. The workspace comes from the profile the test
+# passes to the CLI; a host is deliberately not declared here. Resources are defined in Python.
+bundle:
+  name: bricksmith_fixture
+
+python:
+  venv_path: ../../../../.venv
+  resources:
+    - "resources:load_resources"
+
+targets:
+  ci:
+    mode: development

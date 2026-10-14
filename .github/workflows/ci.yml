@@ -35,6 +35,8 @@ jobs:
         run: uv run pytest
       - name: Build the library
         run: uv build
+      - name: Verify wheel and sdist in clean environments (heavy integrations absent)
+        run: python3 scripts/verify_dist.py --dist dist
       # The private denylist never leaves the developer machine; CI runs the generic patterns
       # and gitleaks as a second line behind the local pre-commit and pre-push hooks.
       - name: Leak gate (generic patterns)

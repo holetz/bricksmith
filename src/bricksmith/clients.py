@@ -49,11 +49,12 @@ def _sdk_config(context: ExecutionContext) -> Client:
 def _spark(context: ExecutionContext) -> Client:
     config = _sdk_config(context)
     connect = import_extra("databricks.connect", "spark")
-    builder = connect.DatabricksSession.builder.sdkConfig(config)
+    # Connect rejects an SDK config combined with builder compute parameters, so compute rides on the config.
     if context.compute == "serverless":
-        builder = builder.serverless(True)  # noqa: FBT003 - Databricks Connect API
+        config.serverless_compute_id = "auto"
     else:
-        builder = builder.clusterId(context.compute.removeprefix("cluster:"))
+        config.cluster_id = context.compute.removeprefix("cluster:")
+    builder = connect.DatabricksSession.builder.sdkConfig(config)
     return builder.getOrCreate()
 
 

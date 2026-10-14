@@ -259,6 +259,11 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+remote = [
+    { name = "databricks-bundles" },
+    { name = "databricks-connect" },
+    { name = "databricks-sdk" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -275,6 +280,11 @@ dev = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
+]
+remote = [
+    { name = "databricks-bundles" },
+    { name = "databricks-connect", specifier = ">=17.3,<18" },
+    { name = "databricks-sdk" },
 ]
 
 [[package]]
@@ -701,7 +711,7 @@ wheels = [
 
 [[package]]
 name = "databricks-connect"
-version = "19.2.0"
+version = "17.3.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "databricks-sdk" },
@@ -718,7 +728,7 @@ dependencies = [
     { name = "zstandard" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/94/6e3054af6cead027d0086145225d99e1d46308ec8e2e7ca7b7ee434835ca/databricks_connect-19.2.0-py2.py3-none-any.whl", hash = "sha256:61d23d7d469e93f3e69bff759a5f04d3319ffe413a42076a1b9f073bed311dea", size = 3186202, upload-time = "2026-09-29T07:09:50.684Z" },
+    { url = "https://files.pythonhosted.org/packages/db/4e/7bb0d08fff3ed15007c9c0eba266da1413eda275cb70609f4fe1a2dbd678/databricks_connect-17.3.14-py2.py3-none-any.whl", hash = "sha256:36e78ff10559cd6869a76627d89a66d2eb561f77bb1699e85d750037e67f4a3f", size = 2771092, upload-time = "2026-09-18T01:36:51.06Z" },
 ]
 
 [[package]]
