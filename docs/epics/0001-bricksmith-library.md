@@ -115,15 +115,15 @@ and audited rather than rebuilt. Develop one child specification per slice befor
 
 Depends on: none. Existing baseline: one package, local lint/type/tests/build and leak gate.
 
-- [ ] BS-00.1 Audit the unified package, extras strategy, private classifier, supported Python
+- [x] BS-00.1 Audit the unified package, extras strategy, private classifier, supported Python
   version and independent-development guidance.
-- [ ] BS-00.2 Make CI verify the built wheel and source archive in clean environments, including
+- [x] BS-00.2 Make CI verify the built wheel and source archive in clean environments, including
   imports with heavy integrations absent.
-- [ ] BS-00.3 Establish the primary Free Edition workspace and optional corporate test destination,
+- [x] BS-00.3 Establish the primary Free Edition workspace and optional corporate test destination,
   validate authentication and synthetic schema/volume cleanup; do not assume unattended auth works.
-- [ ] BS-00.4 Verify a minimal native Python resource deployment and record the supported CLI,
+- [x] BS-00.4 Verify a minimal native Python resource deployment and record the supported CLI,
   bundle package, Connect and runtime version matrix.
-- [ ] BS-00.5 Implement explicit test-environment preflight from `.env`/CI configuration: profile,
+- [x] BS-00.5 Implement explicit test-environment preflight from `.env`/CI configuration: profile,
   expected host, test catalog, compute and concurrency; reject missing selection or conflicting auth.
 - [ ] BS-00.6 Record separate configuration/authentication/compute/deployment proof and feature
   coverage per workspace; configure free-first CI and explicit corporate runs after auth is proven.
@@ -157,13 +157,13 @@ loads `.env` nor authenticates; bundle target `ci` does not decide the workspace
 
 Depends on: BS-01.
 
-- [ ] BS-02.1 Discover task definitions across ordinary project scopes with configurable exclusions
+- [x] BS-02.1 Discover task definitions across ordinary project scopes with configurable exclusions
   and identical rules for data, model and monitoring behavior.
-- [ ] BS-02.2 Define stable logical identities, parameterized variants and explicit output ownership;
+- [x] BS-02.2 Define stable logical identities, parameterized variants and explicit output ownership;
   detect duplicate identities and physical output collisions.
-- [ ] BS-02.3 Infer supported reads and merge explicit dependencies, external resources and temporal
+- [x] BS-02.3 Infer supported reads and merge explicit dependencies, external resources and temporal
   inputs with provenance and coverage diagnostics.
-- [ ] BS-02.4 Validate cycles, missing producers, ambiguous references and expiring exemptions;
+- [x] BS-02.4 Validate cycles, missing producers, ambiguous references and expiring exemptions;
   retain the complete graph for planning, jobs and documentation.
 
 Acceptance: a single schema containing feature, training, prediction and monitor definitions is
@@ -245,11 +245,11 @@ resource kinds or incompatible compute options fail clearly before deployment.
 
 Depends on: BS-01.
 
-- [ ] BS-07.1 Define the column registry, overrides, logical types, descriptions, constraints and
+- [x] BS-07.1 Define the column registry, overrides, logical types, descriptions, constraints and
   declared grain with a versioned project-data format.
-- [ ] BS-07.2 Implement configurable vocabulary and naming checks for catalog/schema/table/column
+- [x] BS-07.2 Implement configurable vocabulary and naming checks for catalog/schema/table/column
   scopes; ship neutral defaults and an empty project vocabulary.
-- [ ] BS-07.3 Add configurable severity, ratchets and reasoned exceptions with expiry; implement
+- [x] BS-07.3 Add configurable severity, ratchets and reasoned exceptions with expiry; implement
   offline `check` output for humans and CI.
 - [ ] BS-07.4 Feed registry metadata into table writes and catalog documentation while preserving
   existing unrelated metadata and clear sensitivity coverage states.
