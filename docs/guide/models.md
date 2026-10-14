@@ -53,6 +53,11 @@ Training validates the dataset first (BS-11: leakage, immature labels, split ove
 `train` split and evaluates on `train` and `evaluation`. The run holds parameters, metrics, tags (model identity,
 code revision, spec hash, feature contract, dataset fingerprints with Delta input versions, dependency versions) and
 the artifact: an MLflow sklearn model with signature plus `bricksmith_model.json`, the source of the model card.
+The tracking run is marked finished only after its persisted artifact inventory contains every
+file of the adapter payload and metadata. An empty or incomplete upload, or an inventory lookup
+failure, marks the run failed and raises `model_invalid`; lookup errors omit connection details
+from the public message and retain the original exception as their cause. Inventory presence
+does not prove artifact download or Unity Catalog registration; those require remote acceptance.
 
 ## Lifecycle (CLI)
 

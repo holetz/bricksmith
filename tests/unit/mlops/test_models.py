@@ -95,6 +95,15 @@ class FakeTracking:
     def log_artifacts(self, run_id: str, local_dir: str, artifact_path: str) -> None:
         shutil.copytree(local_dir, self.root / run_id / artifact_path)
 
+    def list_artifacts(self, run_id: str, path: str = "") -> list[SimpleNamespace]:
+        directory = self.root / run_id / path
+        if not directory.is_dir():
+            return []
+        return [
+            SimpleNamespace(path=file.relative_to(self.root / run_id).as_posix(), is_dir=file.is_dir())
+            for file in sorted(directory.iterdir())
+        ]
+
     def set_terminated(self, run_id: str, status: str) -> None:
         self.runs[run_id].info.status = status
 
@@ -108,9 +117,19 @@ class FakeTracking:
         self.models[name] = SimpleNamespace(tags=dict(tags or {}), aliases={})
 
     def create_model_version(self, name: str, source: str, run_id: str, tags: dict[str, str]) -> SimpleNamespace:
+        prefix = f"runs:/{run_id}/"
+        if not source.startswith(prefix):
+            msg = "registration must read the run's persisted artifact source"
+            raise ValueError(msg)
+        directory = self.root / run_id / source.removeprefix(prefix)
+        if not directory.is_dir() or not all((directory / file).is_file() for file in (FILE, "model.json")):
+            msg = "registration source is not a persisted bricksmith model"
+            raise FileNotFoundError(msg)
+        ModelMetadata.from_json((directory / FILE).read_text(encoding="utf-8"))
+        payload = json.loads((directory / "model.json").read_text(encoding="utf-8"))
         number = 1 + sum(1 for n, _ in self.versions if n == name)
         self.versions[name, number] = SimpleNamespace(
-            version=str(number), run_id=run_id, tags=dict(tags), status="READY", source=source
+            version=str(number), run_id=run_id, tags=dict(tags), status="READY", source=source, payload=payload
         )
         return self.versions[name, number]
 
@@ -210,6 +229,72 @@ def training_rows(spec: Any = CHURN) -> list[dict[str, Any]]:
 
 def train(store: ModelStore, adapter: ThresholdAdapter, spec: Any = CHURN, **extra: Any) -> str:
     return train_model(store, adapter, spec, training_rows(), experiment="/exp/churn", **extra).run_id
+
+
+def test_silent_artifact_upload_cannot_finish_a_training_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store, client = make_store(tmp_path)
+    monkeypatch.setattr(client, "log_artifacts", lambda *_args: None)
+    with pytest.raises(ModelError, match="without persisting 2 required files"):
+        train(store, ThresholdAdapter())
+    assert client.get_run("run1").info.status == "FAILED"
+    assert not client.models and not client.versions
+
+
+def test_upload_inventory_requires_every_nested_payload_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store, client = make_store(tmp_path)
+    payload = tmp_path / "payload"
+    (payload / "nested").mkdir(parents=True)
+    (payload / "nested" / "weights.bin").write_bytes(b"synthetic weights")
+    (payload / "metadata.json").write_text("{}", encoding="utf-8")
+    log = client.log_artifacts
+
+    def incomplete_upload(run_id: str, local_dir: str, artifact_path: str) -> None:
+        log(run_id, local_dir, artifact_path)
+        (client.root / run_id / artifact_path / "nested" / "weights.bin").unlink()
+
+    monkeypatch.setattr(client, "log_artifacts", incomplete_upload)
+    with pytest.raises(ModelError, match="without persisting 1 required files"):
+        store.log_run("/exp/partial", run_name="partial", tags={}, params={}, metrics={}, artifact_dir=payload)
+    assert client.get_run("run1").info.status == "FAILED"
+
+    monkeypatch.setattr(client, "log_artifacts", log)
+    run_id = store.log_run("/exp/partial", run_name="complete", tags={}, params={}, metrics={}, artifact_dir=payload)
+    assert client.get_run(run_id).info.status == "FINISHED"
+    assert (client.root / run_id / "model" / "nested" / "weights.bin").read_bytes() == b"synthetic weights"
+
+
+def test_inventory_transport_failure_has_safe_error_and_preserves_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, client = make_store(tmp_path)
+    transport = RuntimeError("https://private-workspace.invalid token=synthetic-secret")
+
+    def unavailable(run_id: str, path: str) -> list[SimpleNamespace]:
+        raise transport
+
+    monkeypatch.setattr(client, "list_artifacts", unavailable)
+    with pytest.raises(ModelError, match="unable to verify persisted model artifacts \\(RuntimeError\\)") as caught:
+        train(store, ThresholdAdapter())
+    assert caught.value.__cause__ is transport
+    assert "synthetic-secret" not in str(caught.value) and "private-workspace" not in str(caught.value.to_dict())
+    assert client.get_run("run1").info.status == "FAILED"
+
+
+def test_registration_reads_persisted_payload_instead_of_accepting_a_source_string(tmp_path: Path) -> None:
+    store, client = make_store(tmp_path)
+    run_id = train(store, ThresholdAdapter())
+    (client.root / run_id / "model" / "model.json").unlink()
+    with pytest.raises(FileNotFoundError, match="not a persisted bricksmith model"):
+        register_run(store, NAME, CHURN.model, run_id)
+    assert not client.versions
+
+
+def test_registration_source_must_belong_to_the_supplied_run(tmp_path: Path) -> None:
+    store, client = make_store(tmp_path)
+    run_id = train(store, ThresholdAdapter())
+    with pytest.raises(ValueError, match="must read the run's persisted artifact source"):
+        client.create_model_version(NAME, "runs:/foreign-run/model", run_id, {})
+    assert not client.versions
 
 
 def test_training_records_datasets_contract_parameters_metrics_dependencies_and_revision(tmp_path: Path) -> None:

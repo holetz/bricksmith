@@ -159,11 +159,45 @@ class ModelStore:
                 if number is not None:
                     self.client.log_metric(run_id, key, float(number))
             self.client.log_artifacts(run_id, str(artifact_dir), artifact_path)
+            self._verify_upload(run_id, artifact_dir, artifact_path)
         except BaseException:
             self.client.set_terminated(run_id, "FAILED")
             raise
         self.client.set_terminated(run_id, "FINISHED")
         return run_id
+
+    def _verify_upload(self, run_id: str, artifact_dir: Path, artifact_path: str) -> None:
+        """Require every local payload file in the persisted run inventory before claiming success."""
+        expected = {
+            f"{artifact_path.rstrip('/')}/{file.relative_to(artifact_dir).as_posix()}".lstrip("/")
+            for file in artifact_dir.rglob("*")
+            if file.is_file()
+        }
+        if not expected:
+            msg = "model artifact payload contains no files"
+            raise ModelError(msg)
+        pending = [artifact_path]
+        visited: set[str] = set()
+        persisted: set[str] = set()
+        while pending:
+            path = pending.pop()
+            if path in visited:
+                continue
+            visited.add(path)
+            try:
+                entries = self.client.list_artifacts(run_id, path)
+            except Exception as error:
+                msg = f"unable to verify persisted model artifacts ({type(error).__name__})"
+                raise ModelError(msg) from error
+            for entry in entries:
+                if entry.is_dir:
+                    pending.append(str(entry.path))
+                else:
+                    persisted.add(str(entry.path))
+        missing = expected - persisted
+        if missing:
+            msg = f"model artifact upload returned without persisting {len(missing)} required files"
+            raise ModelError(msg)
 
     # -- registry -------------------------------------------------------------------------------------------
     def registered(self, name: str) -> Any | None:  # noqa: ANN401

@@ -1,6 +1,7 @@
 # BS-12 follow-up: downloadable artifacts for Unity Catalog registration
 
-Status: open next-round integration finding; tracking [issue 2](https://github.com/holetz/bricksmith/issues/2).
+Status: active, partially implemented; external artifact transport remains blocked. Tracking
+[issue 2](https://github.com/holetz/bricksmith/issues/2).
 Discovered on 2026-10-14 during the autonomous recovery of
 [BS-12](bs-12-models.md). No fix is included in the recovery changes.
 
@@ -41,3 +42,24 @@ offline regression where feasible, then rerun the unchanged Free lifecycle test 
 verified cleanup. Do not alter dependencies, grants or execution surfaces without the owning
 approval, weaken assertions, silently fall back to corporate, or claim Free support is absent
 from this single failure. BS-12 stays open until that real scenario passes.
+
+## Design and partial outcome
+
+A uniquely owned tracking-only Free diagnostic established the persisted run URI shape as
+`dbfs:/databricks/mlflow-tracking/<experiment>/<run>/artifacts` and no logged-model outputs.
+The product uses `save_model` plus `MlflowClient.log_artifacts`, so absence of a logged-model
+entity is expected. Upload returned success, but both root and `model` inventories were empty;
+run-relative downloads failed. The diagnostic experiment was deleted in `finally`. The exact
+external transport cause remains unresolved; no URI, global profile or flavor migration is inferred.
+
+The scoped product correction verifies the persisted run inventory against every local adapter
+payload/metadata file before marking a run `FINISHED`. Missing files or inventory lookup failure
+raise a safe `ModelError` and leave the run `FAILED`; lookup errors preserve the original cause
+without echoing its connection details in the public message. Strict fake registration now reads
+the persisted metadata, and local regressions cover empty uploads, partial nested payloads,
+successful nested inventories, transport-error redaction, missing registration payloads and sources
+bound to the wrong run.
+
+This hardening prevents false training success; it does not repair or prove remote transport.
+No additional diagnostic or lifecycle retry is authorized without a concrete transport fix.
+Issue 2 remains open, and BS-12 epic tasks remain unchecked.
