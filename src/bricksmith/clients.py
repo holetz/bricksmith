@@ -63,11 +63,17 @@ def _workspace(context: ExecutionContext) -> Client:
     return sdk.WorkspaceClient(config=_sdk_config(context))
 
 
+def tracking_uris(context: ExecutionContext) -> tuple[str, str]:
+    """Return the (tracking, Unity Catalog registry) URIs of ``context``; nothing is read from process globals."""
+    suffix = f"://{context.profile}" if context.profile else ""
+    return f"databricks{suffix}", f"databricks-uc{suffix}"
+
+
 def _tracking(context: ExecutionContext) -> Client:
     _check_profile(context)
     mlflow = import_extra("mlflow", "mlops")
-    uri = f"databricks://{context.profile}" if context.profile else "databricks"
-    return mlflow.MlflowClient(tracking_uri=uri)
+    tracking, registry = tracking_uris(context)
+    return mlflow.MlflowClient(tracking_uri=tracking, registry_uri=registry)
 
 
 class Clients:

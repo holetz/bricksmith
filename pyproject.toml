@@ -47,6 +47,8 @@ remote = [
   "databricks-bundles",
   "databricks-connect>=17.3,<18",
   "databricks-sdk",
+  "mlflow",
+  "scikit-learn",
 ]
 
 [tool.ruff]

@@ -351,13 +351,13 @@ Two models in one schema never share an artifact accidentally.
 
 Depends on: BS-04, BS-08, BS-11, BS-12.
 
-- [ ] BS-13.1 Fit/version numeric and categorical bins with explicit null, outlier, unseen-category
+- [x] BS-13.1 Fit/version numeric and categorical bins with explicit null, outlier, unseen-category
   and zero-count handling; implement distribution comparison including PSI/CSI.
-- [ ] BS-13.2 Implement discrimination, calibration, stability and population coverage metrics
+- [x] BS-13.2 Implement discrimination, calibration, stability and population coverage metrics
   against independently defined statistical contracts.
-- [ ] BS-13.3 Evaluate configurable alert rules, reference windows and minimum-history conditions;
+- [x] BS-13.3 Evaluate configurable alert rules, reference windows and minimum-history conditions;
   report unavailable or invalid metrics rather than inventing normal values.
-- [ ] BS-13.4 Persist references, measurements and alert events through ordinary tasks with shared
+- [x] BS-13.4 Persist references, measurements and alert events through ordinary tasks with shared
   lineage, retention and idempotence contracts; provide an optional outside-project adapter.
 
 Acceptance: hand-derived small fixtures verify bin counts and statistical boundaries. Reference
@@ -367,7 +367,7 @@ the same schema and has no hidden metadata-table writes.
 
 ### BS-14. Operational observability and cost controls
 
-Depends on: BS-03, BS-06, BS-09; integrate BS-13 when available (pending: BS-13 must emit `bricksmith.ops.AlertEvent`; see [spec](../specs/bs-14-operations.md)).
+Depends on: BS-03, BS-06, BS-09; BS-13 integration done: monitor alerts are `bricksmith.ops.AlertEvent`s of class `statistical_alert` (see [spec](../specs/bs-14-operations.md)).
 
 - [x] BS-14.1 Emit structured run/task events with identity, plan, target, attempt, timings and
   error classification; preserve actionable errors without logging secrets or row contents.

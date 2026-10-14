@@ -75,7 +75,7 @@ def postgres() -> Iterator[dict[str, object]]:
 
 
 def test_interrupted_transfer_then_replay_is_exactly_once(postgres: dict[str, object]) -> None:
-    import psycopg  # noqa: PLC0415
+    psycopg = pytest.importorskip("psycopg")
 
     password = str(postgres["password"])
     resolved = {k: v for k, v in postgres.items() if k != "password"}

@@ -48,7 +48,7 @@ CLI: `bricksmith ops report|diagnose|readiness|explain`; exit 4 when inputs are 
 
 ## Deviations and pending
 
-- Pending: BS-13 integration (monitor alerts must emit `AlertEvent`; statistical alerts use class `statistical_alert`).
+- BS-13 integration done: monitor alerts are `AlertEvent`s of class `statistical_alert` (see [BS-13](bs-13-monitoring.md)).
 - Budgets are checked at planning (`ops explain`, `explain_plan(...).enforce()`), not enforced inside `run_plan`.
 - `RunReport` is unchanged (no run id); the run id lives on events.
 - No notification CLI command; delivery is a library call (`notify_report`).

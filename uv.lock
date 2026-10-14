@@ -266,6 +266,8 @@ remote = [
     { name = "databricks-bundles" },
     { name = "databricks-connect" },
     { name = "databricks-sdk" },
+    { name = "mlflow" },
+    { name = "scikit-learn" },
 ]
 
 [package.metadata]
@@ -289,6 +291,8 @@ remote = [
     { name = "databricks-bundles" },
     { name = "databricks-connect", specifier = ">=17.3,<18" },
     { name = "databricks-sdk" },
+    { name = "mlflow" },
+    { name = "scikit-learn" },
 ]
 
 [[package]]
