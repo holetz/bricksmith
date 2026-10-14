@@ -23,3 +23,6 @@ dist/
 CLAUDE.local.md
 .reference-analysis/
 .claude/settings.local.json
+
+# Editor state
+.vscode/
