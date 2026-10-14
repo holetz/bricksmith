@@ -139,12 +139,12 @@ separately from passing evidence.
 
 Depends on: BS-00.
 
-- [ ] BS-01.1 Specify immutable execution context and target mappings with explicit precedence.
-- [ ] BS-01.2 Validate typed dates/windows, dataset selectors, segments and write options; reject
+- [x] BS-01.1 Specify immutable execution context and target mappings with explicit precedence.
+- [x] BS-01.2 Validate typed dates/windows, dataset selectors, segments and write options; reject
   ambiguous combinations before execution.
-- [ ] BS-01.3 Inject Spark, workspace, model-tracking, secret and I/O clients at their point of use.
-- [ ] BS-01.4 Define the common CLI foundation, structured errors, stable exit codes and JSON output.
-- [ ] BS-01.5 Implement opt-in dotenv loading and free/corporate context selection with documented
+- [x] BS-01.3 Inject Spark, workspace, model-tracking, secret and I/O clients at their point of use.
+- [x] BS-01.4 Define the common CLI foundation, structured errors, stable exit codes and JSON output.
+- [x] BS-01.5 Implement opt-in dotenv loading and free/corporate context selection with documented
   precedence and unified-auth mapping; avoid process-global profile/session mutation.
 
 Acceptance: import, help and metadata planning make no remote calls; invalid inputs fail before

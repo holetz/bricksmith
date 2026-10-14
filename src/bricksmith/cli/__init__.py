@@ -1,0 +1,1 @@
+"""The ``bricksmith`` command line."""
