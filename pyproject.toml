@@ -21,6 +21,9 @@ spark = ["databricks-connect"]
 sdk = ["databricks-sdk"]
 bundle = ["databricks-bundles"]
 mlops = ["mlflow", "scikit-learn"]
+postgres = [
+    "psycopg[binary]>=3.3.6",
+]
 
 [project.scripts]
 bricksmith = "bricksmith.cli.main:main"
@@ -61,6 +64,9 @@ ignore = ["COM812", "CPY001", "D203", "D213", "ISC001"]
 "scripts/**" = ["INP001", "S603", "S607", "T201"]
 # The storage package renders SQL from validated identifiers and quoted literals by design.
 "src/bricksmith/storage/**" = ["S608"]
+# Schema evolution renders DDL from validated identifiers and quoted literals by design.
+"src/bricksmith/evolution/**" = ["S608"]
+"src/bricksmith/quality/**" = ["S608"]
 
 [tool.pyright]
 pythonVersion = "3.12"
@@ -76,4 +82,5 @@ addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
 markers = [
   "databricks: needs a Databricks workspace (Free Edition in CI)",
   "slow: builds and installs the package into clean environments",
+  "docker: needs a local Docker daemon (disposable containers); skipped when unavailable",
 ]

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from bricksmith.context import ExecutionContext
     from bricksmith.graph import TaskGraph
     from bricksmith.plan import Plan
-    from bricksmith.runner.io import TableIO
+    from bricksmith.runner.io import ExternalProvider, TableIO
 
     type Loader = Callable[[Path, str, str], Callable[..., object]]
 
@@ -57,6 +57,7 @@ class _Worker:
     retry: RetryPolicy
     loader: Loader
     sleep: Callable[[float], None]
+    externals: ExternalProvider | None = None
 
     def __call__(self, entry: PlanEntry) -> TaskResult:
         started = time.monotonic()
@@ -70,7 +71,7 @@ class _Worker:
         wait_for = self.retry.delay
         while True:
             attempts += 1
-            ctx = TaskContext(entry, self.execution, self.table_io, self.granted)
+            ctx = TaskContext(entry, self.execution, self.table_io, self.granted, self.externals)
             try:
                 function(ctx)
             except Exception as error:  # noqa: BLE001 - task code may raise anything
@@ -113,6 +114,7 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
     fail_fast: bool = False,
     loader: Loader = load_task_function,
     sleep: Callable[[float], None] = time.sleep,
+    externals: ExternalProvider | None = None,
 ) -> RunReport:
     """Execute a plan that passed :func:`validate_plan`; it is re-checked here for errors and grants.
 
@@ -141,7 +143,7 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
         return _report(plan, results, dry_run=True, limit=limit)
 
     granted = frozenset((g.object, op) for g in plan.grants for op in g.operations)
-    worker = _Worker(Path(project_root), execution, table_io, granted, retry or RetryPolicy(), loader, sleep)
+    worker = _Worker(Path(project_root), execution, table_io, granted, retry or RetryPolicy(), loader, sleep, externals)
     _drive(worker, pending, results, {e.task_id for e in plan.entries}, limit, fail_fast=fail_fast)
     for entry in pending:
         results[entry.task_id] = TaskResult(entry.task_id, NOT_RUN, "run stopped after a failure")

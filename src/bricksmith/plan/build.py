@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 DEFAULT_OPERATION = "write"
 
 
-_PLAN_KEYS = frozenset({"operations", "protected"})
+_PLAN_KEYS = frozenset({"operations", "protected", "external_sinks"})
 
 
 def graph_fingerprint(graph: TaskGraph) -> str:
@@ -74,6 +74,14 @@ def _closure(seeds: set[str], links: dict[str, set[str]]) -> set[str]:
     return seen
 
 
+def _sinks(node: TaskNode) -> tuple[str, ...]:
+    """Return the external sinks a task declares in ``metadata.external_sinks`` (a list of resource names)."""
+    listed = node.metadata.get("external_sinks")
+    if isinstance(listed, list):
+        return tuple(sorted({item for item in listed if isinstance(item, str)}))
+    return ()
+
+
 def _entry(graph: TaskGraph, node: TaskNode, action: str, reason: str, by: str) -> PlanEntry:
     physical = {o.name: o.physical for o in graph.outputs}
     reads = {
@@ -96,6 +104,7 @@ def _entry(graph: TaskGraph, node: TaskNode, action: str, reason: str, by: str) 
         depends_on=graph.dependencies(node.id, kind=DATA),
         reads=tuple(sorted(reads, key=lambda r: (r.kind, r.reference, r.physical))),
         targets=tuple(Target(name, physical[name], operations, protected, options) for name in node.outputs),
+        sinks=_sinks(node),
     )
 
 

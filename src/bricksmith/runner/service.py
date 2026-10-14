@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     import argparse
 
     from bricksmith.graph import TaskGraph
-    from bricksmith.runner.io import TableIO
+    from bricksmith.runner.io import ExternalProvider, TableIO
     from bricksmith.runner.report import RunReport
 
 
@@ -88,7 +88,13 @@ def run_summary(report: RunReport) -> str:
     return "\n".join(lines)
 
 
-def apply_from_args(args: argparse.Namespace, plan: Plan, graph: TaskGraph, table_io: TableIO | None = None) -> int:
+def apply_from_args(
+    args: argparse.Namespace,
+    plan: Plan,
+    graph: TaskGraph,
+    table_io: TableIO | None = None,
+    externals: ExternalProvider | None = None,
+) -> int:
     """Authorize, validate and run ``plan``; print and optionally save the report; return the exit code."""
     context = context_from_args(args)
     grants = grants_from(args.authorize)
@@ -103,6 +109,7 @@ def apply_from_args(args: argparse.Namespace, plan: Plan, graph: TaskGraph, tabl
         retry=RetryPolicy(args.retries + 1, args.retry_delay),
         dry_run=args.dry_run,
         fail_fast=args.fail_fast,
+        externals=externals,
     )
     if args.report:
         Path(args.report).write_text(report.to_json(), encoding="utf-8")

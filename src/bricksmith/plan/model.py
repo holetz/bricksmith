@@ -127,10 +127,13 @@ class PlanEntry:
     depends_on: tuple[str, ...] = ()
     reads: tuple[ReadBinding, ...] = ()
     targets: tuple[Target, ...] = ()
+    sinks: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
-        """Return the serializable form."""
+        """Return the serializable form; ``sinks`` (declared external sinks) appear only when present."""
+        extra: dict[str, object] = {"sinks": list(self.sinks)} if self.sinks else {}
         return {
+            **extra,
             "action": self.action,
             "depends_on": list(self.depends_on),
             "function": self.function,
@@ -159,6 +162,7 @@ class PlanEntry:
             depends_on=tuple(data["depends_on"]),
             reads=tuple(ReadBinding.from_dict(item) for item in data["reads"]),
             targets=tuple(Target.from_dict(item) for item in data["targets"]),
+            sinks=tuple(data.get("sinks", ())),
         )
 
 

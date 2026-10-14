@@ -30,6 +30,18 @@ class TableIO(Protocol):
         ...
 
 
+class ExternalProvider(Protocol):
+    """Reads declared external inputs and writes declared external sinks (see ``bricksmith.io``)."""
+
+    def read_external(self, name: str) -> object:
+        """Return the bounded content of the external resource ``name``."""
+        ...
+
+    def write_external(self, name: str, data: object) -> None:
+        """Deliver ``data`` to the external sink ``name``."""
+        ...
+
+
 class InMemoryTableIO:
     """Thread-safe fake backed by a dictionary; ``writes`` records every call in order."""
 

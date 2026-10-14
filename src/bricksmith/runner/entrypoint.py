@@ -22,11 +22,19 @@ from bricksmith.runner.service import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bricksmith.runner.io import TableIO
+    from bricksmith.runner.io import ExternalProvider, TableIO
 
 
-def run_entrypoint(argv: Sequence[str] | None = None, *, table_io: TableIO | None = None) -> int:
-    """Apply a plan or selection from ``argv``; return the CLI exit code (``table_io`` injects a backend)."""
+def run_entrypoint(
+    argv: Sequence[str] | None = None,
+    *,
+    table_io: TableIO | None = None,
+    externals: ExternalProvider | None = None,
+) -> int:
+    """Apply a plan or selection from ``argv``; return the CLI exit code.
+
+    ``table_io`` and ``externals`` inject the table backend and the external I/O provider.
+    """
     args_list = list(sys.argv[1:] if argv is None else argv)
     parser = BricksmithParser(prog="python -m bricksmith.runner.entrypoint")
     add_global_options(parser, top=True)
@@ -42,7 +50,7 @@ def run_entrypoint(argv: Sequence[str] | None = None, *, table_io: TableIO | Non
             plan = read_plan(args.plan)
         else:
             plan, graph = plan_from_args(args)
-        return apply_from_args(args, plan, graph, table_io)
+        return apply_from_args(args, plan, graph, table_io, externals)
     except BricksmithError as error:
         emit_error(error, as_json="--json" in args_list)
         return error.exit_code

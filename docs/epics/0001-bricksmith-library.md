@@ -211,13 +211,13 @@ partial progress follow a documented recovery path.
 
 Depends on: BS-04, BS-07.
 
-- [ ] BS-05.1 Compare declared and live schema/metadata, including nested types, nullability,
+- [x] BS-05.1 Compare declared and live schema/metadata, including nested types, nullability,
   comments, checks, keys and physical properties.
-- [ ] BS-05.2 Plan add/rename/drop/type changes with independent compatibility and precision rules;
+- [x] BS-05.2 Plan add/rename/drop/type changes with independent compatibility and precision rules;
   require explicit handling of narrowing and incompatible families.
-- [ ] BS-05.3 Apply ordered migrations with constraint dependencies and required physical table
+- [x] BS-05.3 Apply ordered migrations with constraint dependencies and required physical table
   properties, preserving unaffected data and metadata.
-- [ ] BS-05.4 Make retention, clustering and optimization configurable maintenance operations;
+- [x] BS-05.4 Make retention, clustering and optimization configurable maintenance operations;
   separate their schedule and cost from ordinary task writes.
 
 Acceptance: schema drift cannot cause silent truncation or unbounded replacement. A synthetic
@@ -262,13 +262,13 @@ a project preset requires no library fork. No private naming inventory ships in 
 
 Depends on: BS-04, BS-07.
 
-- [ ] BS-08.1 Plan dataset comparisons from schemas and declared keys, with explicit column
+- [x] BS-08.1 Plan dataset comparisons from schemas and declared keys, with explicit column
   selection, numeric tolerances and unsupported-type diagnostics.
-- [ ] BS-08.2 Compare rows with null-safe values, missing/extra key counts, duplicate/null-key
+- [x] BS-08.2 Compare rows with null-safe values, missing/extra key counts, duplicate/null-key
   findings and bounded discrepancy samples.
-- [ ] BS-08.3 Express grain, join cardinality, nullability, accepted values, completeness and freshness checks as
+- [x] BS-08.3 Express grain, join cardinality, nullability, accepted values, completeness and freshness checks as
   ordinary tasks or task conditions with reportable results.
-- [ ] BS-08.4 Produce reproducible regression reports and machine-readable pass/fail gates for
+- [x] BS-08.4 Produce reproducible regression reports and machine-readable pass/fail gates for
   migrations, experiments and model-input changes.
 
 Acceptance: independently calculated fixtures cover identical/changed/missing rows, invalid keys,
@@ -280,13 +280,13 @@ are returned locally.
 
 Depends on: BS-01, BS-02, BS-04.
 
-- [ ] BS-09.1 Define injectable adapter contracts and implement one SQL connector proof with
+- [x] BS-09.1 Define injectable adapter contracts and implement one SQL connector proof with
   secret references, bounded reads/writes and explicit error/retry behavior.
-- [ ] BS-09.2 Represent external sources and sinks in task metadata; define incremental bookmarks,
+- [x] BS-09.2 Represent external sources and sinks in task metadata; define incremental bookmarks,
   partial-transfer recovery and transaction limitations.
-- [ ] BS-09.3 Provide volume artifact I/O with explicit resource names, path validation, bounded
+- [x] BS-09.3 Provide volume artifact I/O with explicit resource names, path validation, bounded
   transfers and local/deployed client support.
-- [ ] BS-09.4 Define opt-in materialization/checkpoint and export policies with limits and cleanup;
+- [x] BS-09.4 Define opt-in materialization/checkpoint and export policies with limits and cleanup;
   document which behavior is unavailable on each supported runtime.
 
 Acceptance: local adapter tests and a disposable SQL database verify interrupted transfer and

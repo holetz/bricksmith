@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bricksmith.errors import AuthorizationError, ValidationError
+from bricksmith.errors import AuthorizationError, ConfigError, ValidationError
 from bricksmith.tasks.declaration import DATA, EXTERNAL, TEMPORAL
 
 if TYPE_CHECKING:
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from bricksmith.context import ExecutionContext
     from bricksmith.plan import PlanEntry, Target
-    from bricksmith.runner.io import TableIO
+    from bricksmith.runner.io import ExternalProvider, TableIO
 
 
 class TaskContext:
@@ -28,13 +28,15 @@ class TaskContext:
         execution: ExecutionContext,
         table_io: TableIO,
         granted: frozenset[tuple[str, str]] = frozenset(),
+        externals: ExternalProvider | None = None,
     ) -> None:
-        """Bind the entry, the explicit execution context, the I/O backend and the granted pairs."""
+        """Bind the entry, the execution context, the I/O backend, the granted pairs and optional external I/O."""
         self.entry = entry
         self.execution = execution
         self.io = table_io
         self.writes: list[tuple[str, str]] = []
         self._granted = granted
+        self._externals = externals
 
     @property
     def task_id(self) -> str:
@@ -58,8 +60,24 @@ class TaskContext:
         return self._read(DATA, name)
 
     def read_external(self, name: str) -> object:
-        """Read a resource the project does not produce."""
-        return self._read(EXTERNAL, name)
+        """Read a resource the project does not produce, through the external provider when one is configured."""
+        if self._externals is None:
+            return self._read(EXTERNAL, name)
+        for binding in self.entry.reads:
+            if binding.kind == EXTERNAL and binding.reference == name:
+                return self._externals.read_external(binding.physical)
+        msg = f"{self.task_id} read external {name!r}, which the plan did not bind to this task"
+        raise ValidationError(msg)
+
+    def write_external(self, name: str, data: object) -> None:
+        """Write ``data`` to an external sink declared in the task's ``external_sinks`` metadata."""
+        if name not in self.entry.sinks:
+            msg = f"{self.task_id} wrote external sink {name!r}, which the task did not declare in external_sinks"
+            raise ValidationError(msg)
+        if self._externals is None:
+            msg = "no external provider is configured; pass externals= to run_plan"
+            raise ConfigError(msg)
+        self._externals.write_external(name, data)
 
     def read_state(self, name: str) -> object:
         """Read an earlier window or version of an output."""
