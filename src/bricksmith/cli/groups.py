@@ -5,4 +5,5 @@ GROUPS: tuple[str, ...] = (
     "bricksmith.cli.env_group",
     "bricksmith.registry.cli",
     "bricksmith.cli.tasks_group",
+    "bricksmith.runner.cli",
 )

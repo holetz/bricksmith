@@ -7,6 +7,7 @@ EXIT_UNEXPECTED = 1
 EXIT_USAGE = 2
 EXIT_CONFIG = 3
 EXIT_VALIDATION = 4
+EXIT_RUN_FAILED = 5
 
 EXIT_CODES: dict[int, str] = {
     EXIT_OK: "success",
@@ -14,6 +15,7 @@ EXIT_CODES: dict[int, str] = {
     EXIT_USAGE: "command-line usage error",
     EXIT_CONFIG: "configuration, authentication or missing-extra error",
     EXIT_VALIDATION: "invalid input rejected before any remote call",
+    EXIT_RUN_FAILED: "a run finished with failed or blocked tasks",
 }
 
 
@@ -64,3 +66,21 @@ class ValidationError(BricksmithError):
 
     code = "validation_error"
     exit_code = EXIT_VALIDATION
+
+
+class PlanError(ValidationError):
+    """A plan is invalid, incomplete or cannot be started."""
+
+    code = "plan_error"
+
+
+class StalePlanError(PlanError):
+    """The project, graph, targets or context changed since the plan was reviewed."""
+
+    code = "stale_plan"
+
+
+class AuthorizationError(PlanError):
+    """A mutation is not authorized by the reviewed plan, or an authorization exceeds its scope."""
+
+    code = "authorization_error"

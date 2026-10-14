@@ -175,13 +175,13 @@ No valid edge is resolved by an unrelated object's short name.
 
 Depends on: BS-02.
 
-- [ ] BS-03.1 Plan root selection and upstream/downstream closure with deterministic ordering,
+- [x] BS-03.1 Plan root selection and upstream/downstream closure with deterministic ordering,
   include/exclude filters and reasons for disabled, static or skipped tasks.
-- [ ] BS-03.2 Execute with bounded concurrency, result states, retry policy and dependent-task
+- [x] BS-03.2 Execute with bounded concurrency, result states, retry policy and dependent-task
   blocking; preserve successful independent branches when another branch fails.
-- [ ] BS-03.3 Add dry-run, validated plan application and failed-subgraph replay through the CLI
+- [x] BS-03.3 Add dry-run, validated plan application and failed-subgraph replay through the CLI
   and the common deployed entrypoint.
-- [ ] BS-03.4 Attach mutation authorization to explicit objects and operations in a reviewed plan;
+- [x] BS-03.4 Attach mutation authorization to explicit objects and operations in a reviewed plan;
   reject stale targets or changed scope instead of implicitly widening authorization.
 
 Acceptance: dry-run makes no writes; invalid or incomplete closure never starts. Injected failure
