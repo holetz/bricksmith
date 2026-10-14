@@ -1,7 +1,7 @@
 {
   "specs": {
     "card": {
-      "provider": "github",
+      "provider": "none",
       "at": "capture"
     }
   }
