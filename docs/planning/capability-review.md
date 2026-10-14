@@ -3,7 +3,7 @@
 - Date: 2026-10-13
 - Method: read-only inspection of a private reference project's documentation, Python definition
   inventory and selected test contracts. No reference application, tests, job or deployment ran.
-- Result: [development epic](../epics/0001-bricksmith-library.md).
+- Result: [development epic](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md).
 
 ## Evidence and limits
 

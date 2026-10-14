@@ -1,7 +1,7 @@
 # Schema evolution and maintenance
 
 Declare the table you want; bricksmith compares it with the live Delta table, plans the migration, and applies
-only what your policy allows. Specification: [BS-05](../specs/bs-05-evolution.md).
+only what your policy allows. Specification: [BS-05](https://github.com/holetz/bricksmith/blob/quenching/specs/archive/12.md).
 
 ## Declare
 

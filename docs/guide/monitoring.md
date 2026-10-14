@@ -1,7 +1,7 @@
 # Monitoring: references, drift, model quality and alerts
 
 Monitoring reads **tables** (features, or predictions with score, label, segment and time columns); it never calls a
-model. Definitions, formulas and edge cases are in the [BS-13 specification](../specs/bs-13-monitoring.md).
+model. Definitions, formulas and edge cases are in the [BS-13 specification](https://github.com/holetz/bricksmith/blob/quenching/specs/archive/20.md).
 
 ## Fit a reference, compare a window
 

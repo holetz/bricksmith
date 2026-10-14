@@ -95,4 +95,4 @@ bricksmith tasks validate --project .        # exit code 4 when the graph has er
 
 In Python, `bricksmith.graph.load_graph(".")` returns the same `TaskGraph`. It keeps every task,
 output, edge and diagnostic even when the project is invalid, and `order()` gives a deterministic
-run order. See the [specification](../specs/bs-02-discovery.md) for the diagnostic codes.
+run order. See the [specification](https://github.com/holetz/bricksmith/blob/quenching/specs/archive/9.md) for the diagnostic codes.

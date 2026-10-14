@@ -2,7 +2,7 @@
 
 `bricksmith.io` moves small, bounded data between tasks and the outside world. It imports only the
 standard library; drivers are chosen by the caller (`pip install 'bricksmith[postgres]'` adds
-`psycopg`). Design record: [BS-09](../specs/bs-09-external-io.md).
+`psycopg`). Design record: [BS-09](https://github.com/holetz/bricksmith/blob/quenching/specs/archive/16.md).
 
 ## Declare external I/O
 
