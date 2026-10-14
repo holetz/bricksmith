@@ -138,157 +138,183 @@
       "source": "docs/specs/README.md",
       "sha256": "50a36756cea775807dc5ee45212a3d9d0b0b960b1001f6eafd14402c3d6befba",
       "bytes": 4379,
-      "canonicalId": 32
+      "canonicalId": 32,
+      "currentCanonicalPath": "specs/archive/32.md"
     },
     {
       "source": "docs/specs/bs-00-foundation.md",
       "sha256": "91179c393d6c42a3e9f51ffff2b27d8e2b49fc6a840fdc710c982c48d8c88c9d",
       "bytes": 3631,
-      "canonicalId": 7
+      "canonicalId": 7,
+      "currentCanonicalPath": "specs/7.md"
     },
     {
       "source": "docs/specs/bs-01-context.md",
       "sha256": "27d759fce89d6a57451fd98c085719afc2542b9c01976f72b2c12f49f9f9a00b",
       "bytes": 3802,
-      "canonicalId": 8
+      "canonicalId": 8,
+      "currentCanonicalPath": "specs/archive/8.md"
     },
     {
       "source": "docs/specs/bs-02-discovery.md",
       "sha256": "f3d9d0a1b41d30c0cb3f1468d748e2a5c6d2aeabae4272b05a9acd162090119f",
       "bytes": 6096,
-      "canonicalId": 9
+      "canonicalId": 9,
+      "currentCanonicalPath": "specs/archive/9.md"
     },
     {
       "source": "docs/specs/bs-03-execution.md",
       "sha256": "ce0a6b8ab32bb93087353632b11236b6994ff14b39e87050c90691c30fee4a24",
       "bytes": 5358,
-      "canonicalId": 10
+      "canonicalId": 10,
+      "currentCanonicalPath": "specs/archive/10.md"
     },
     {
       "source": "docs/specs/bs-04-storage.md",
       "sha256": "25d0029e885125f2aeede1d2f04837cd9a083b89de5a4636615aff4b661a78fe",
       "bytes": 6121,
-      "canonicalId": 11
+      "canonicalId": 11,
+      "currentCanonicalPath": "specs/archive/11.md"
     },
     {
       "source": "docs/specs/bs-05-evolution.md",
       "sha256": "49ffe3028dbf8355399aff5a7b82795a2c59dccdf23ebc5d4787d1eadd9db844",
       "bytes": 5234,
-      "canonicalId": 12
+      "canonicalId": 12,
+      "currentCanonicalPath": "specs/archive/12.md"
     },
     {
       "source": "docs/specs/bs-06-bundles.md",
       "sha256": "f03803ff1bcb8187c1b1b533ceef1b2f555858e7bd4aa066736732231ab9219d",
       "bytes": 4924,
-      "canonicalId": 13
+      "canonicalId": 13,
+      "currentCanonicalPath": "specs/archive/13.md"
     },
     {
       "source": "docs/specs/bs-07-registry.md",
       "sha256": "902ee82024b5cd97ba023e5e6fc347a52892422a0e7fb270ae97ff943a75903b",
       "bytes": 2885,
-      "canonicalId": 14
+      "canonicalId": 14,
+      "currentCanonicalPath": "specs/14.md"
     },
     {
       "source": "docs/specs/bs-08-nonfinite-freshness.md",
       "sha256": "f5d4e575068495448641f5897867026642e313b92d4667bb0e25978b75ad0af8",
       "bytes": 4192,
-      "canonicalId": 26
+      "canonicalId": 26,
+      "currentCanonicalPath": "specs/26.md"
     },
     {
       "source": "docs/specs/bs-08-null-required-match.md",
       "sha256": "74107ad49d2128c2e1898768ddfcdd7660382dbd7ab8bfda9ef9a34ec6b458b9",
       "bytes": 4427,
-      "canonicalId": 25
+      "canonicalId": 25,
+      "currentCanonicalPath": "specs/25.md"
     },
     {
       "source": "docs/specs/bs-08-quality.md",
       "sha256": "e2496b45f9b2ecb722fa6343adc575abda767421f5c58beee85c48c70dc6a3de",
       "bytes": 4046,
-      "canonicalId": 15
+      "canonicalId": 15,
+      "currentCanonicalPath": "specs/archive/15.md"
     },
     {
       "source": "docs/specs/bs-09-external-io.md",
       "sha256": "a089b44812e093c7bd9b49f548e75d922e1dd41de66346256ee9fcc5427d3035",
       "bytes": 3803,
-      "canonicalId": 16
+      "canonicalId": 16,
+      "currentCanonicalPath": "specs/archive/16.md"
     },
     {
       "source": "docs/specs/bs-10-experiments.md",
       "sha256": "0e4430a3fe0e8b0466c05bda31f6398c6a63657afe5e2153d9c8f96cde9cf3c9",
       "bytes": 3953,
-      "canonicalId": 17
+      "canonicalId": 17,
+      "currentCanonicalPath": "specs/archive/17.md"
     },
     {
       "source": "docs/specs/bs-11-model-datasets.md",
       "sha256": "ab3488b6a495dca45531d6f1ae47ad36105eb7a55bb213137b54d2c904967a4f",
       "bytes": 2294,
-      "canonicalId": 18
+      "canonicalId": 18,
+      "currentCanonicalPath": "specs/archive/18.md"
     },
     {
       "source": "docs/specs/bs-12-artifact-registration.md",
       "sha256": "bb3f4ce5bc425211977e8f14188cd147e098a0330c216497054c3afba9283d24",
       "bytes": 5311,
-      "canonicalId": 2
+      "canonicalId": 2,
+      "currentCanonicalPath": "specs/2.md"
     },
     {
       "source": "docs/specs/bs-12-models.md",
       "sha256": "c1366f49099a5bc882322c38c76a34d0330990d59da2e616b11d76f3f7988571",
       "bytes": 4744,
-      "canonicalId": 19
+      "canonicalId": 19,
+      "currentCanonicalPath": "specs/19.md"
     },
     {
       "source": "docs/specs/bs-13-monitoring.md",
       "sha256": "3cd60b3230fdcb0c25a2adf7940d592f9927d998e67db05134e745009f056bfb",
       "bytes": 5859,
-      "canonicalId": 20
+      "canonicalId": 20,
+      "currentCanonicalPath": "specs/archive/20.md"
     },
     {
       "source": "docs/specs/bs-14-operations.md",
       "sha256": "bbccf2f2e7a6d3e2959ac91292bd1c19c24d655c45e6ce0afe0baef670b85559",
       "bytes": 4353,
-      "canonicalId": 21
+      "canonicalId": 21,
+      "currentCanonicalPath": "specs/archive/21.md"
     },
     {
       "source": "docs/specs/bs-14-quoted-secret-redaction.md",
       "sha256": "6f8d58f6d08bb76a9f308ca9932ee67372b8c5a944447adb5f3002fae207b0c5",
       "bytes": 4227,
-      "canonicalId": 24
+      "canonicalId": 24,
+      "currentCanonicalPath": "specs/24.md"
     },
     {
       "source": "docs/specs/bs-15-governance.md",
       "sha256": "89706304f208efe2faa82d0134bf926874a5447ec347ad1c87ca5b9d174ec214",
       "bytes": 2555,
-      "canonicalId": 22
+      "canonicalId": 22,
+      "currentCanonicalPath": "specs/archive/22.md"
     },
     {
       "source": "docs/specs/bs-16-catalog.md",
       "sha256": "a40c101194a601763df8ea175f11ad37c5f58c55dd3f33c281293f54334804b9",
       "bytes": 4738,
-      "canonicalId": 3
+      "canonicalId": 3,
+      "currentCanonicalPath": "specs/3.md"
     },
     {
       "source": "docs/specs/bs-16-template.md",
       "sha256": "a8e8fa5349a3452c8d8a9fd9dca08d2f880bb0f71d76030d7d8a5578bb0efa47",
       "bytes": 4824,
-      "canonicalId": 4
+      "canonicalId": 4,
+      "currentCanonicalPath": "specs/4.md"
     },
     {
       "source": "docs/specs/bs-17-release-readiness.md",
       "sha256": "4b141770fac0f6a998bbf71cc6d1b288bb946840301f5ac0100e87a4792b9947",
       "bytes": 4255,
-      "canonicalId": 23
+      "canonicalId": 23,
+      "currentCanonicalPath": "specs/23.md"
     },
     {
       "source": "docs/epics/0001-bricksmith-library.md",
       "sha256": "4075f21e3b71a353f229164e4bbc8d55f6548495608d865884b7f04ea124393a",
       "bytes": 41438,
-      "canonicalId": 5
+      "canonicalId": 5,
+      "currentCanonicalPath": "specs/5.md"
     },
     {
       "source": "docs/epics/0002-autopilot-human-decisions.md",
       "sha256": "1cbb4df4135eaee400839d515f7340c0e81137683afc0bed366c805d1e425d25",
       "bytes": 3960,
-      "canonicalId": 6
+      "canonicalId": 6,
+      "currentCanonicalPath": "specs/6.md"
     }
   ],
   "normalization": {
@@ -646,10 +672,10 @@
     {
       "id": 32,
       "title": "Move Bricksmith planning to the canonical quenching branch",
-      "phase": "plans",
-      "canonicalPath": "specs/32.md",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/32.md",
       "tasks": {
-        "checked": 1,
+        "checked": 3,
         "blocked": 0,
         "total": 3
       }
@@ -665,5 +691,8 @@
     "privateGate": "PASS",
     "cards": "none",
     "githubHistory": "retained; no hard delete"
-  }
+  },
+  "metadataCleanupCommit": "42b636eef7712425645b7c9d299730b678640844",
+  "migrationOutcome": "done; product development paused",
+  "branchRefAtVerification": "28a7394e6960d36d505d44685989345e74f05608"
 }

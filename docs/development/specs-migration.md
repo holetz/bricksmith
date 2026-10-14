@@ -51,3 +51,7 @@ Artifact #2 remains partial/external-blocked: task 1.1 is committed in `01f828e`
 Full model proof (#19), unattended CI (#7/#28), plugin execution (#27/#30), generated automation
 (#29) and supported live-Claude proof (#31) remain unresolved. Human-decision epic #6 owns the
 never-forced choices. Migration does not automatically resume or clear any of these blockers.
+
+The canonical [migration record](https://github.com/holetz/bricksmith/blob/quenching/specs/archive/32.md)
+is archived done. Cleanup checkpoint: `42b636e`; original source history and private normalization
+exception are recorded in the manifest. Development remains paused.
