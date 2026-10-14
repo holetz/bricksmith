@@ -1,0 +1,84 @@
+# BS-04. Storage and task write strategies
+
+Slice of [Epic 0001](../epics/0001-bricksmith-library.md); [user guide](../guide/writes.md).
+
+## Decisions closed
+
+**Where write metadata lives.** A task declares its write in the open `metadata` mapping (BS-02). Every key
+except `operations` and `protected` travels in the plan as `Target.options` (part of the plan fingerprint, so
+a changed write makes a reviewed plan stale). `TaskContext.write` hands the backend those options plus
+`target` (logical name), `protected` and `granted`. `TableIO.write` gained an optional `options` argument.
+
+**Strategy resolution.** The operation names the strategy. The generic operation `write` takes the strategy
+from `metadata.write`. No strategy is an error; there is no hidden default.
+
+**Strategies** (`bricksmith.storage.STRATEGIES`): `overwrite` (full refresh), `static_refresh` (full refresh
+only when the target is missing or empty; `force: true` overrides), `replace_partitions`, `append`, `merge`,
+`scd2`, `view`, `materialized_view`, `function`. Table strategies take a Spark DataFrame; object strategies take
+the defining SQL text (for `function`, the expression, with `params` and `returns` in metadata).
+
+**Common policies.** `on_empty`: `fail` (default) | `skip` | `allow_empty`. `late_input`: `fail` (default) |
+`drop` | `accept` (rows before the window start; `accept` is invalid for `replace_partitions` and `scd2`).
+`window: {column, start, end}` is half-open `[start, end)`; input at or after `end` or with a null window column
+always fails. `input_checks` and `target_checks` are SQL boolean expressions that must hold for every row of
+the input (before) or the target (after). Pre and post hooks are Python callables on `SparkTableIO`.
+
+**Protection.** Checked first, before any read or write, from `protected`/`granted` (the runner already checks
+the grant; the backend repeats it). Refusal writes nothing.
+
+**Plan before effect.** `plan_write` is pure: it validates columns and policies and returns a serializable
+`WritePlan` (ordered `guard`, `check`, `create`, `mutate`, `post_check` steps with their SQL). `SparkTableIO`
+reports the plan (`plans`, `reporter`, log) before the first mutating step; `explain` returns it without effects.
+The input is registered as a temporary view only. A target whose columns differ from the input is rejected;
+evolution is BS-05.
+
+**Repeat-run semantics.** Every strategy is one atomic Delta commit and is idempotent for the same input:
+`overwrite`/`static_refresh` replace everything; `replace_partitions` replaces only the named partitions
+(`partitions`), the window, or the partitions present in the input (`partition_by`), neighbours untouched;
+`merge` upserts on `keys`; `append` with `keys` inserts only absent keys (existing keys are never updated);
+`append` without keys needs `allow_duplicates: true` and is explicitly not idempotent. Keys must be non-null
+and unique in the input (checked before mutation).
+
+**SCD2.** Needs `keys` (grain), `tracked` columns and an `effective` column; adds `valid_from`, `valid_to`,
+`is_current` (renamable). Intervals are `[valid_from, valid_to)`; the current row has no `valid_to`. Per key
+the input holds one state. A key with no current row gets one at its effective time. A changed tracked value at
+a later effective time closes the current row at that time and inserts the new version. Unchanged input is a
+no-op. Corrections and removals: a redelivery at the current version's effective time with different values
+fails (`conflicting`); backdated input (earlier effective time, different values) fails or, with
+`late_input: drop`, is ignored; history corrections and removals (keys absent from the input stay current) are
+out of scope and not implemented. After each write `verify` (default true) checks one current row per key and
+well-formed, non-overlapping intervals; `scd2_violations` is the pure equivalent.
+
+**Objects and helpers.** `view`, `materialized_view` and `function` use the same lifecycle (protection, plan,
+report). A refused materialized view raises `UnsupportedError` (`unsupported`). `plan_restore`,
+`plan_retention`, `table_history`, `current_version` and `run_plan` cover history, restore and retention;
+reads (`SparkTableIO.read`) never write.
+
+**Recovery after partial progress.** A single write commits atomically, so a failed pre-check or step leaves
+the target at `version_before`. A failed post-check happens after the commit: restore with
+`plan_restore(target, version=result.version_before)`, or fix the cause and re-run (idempotent). A task with
+several writes can stop between them: `run replay` re-runs the failed task, and its writes are repeat-safe.
+Late-created tables (`create` step) are empty tables and are safe to keep.
+
+**Registry write side (BS-07.4).** With `registry` and `registry_tables` set, a successful table write applies
+the table comment, column comments and `bricksmith.*` properties, changing only what differs and keeping
+unrelated comments and properties.
+
+## Public contract
+
+`bricksmith.storage`: `SparkTableIO`, `WriteResult`, `HookEvent`, `parse_write_spec`, `WriteSpec`, `Window`,
+`plan_write`, `WritePlan`, `Step`, `plan_restore`, `plan_retention`, `run_plan`, `table_history`,
+`current_version`, `scd2_violations`, `plan_registry_metadata`, `apply_registry_metadata`, errors
+`WriteSpecError`, `EmptyInputError`, `WriteCheckError`, `UnsupportedError`. `default_table_io(context)` returns
+`SparkTableIO.for_context(context)`. No CLI command.
+
+## Deviations
+
+`Target` gained `options`; `TableIO.write` gained `options`; `pyproject.toml` ignores `S608` under
+`src/bricksmith/storage` (SQL is rendered from validated identifiers and quoted literals).
+
+## Acceptance tests
+
+`tests/unit/storage/`: metadata validation, every strategy's plan, protection before planning, empty and late
+policies, hooks, unsupported reporting, SCD2 invariants, helpers, registry plan, option plumbing.
+`tests/remote/test_storage.py`: see [evidence](../evidence/bs-04-free.md).

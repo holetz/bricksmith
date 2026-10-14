@@ -24,6 +24,7 @@ mlops = ["mlflow", "scikit-learn"]
 
 [project.scripts]
 bricksmith = "bricksmith.cli.main:main"
+bricksmith-run = "bricksmith.runner.entrypoint:run_entrypoint"
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -58,6 +59,8 @@ ignore = ["COM812", "CPY001", "D203", "D213", "ISC001"]
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["D", "INP001", "PLR2004", "S101", "S603", "S607"]
 "scripts/**" = ["INP001", "S603", "S607", "T201"]
+# The storage package renders SQL from validated identifiers and quoted literals by design.
+"src/bricksmith/storage/**" = ["S608"]
 
 [tool.pyright]
 pythonVersion = "3.12"

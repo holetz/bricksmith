@@ -192,13 +192,13 @@ authorizing one protected output does not authorize its upstream graph.
 
 Depends on: BS-01, BS-03.
 
-- [ ] BS-04.1 Implement table I/O and full/static refresh with explicit empty-input and protection
+- [x] BS-04.1 Implement table I/O and full/static refresh with explicit empty-input and protection
   policies; report the operation before mutation.
-- [ ] BS-04.2 Implement partition replacement and incremental append/merge with declared keys,
+- [x] BS-04.2 Implement partition replacement and incremental append/merge with declared keys,
   temporal windows, late-input policy and repeat-run semantics.
-- [ ] BS-04.3 Implement SCD2 behavior with validated grain, tracked columns, current-row and
+- [x] BS-04.3 Implement SCD2 behavior with validated grain, tracked columns, current-row and
   interval invariants; specify corrections and removals before implementing them.
-- [ ] BS-04.4 Support views, materialized views where available and functions through the same
+- [x] BS-04.4 Support views, materialized views where available and functions through the same
   task lifecycle; expose retention,
   history/restore and pre/postcondition hooks without hidden writes during reads.
 
@@ -228,13 +228,13 @@ stable. Ordinary writes do not trigger unconditional expensive optimization.
 
 Depends on: BS-00, BS-02, BS-03.
 
-- [ ] BS-06.1 Implement native resources for catalogs, schemas, volumes and jobs from the metadata
+- [x] BS-06.1 Implement native resources for catalogs, schemas, volumes and jobs from the metadata
   model with explicit management/ownership and target scoping.
-- [ ] BS-06.2 Assemble jobs with shared tasks, validated parameters, scheduling or data triggers,
+- [x] BS-06.2 Assemble jobs with shared tasks, validated parameters, scheduling or data triggers,
   notifications, run identity and resource limits.
-- [ ] BS-06.3 Support scripts, notebooks, conditions and run-job tasks where the common protocol
+- [x] BS-06.3 Support scripts, notebooks, conditions and run-job tasks where the common protocol
   and verified platform schema permit them.
-- [ ] BS-06.4 Validate cross-job edges and resource collisions; provide resource snapshots and
+- [x] BS-06.4 Validate cross-job edges and resource collisions; provide resource snapshots and
   plan output; preserve hand-written resources that Python support does not cover.
 
 Acceptance: the same project validates without Spark and deploys without generated YAML. Mixed

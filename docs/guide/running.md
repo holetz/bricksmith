@@ -40,4 +40,4 @@ failing tasks (not `BricksmithError`s). `--concurrency` bounds parallel tasks. T
 A task receives a context with `read`, `read_external`, `read_state` and `write(name, data,
 operation=None)`; writes go only to the task's own targets. A job task runs
 `python -m bricksmith.runner.entrypoint --task <id> --no-upstream --env <name>`, with the same options
-and the same explicit context as the CLI. The Spark/Delta table backend arrives with a later slice.
+and the same explicit context as the CLI. The Spark/Delta table backend and the write strategies are described in [writes](writes.md).

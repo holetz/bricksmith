@@ -47,7 +47,7 @@ running. Retries: `RetryPolicy(max_attempts, delay, backoff)`; `BricksmithError`
 Reads resolve only references the plan bound to the task; writes only the task's own targets and
 declared operations. Table access goes through `TableIO.read(physical)` and
 `TableIO.write(physical, data, *, operation)`; `InMemoryTableIO` is the test fake and
-`default_table_io(context)` returns a backend that fails on use until BS-04 supplies Spark/Delta.
+`default_table_io(context)` returns the Spark/Delta backend of BS-04 (`TableIO.write` also takes `options`, see BS-04).
 The task's return value is ignored; the task writes explicitly.
 
 **Dry-run.** Validates the plan and grants, imports no module, calls no task, writes nothing; run entries

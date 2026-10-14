@@ -30,6 +30,9 @@ if TYPE_CHECKING:
 DEFAULT_OPERATION = "write"
 
 
+_PLAN_KEYS = frozenset({"operations", "protected"})
+
+
 def graph_fingerprint(graph: TaskGraph) -> str:
     """Hash what execution depends on (identities, flags, outputs, edges); line numbers are ignored."""
     content = {
@@ -80,6 +83,7 @@ def _entry(graph: TaskGraph, node: TaskNode, action: str, reason: str, by: str) 
     }
     operations = declared_operations(node)
     protected = node.metadata.get("protected") is True
+    options = {k: v for k, v in node.metadata.items() if k not in _PLAN_KEYS}
     return PlanEntry(
         task_id=node.id,
         action=action,
@@ -91,7 +95,7 @@ def _entry(graph: TaskGraph, node: TaskNode, action: str, reason: str, by: str) 
         variant=dict(node.variant),
         depends_on=graph.dependencies(node.id, kind=DATA),
         reads=tuple(sorted(reads, key=lambda r: (r.kind, r.reference, r.physical))),
-        targets=tuple(Target(name, physical[name], operations, protected) for name in node.outputs),
+        targets=tuple(Target(name, physical[name], operations, protected, options) for name in node.outputs),
     )
 
 

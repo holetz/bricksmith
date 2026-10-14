@@ -82,5 +82,7 @@ class TaskContext:
         if target.protected and (target.physical, chosen) not in self._granted:
             msg = f"{target.physical!r} is protected and {chosen!r} is not authorized"
             raise AuthorizationError(msg)
-        self.io.write(target.physical, data, operation=chosen)
+        granted = (target.physical, chosen) in self._granted
+        options = {**target.options, "target": target.name, "protected": target.protected, "granted": granted}
+        self.io.write(target.physical, data, operation=chosen, options=options)
         self.writes.append((target.physical, chosen))

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Protocol
 from bricksmith.errors import ConfigError, ValidationError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from bricksmith.context import ExecutionContext
 
 
@@ -18,8 +20,13 @@ class TableIO(Protocol):
         """Return the content of the physical object."""
         ...
 
-    def write(self, physical: str, data: object, *, operation: str) -> None:
-        """Apply ``operation`` (for example ``overwrite`` or ``merge``) with ``data`` to the object."""
+    def write(
+        self, physical: str, data: object, *, operation: str, options: Mapping[str, object] | None = None
+    ) -> None:
+        """Apply ``operation`` (for example ``overwrite`` or ``merge``) with ``data``.
+
+        ``options`` are the task's write metadata plus ``target``, ``protected`` and ``granted``.
+        """
         ...
 
 
@@ -42,7 +49,14 @@ class InMemoryTableIO:
                 raise ValidationError(msg)
             return self.tables[physical]
 
-    def write(self, physical: str, data: object, *, operation: str) -> None:
+    def write(
+        self,
+        physical: str,
+        data: object,
+        *,
+        operation: str,
+        options: Mapping[str, object] | None = None,  # noqa: ARG002 - interface
+    ) -> None:
         """Store ``data`` and record the write."""
         with self._lock:
             self.tables[physical] = data
@@ -56,7 +70,14 @@ class UnconfiguredTableIO:
         """Fail: no table backend is configured."""
         raise self._error(physical)
 
-    def write(self, physical: str, data: object, *, operation: str) -> None:  # noqa: ARG002 - interface
+    def write(
+        self,
+        physical: str,
+        data: object,  # noqa: ARG002 - interface
+        *,
+        operation: str,  # noqa: ARG002 - interface
+        options: Mapping[str, object] | None = None,  # noqa: ARG002 - interface
+    ) -> None:
         """Fail: no table backend is configured."""
         raise self._error(physical)
 
@@ -65,6 +86,8 @@ class UnconfiguredTableIO:
         return ConfigError(f"no table I/O backend is configured; cannot reach {physical!r}")
 
 
-def default_table_io(context: ExecutionContext) -> TableIO:  # noqa: ARG001 - the real backend uses the context
-    """Return the table I/O for ``context``; the Spark/Delta backend replaces this body."""
-    return UnconfiguredTableIO()
+def default_table_io(context: ExecutionContext) -> TableIO:
+    """Return the Spark/Delta table I/O for ``context``; the session is created on first use."""
+    from bricksmith.storage.spark import SparkTableIO  # noqa: PLC0415 - heavy integrations load where used
+
+    return SparkTableIO.for_context(context)

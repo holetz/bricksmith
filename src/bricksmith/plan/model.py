@@ -68,20 +68,30 @@ class Target:
     physical: str
     operations: tuple[str, ...]
     protected: bool = False
+    options: Mapping[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
-        """Return the serializable form."""
-        return {
+        """Return the serializable form; ``options`` (the task's write metadata) appear only when present."""
+        data: dict[str, object] = {
             "name": self.name,
             "operations": list(self.operations),
             "physical": self.physical,
             "protected": self.protected,
         }
+        if self.options:
+            data["options"] = dict(self.options)
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Target:
         """Rebuild a target from :meth:`to_dict` output."""
-        return cls(data["name"], data["physical"], tuple(data["operations"]), bool(data["protected"]))
+        return cls(
+            data["name"],
+            data["physical"],
+            tuple(data["operations"]),
+            bool(data["protected"]),
+            dict(data.get("options") or {}),
+        )
 
 
 @dataclass(frozen=True)
