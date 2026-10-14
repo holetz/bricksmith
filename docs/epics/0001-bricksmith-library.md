@@ -536,3 +536,42 @@ Track additional SQL drivers and database-specific bulk transfers, chat-provider
 CSV/spreadsheet exports beyond the proven bounded contract, independent report renderers and
 conversational data resources as separate specifications. Online serving, streaming and standalone
 data applications require a new product-scope decision rather than growing this epic implicitly.
+
+## Autonomous run paused — 2026-10-14
+
+The human requested stopping at the next safe checkpoint. The run is **paused**: no automated
+continuation, development, remote diagnosis, push, PR or merge until explicit resume. Work is
+on `epic-0001`, with no claim of a merge into `main` or publication.
+
+Committed implementation: `d72b46e` preserves the model/monitoring recovery and its evidence;
+`01f828e` adds persisted-artifact inventory hardening. CQ #1 is archived; CQ #2 stays partial:
+task 1.1 done in `01f828e`, task 1.2 and external MLflow artifact transport remain unresolved.
+The real Free lifecycle failed at registration after 314.91 seconds; downstream model lifecycle
+assertions were not run. The bounded tracking diagnosis returned empty inventories despite upload
+success and deleted its experiment. Local regressions do not establish remote lifecycle proof.
+See [artifact follow-up](../specs/bs-12-artifact-registration.md) and [BS-12 evidence](../evidence/bs-12-free.md).
+
+| Unimplemented candidate | Tracking and durable contract | Next step after explicit resume |
+|---|---|---|
+| Offline catalog / registry catalog integration | [CQ #3](https://github.com/holetz/bricksmith/issues/3); [catalog spec](../specs/bs-16-catalog.md) | Implement pure graph/registry catalog, CLI and deterministic synthetic tests |
+| Static Copier starter | [CQ #4](https://github.com/holetz/bricksmith/issues/4); [template spec](../specs/bs-16-template.md) | After catalog, prepare static neutral project; real render/update only with actual Copier |
+| Release readiness | Local proposed/stopped only; [readiness spec](../specs/bs-17-release-readiness.md) | After template, run unchanged clean wheel/sdist verification and consolidate truthful coverage |
+| Quoted secret redaction | Local proposed/stopped only; [redaction spec](../specs/bs-14-quoted-secret-redaction.md) | Fix reproduced synthetic whitespace-suffix leak; high severity |
+| Null required cardinality match | Local proposed/stopped only; [null-match spec](../specs/bs-08-null-required-match.md) | Align null policy across row/pandas/Spark adapters; high severity |
+| Nonfinite freshness threshold | Local proposed/stopped only; [freshness spec](../specs/bs-08-nonfinite-freshness.md) | After null-match work, reject invalid finite-threshold configuration; medium severity |
+
+The three new correctness findings were independently reproduced offline with synthetic inputs
+on 2026-10-14; none is fixed. Serialize catalog → template → readiness over this epic and delivery
+docs; serialize null-match → freshness over quality tests/docs. Artifact issue #2 needs a concrete
+transport fix before further remote diagnosis. Shared CLI and epic edits have one writer at a time.
+No CQ records were created for the four local-only candidates or the local human-decision epic;
+search exact titles before creating them on resume. [Human-decision epic](0002-autopilot-human-decisions.md)
+reserves unattended CI authentication, generated CI/Copier execution, plugin runtime workflows and
+supported Claude installation/live smoke. Full BS-16/BS-18/BS-17 acceptance remains pending.
+
+Metadata handoff validation: synthetic redaction/cardinality/freshness reproductions confirmed;
+CQ #3/#4 definitions validate with only nonblocking unrefined warnings. No new product or remote
+acceptance test ran for this paused metadata checkpoint. Existing proof remains tied to its
+recorded implementation, environment, date and command, never inferred from skipped tests.
+
+Store discrepancy: CQ 6.4.0 resolves the legacy GitHub default because .agents/quenching.json is absent; the human expects the quenching branch store. Existing CQ issues #1-#4 are retained, and local specs are durable. No migration, configuration change, issue creation or protocol/store-design choice is authorized by this paused handoff. Resolve the store decision with the human before any resumed tracker writes; do not modify the quenching branch automatically.

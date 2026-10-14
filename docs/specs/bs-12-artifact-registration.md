@@ -63,3 +63,11 @@ bound to the wrong run.
 This hardening prevents false training success; it does not repair or prove remote transport.
 No additional diagnostic or lifecycle retry is authorized without a concrete transport fix.
 Issue 2 remains open, and BS-12 epic tasks remain unchecked.
+
+## Paused handoff — 2026-10-14
+
+User requested a stop on 2026-10-14; the run is paused. Branch epic-0001, recovery d72b46e and local hardening 01f828e; no main merge, publication, push or PR occurred. Preserve task 1.1 done (01f828e) and task 1.2 pending with unresolved external transport. Resume only on explicit human instruction; the next technical step is a concrete transport-fix hypothesis grounded in persisted-inventory evidence, then bounded unchanged selected-Free lifecycle proof with cleanup. Do not retry diagnosis without that evidence.
+
+Prior proof: local inventory regressions are implemented; real Free lifecycle failed after 314.91 seconds before aliases/prediction/migration/retirement. Synthetic tracking diagnosis produced empty persisted inventories despite upload success and deleted its experiment. Tests and cleanup are recorded in [BS-12 evidence](../evidence/bs-12-free.md); no new remote test was run for this handoff.
+
+Store discrepancy: CQ 6.4.0 resolves the legacy GitHub default because .agents/quenching.json is absent; the human expects the quenching branch store. Existing CQ issues #1-#4 are retained, and local specs are durable. No migration, configuration change, issue creation or protocol/store-design choice is authorized by this paused handoff. Resolve the store decision with the human before any resumed tracker writes; do not modify the quenching branch automatically.
