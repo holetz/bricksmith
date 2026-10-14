@@ -7,12 +7,27 @@ requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Israel Holetz", email = "holetz@gmail.com" }]
 classifiers = [
-  "Development Status :: 1 - Planning",
+  "Development Status :: 2 - Pre-Alpha",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
   "Private :: Do Not Upload",
 ]
 dependencies = []
+
+[project.optional-dependencies]
+spark = ["databricks-connect"]
+sdk = ["databricks-sdk"]
+bundle = ["databricks-bundles"]
+mlops = ["mlflow", "scikit-learn"]
+postgres = [
+    "psycopg[binary]>=3.3.6",
+]
+
+[project.scripts]
+bricksmith = "bricksmith.cli.main:main"
+bricksmith-run = "bricksmith.runner.entrypoint:run_entrypoint"
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -27,6 +42,14 @@ dev = [
   "pytest",
   "ruff",
 ]
+# Heavy integrations for tests/remote; deliberately not a default group (see docs/specs/bs-00-foundation.md).
+remote = [
+  "databricks-bundles",
+  "databricks-connect>=17.3,<18",
+  "databricks-sdk",
+  "mlflow",
+  "scikit-learn",
+]
 
 [tool.ruff]
 line-length = 120
@@ -39,8 +62,14 @@ select = ["ALL"]
 ignore = ["COM812", "CPY001", "D203", "D213", "ISC001"]
 
 [tool.ruff.lint.per-file-ignores]
+"examples/**" = ["ANN", "D", "INP001", "E501"]  # synthetic task modules mirror what a project writes
 "**/tests/**" = ["D", "INP001", "PLR2004", "S101", "S603", "S607"]
 "scripts/**" = ["INP001", "S603", "S607", "T201"]
+# The storage package renders SQL from validated identifiers and quoted literals by design.
+"src/bricksmith/storage/**" = ["S608"]
+# Schema evolution renders DDL from validated identifiers and quoted literals by design.
+"src/bricksmith/evolution/**" = ["S608"]
+"src/bricksmith/quality/**" = ["S608"]
 
 [tool.pyright]
 pythonVersion = "3.12"
@@ -48,8 +77,13 @@ typeCheckingMode = "standard"
 venvPath = "."
 venv = ".venv"
 include = ["src", "scripts", "tests"]
+exclude = ["tests/remote/fixtures"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
-markers = ["databricks: needs a Databricks workspace (Free Edition in CI)"]
+markers = [
+  "databricks: needs a Databricks workspace (Free Edition in CI)",
+  "slow: builds and installs the package into clean environments",
+  "docker: needs a local Docker daemon (disposable containers); skipped when unavailable",
+]

@@ -1,0 +1,138 @@
+"""Check evaluation over lists of dict rows (reference implementation for tests and small local data)."""
+
+from __future__ import annotations
+
+import datetime as dt
+from collections import Counter
+from typing import TYPE_CHECKING
+
+from bricksmith.quality.checks import Check, CheckResult, _unavailable, _verdict
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+
+def _key_stats(rows: Sequence[Mapping[str, object]], cols: Sequence[str]) -> tuple[Counter[tuple[object, ...]], int]:
+    counts: Counter[tuple[object, ...]] = Counter()
+    nulls = 0
+    for row in rows:
+        key = tuple(row.get(c) for c in cols)
+        if any(v is None for v in key):
+            nulls += 1
+        else:
+            counts[key] += 1
+    return counts, nulls
+
+
+def _dups(counts: Counter[tuple[object, ...]]) -> tuple[int, int]:
+    over = [n for n in counts.values() if n > 1]
+    return len(over), sum(over)
+
+
+def _grain(check: Check, rows: Sequence[Mapping[str, object]], limit: int | None) -> CheckResult:
+    counts, nulls = _key_stats(rows, check.columns)
+    groups, dup_rows = _dups(counts)
+    problems = []
+    if groups:
+        problems.append(f"{groups} duplicate key group(s) over {dup_rows} row(s)")
+    if nulls:
+        problems.append(f"{nulls} row(s) with a null key")
+    samples = [dict(zip(check.columns, k, strict=True)) for k, n in sorted(counts.items(), key=repr) if n > 1]
+    observed = {"duplicate_groups": groups, "duplicate_rows": dup_rows, "null_key_rows": nulls, "rows": len(rows)}
+    return _verdict(check, problems, observed, samples[:limit] if limit else ())
+
+
+def _cardinality(
+    check: Check, rows: Sequence[Mapping[str, object]], other: Sequence[Mapping[str, object]], limit: int | None
+) -> CheckResult:
+    lcounts, lnulls = _key_stats(rows, check.columns)
+    rcounts, rnulls = _key_stats(other, check.columns)
+    ldup, rdup = _dups(lcounts)[0] + lnulls, _dups(rcounts)[0] + rnulls
+    unmatched = sum(n for k, n in lcounts.items() if k not in rcounts)
+    problems = []
+    if check.expect in ("one_to_one", "one_to_many") and ldup:
+        problems.append(f"{ldup} duplicate or null key group(s) on the data side")
+    if check.expect in ("one_to_one", "many_to_one") and rdup:
+        problems.append(f"{rdup} duplicate or null key group(s) on the other side")
+    if check.require_match and unmatched:
+        problems.append(f"{unmatched} data row(s) have no match in the other relation")
+    observed = {"data_invalid_groups": ldup, "other_invalid_groups": rdup, "unmatched_rows": unmatched}
+    samples = [
+        dict(zip(check.columns, k, strict=True)) for k in sorted((k for k in lcounts if k not in rcounts), key=repr)
+    ]
+    return _verdict(check, problems, observed, samples[:limit] if limit and check.require_match else ())
+
+
+def _nullability(check: Check, rows: Sequence[Mapping[str, object]]) -> CheckResult:
+    nulls = {c: sum(1 for r in rows if r.get(c) is None) for c in check.columns}
+    problems = [f"{c}: {n} null(s)" for c, n in nulls.items() if n]
+    return _verdict(check, problems, {"nulls": nulls, "rows": len(rows)})
+
+
+def _accepted(check: Check, rows: Sequence[Mapping[str, object]], limit: int | None) -> CheckResult:
+    column = check.columns[0]
+    bad = [
+        r.get(column)
+        for r in rows
+        if (r.get(column) is None and not check.allow_null)
+        or (r.get(column) is not None and r.get(column) not in check.values)
+    ]
+    distinct = sorted({repr(v): v for v in bad}.items())
+    problems = [f"{len(bad)} row(s) outside the accepted values"] if bad else []
+    return _verdict(
+        check, problems, {"invalid_rows": len(bad), "rows": len(rows)}, [v for _, v in distinct][: limit or 0]
+    )
+
+
+def _completeness(check: Check, rows: Sequence[Mapping[str, object]]) -> CheckResult:
+    if not rows:
+        return _unavailable(check, "the dataset is empty, so completeness is undefined")
+    filled = {c: sum(1 for r in rows if r.get(c) is not None) for c in check.columns}
+    problems = [
+        f"{c}: {n}/{len(rows)} non-null is below {check.min_ratio}"
+        for c, n in filled.items()
+        if n < check.min_ratio * len(rows)
+    ]
+    observed = {"non_null": filled, "rows": len(rows)}
+    return _verdict(check, problems, observed)
+
+
+def _freshness(check: Check, rows: Sequence[Mapping[str, object]], now: dt.datetime | None) -> CheckResult:
+    values = [r.get(check.columns[0]) for r in rows if r.get(check.columns[0]) is not None]
+    if not values:
+        return _unavailable(check, "no non-null value to measure freshness")
+    if not all(isinstance(v, dt.date) for v in values):
+        return _unavailable(check, "freshness needs date or timestamp values")
+    stamps = [
+        v.replace(tzinfo=v.tzinfo or dt.UTC)
+        if isinstance(v, dt.datetime)
+        else dt.datetime(v.year, v.month, v.day, tzinfo=dt.UTC)  # type: ignore[union-attr]
+        for v in values
+    ]
+    newest = max(stamps)
+    age = ((now or dt.datetime.now(dt.UTC)) - newest).total_seconds()
+    problems = (
+        [f"newest value is {age:.0f}s old, above {check.max_age_seconds:.0f}s"] if age > check.max_age_seconds else []
+    )
+    return _verdict(check, problems, {"age_seconds": age, "newest": newest.isoformat()})
+
+
+def run(
+    check: Check,
+    rows: list[Mapping[str, object]],
+    other: list[Mapping[str, object]] | None,
+    limit: int | None,
+    now: dt.datetime | None,
+) -> CheckResult:
+    """Dispatch ``check`` to its row implementation."""
+    if check.kind == "grain":
+        return _grain(check, rows, limit)
+    if check.kind == "cardinality":
+        return _cardinality(check, rows, other or [], limit)
+    if check.kind == "nullability":
+        return _nullability(check, rows)
+    if check.kind == "accepted_values":
+        return _accepted(check, rows, limit)
+    if check.kind == "completeness":
+        return _completeness(check, rows)
+    return _freshness(check, rows, now)

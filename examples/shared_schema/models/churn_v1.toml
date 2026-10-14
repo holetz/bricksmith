@@ -1,0 +1,41 @@
+# Explicit model identity: the task metadata and this file must agree on `model`.
+model = "churn_v1"
+reference_date = "2026-05-15"
+
+[columns]
+key = ["customer_id"]
+snapshot = "snapshot_date"
+feature_time = "feature_time"
+
+[[exclusions]]   # first matching reason wins
+name = "minor"
+where = { column = "age", op = "lt", value = 18 }
+
+[[exclusions]]
+name = "inactive"
+where = { column = "active", op = "eq", value = false }
+
+[[segments]]
+name = "high_spend"
+where = { column = "spend", op = "ge", value = 100.0 }
+
+[[segments]]
+name = "standard"
+where = { column = "spend", op = "lt", value = 100.0 }
+
+[[features]]     # ordered feature contract
+name = "tenure_months"
+type = "int"
+
+[[features]]
+name = "spend"
+type = "double"
+
+[label]
+name = "churned"
+type = "int"
+maturity_days = 30
+
+[split]
+train_until = "2026-02-28"
+evaluation_from = "2026-03-15"

@@ -2,7 +2,7 @@
 
 - Status: accepted product direction; implementation belongs to the epic's child specifications
 - Date: 2026-10-13
-- Owners: BS-00, BS-16, BS-18 and BS-17 in [Epic 0001](../epics/0001-bricksmith-library.md)
+- Owners: BS-00, BS-16, BS-18 and BS-17 in [Epic 0001](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md)
 
 ## Three delivery surfaces
 

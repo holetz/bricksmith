@@ -1,0 +1,698 @@
+{
+  "sourceHead": "302de4db43e4cb5f6a912cc3cdc0f069ada063a6",
+  "date": "2026-10-14",
+  "sources": [
+    {
+      "source": "docs/specs/README.md",
+      "sha256": "50a36756cea775807dc5ee45212a3d9d0b0b960b1001f6eafd14402c3d6befba",
+      "bytes": 4379
+    },
+    {
+      "source": "docs/specs/bs-00-foundation.md",
+      "sha256": "91179c393d6c42a3e9f51ffff2b27d8e2b49fc6a840fdc710c982c48d8c88c9d",
+      "bytes": 3631
+    },
+    {
+      "source": "docs/specs/bs-01-context.md",
+      "sha256": "27d759fce89d6a57451fd98c085719afc2542b9c01976f72b2c12f49f9f9a00b",
+      "bytes": 3802
+    },
+    {
+      "source": "docs/specs/bs-02-discovery.md",
+      "sha256": "f3d9d0a1b41d30c0cb3f1468d748e2a5c6d2aeabae4272b05a9acd162090119f",
+      "bytes": 6096
+    },
+    {
+      "source": "docs/specs/bs-03-execution.md",
+      "sha256": "ce0a6b8ab32bb93087353632b11236b6994ff14b39e87050c90691c30fee4a24",
+      "bytes": 5358
+    },
+    {
+      "source": "docs/specs/bs-04-storage.md",
+      "sha256": "25d0029e885125f2aeede1d2f04837cd9a083b89de5a4636615aff4b661a78fe",
+      "bytes": 6121
+    },
+    {
+      "source": "docs/specs/bs-05-evolution.md",
+      "sha256": "49ffe3028dbf8355399aff5a7b82795a2c59dccdf23ebc5d4787d1eadd9db844",
+      "bytes": 5234
+    },
+    {
+      "source": "docs/specs/bs-06-bundles.md",
+      "sha256": "f03803ff1bcb8187c1b1b533ceef1b2f555858e7bd4aa066736732231ab9219d",
+      "bytes": 4924
+    },
+    {
+      "source": "docs/specs/bs-07-registry.md",
+      "sha256": "902ee82024b5cd97ba023e5e6fc347a52892422a0e7fb270ae97ff943a75903b",
+      "bytes": 2885
+    },
+    {
+      "source": "docs/specs/bs-08-nonfinite-freshness.md",
+      "sha256": "f5d4e575068495448641f5897867026642e313b92d4667bb0e25978b75ad0af8",
+      "bytes": 4192
+    },
+    {
+      "source": "docs/specs/bs-08-null-required-match.md",
+      "sha256": "74107ad49d2128c2e1898768ddfcdd7660382dbd7ab8bfda9ef9a34ec6b458b9",
+      "bytes": 4427
+    },
+    {
+      "source": "docs/specs/bs-08-quality.md",
+      "sha256": "e2496b45f9b2ecb722fa6343adc575abda767421f5c58beee85c48c70dc6a3de",
+      "bytes": 4046
+    },
+    {
+      "source": "docs/specs/bs-09-external-io.md",
+      "sha256": "a089b44812e093c7bd9b49f548e75d922e1dd41de66346256ee9fcc5427d3035",
+      "bytes": 3803
+    },
+    {
+      "source": "docs/specs/bs-10-experiments.md",
+      "sha256": "0e4430a3fe0e8b0466c05bda31f6398c6a63657afe5e2153d9c8f96cde9cf3c9",
+      "bytes": 3953
+    },
+    {
+      "source": "docs/specs/bs-11-model-datasets.md",
+      "sha256": "ab3488b6a495dca45531d6f1ae47ad36105eb7a55bb213137b54d2c904967a4f",
+      "bytes": 2294
+    },
+    {
+      "source": "docs/specs/bs-12-artifact-registration.md",
+      "sha256": "bb3f4ce5bc425211977e8f14188cd147e098a0330c216497054c3afba9283d24",
+      "bytes": 5311
+    },
+    {
+      "source": "docs/specs/bs-12-models.md",
+      "sha256": "c1366f49099a5bc882322c38c76a34d0330990d59da2e616b11d76f3f7988571",
+      "bytes": 4744
+    },
+    {
+      "source": "docs/specs/bs-13-monitoring.md",
+      "sha256": "3cd60b3230fdcb0c25a2adf7940d592f9927d998e67db05134e745009f056bfb",
+      "bytes": 5859
+    },
+    {
+      "source": "docs/specs/bs-14-operations.md",
+      "sha256": "bbccf2f2e7a6d3e2959ac91292bd1c19c24d655c45e6ce0afe0baef670b85559",
+      "bytes": 4353
+    },
+    {
+      "source": "docs/specs/bs-14-quoted-secret-redaction.md",
+      "sha256": "6f8d58f6d08bb76a9f308ca9932ee67372b8c5a944447adb5f3002fae207b0c5",
+      "bytes": 4227
+    },
+    {
+      "source": "docs/specs/bs-15-governance.md",
+      "sha256": "89706304f208efe2faa82d0134bf926874a5447ec347ad1c87ca5b9d174ec214",
+      "bytes": 2555
+    },
+    {
+      "source": "docs/specs/bs-16-catalog.md",
+      "sha256": "a40c101194a601763df8ea175f11ad37c5f58c55dd3f33c281293f54334804b9",
+      "bytes": 4738
+    },
+    {
+      "source": "docs/specs/bs-16-template.md",
+      "sha256": "a8e8fa5349a3452c8d8a9fd9dca08d2f880bb0f71d76030d7d8a5578bb0efa47",
+      "bytes": 4824
+    },
+    {
+      "source": "docs/specs/bs-17-release-readiness.md",
+      "sha256": "4b141770fac0f6a998bbf71cc6d1b288bb946840301f5ac0100e87a4792b9947",
+      "bytes": 4255
+    },
+    {
+      "source": "docs/epics/0001-bricksmith-library.md",
+      "sha256": "4075f21e3b71a353f229164e4bbc8d55f6548495608d865884b7f04ea124393a",
+      "bytes": 41438
+    },
+    {
+      "source": "docs/epics/0002-autopilot-human-decisions.md",
+      "sha256": "1cbb4df4135eaee400839d515f7340c0e81137683afc0bed366c805d1e425d25",
+      "bytes": 3960
+    }
+  ],
+  "mapping": [
+    {
+      "source": "docs/specs/README.md",
+      "sha256": "50a36756cea775807dc5ee45212a3d9d0b0b960b1001f6eafd14402c3d6befba",
+      "bytes": 4379,
+      "canonicalId": 32,
+      "currentCanonicalPath": "specs/archive/32.md"
+    },
+    {
+      "source": "docs/specs/bs-00-foundation.md",
+      "sha256": "91179c393d6c42a3e9f51ffff2b27d8e2b49fc6a840fdc710c982c48d8c88c9d",
+      "bytes": 3631,
+      "canonicalId": 7,
+      "currentCanonicalPath": "specs/7.md"
+    },
+    {
+      "source": "docs/specs/bs-01-context.md",
+      "sha256": "27d759fce89d6a57451fd98c085719afc2542b9c01976f72b2c12f49f9f9a00b",
+      "bytes": 3802,
+      "canonicalId": 8,
+      "currentCanonicalPath": "specs/archive/8.md"
+    },
+    {
+      "source": "docs/specs/bs-02-discovery.md",
+      "sha256": "f3d9d0a1b41d30c0cb3f1468d748e2a5c6d2aeabae4272b05a9acd162090119f",
+      "bytes": 6096,
+      "canonicalId": 9,
+      "currentCanonicalPath": "specs/archive/9.md"
+    },
+    {
+      "source": "docs/specs/bs-03-execution.md",
+      "sha256": "ce0a6b8ab32bb93087353632b11236b6994ff14b39e87050c90691c30fee4a24",
+      "bytes": 5358,
+      "canonicalId": 10,
+      "currentCanonicalPath": "specs/archive/10.md"
+    },
+    {
+      "source": "docs/specs/bs-04-storage.md",
+      "sha256": "25d0029e885125f2aeede1d2f04837cd9a083b89de5a4636615aff4b661a78fe",
+      "bytes": 6121,
+      "canonicalId": 11,
+      "currentCanonicalPath": "specs/archive/11.md"
+    },
+    {
+      "source": "docs/specs/bs-05-evolution.md",
+      "sha256": "49ffe3028dbf8355399aff5a7b82795a2c59dccdf23ebc5d4787d1eadd9db844",
+      "bytes": 5234,
+      "canonicalId": 12,
+      "currentCanonicalPath": "specs/archive/12.md"
+    },
+    {
+      "source": "docs/specs/bs-06-bundles.md",
+      "sha256": "f03803ff1bcb8187c1b1b533ceef1b2f555858e7bd4aa066736732231ab9219d",
+      "bytes": 4924,
+      "canonicalId": 13,
+      "currentCanonicalPath": "specs/archive/13.md"
+    },
+    {
+      "source": "docs/specs/bs-07-registry.md",
+      "sha256": "902ee82024b5cd97ba023e5e6fc347a52892422a0e7fb270ae97ff943a75903b",
+      "bytes": 2885,
+      "canonicalId": 14,
+      "currentCanonicalPath": "specs/14.md"
+    },
+    {
+      "source": "docs/specs/bs-08-nonfinite-freshness.md",
+      "sha256": "f5d4e575068495448641f5897867026642e313b92d4667bb0e25978b75ad0af8",
+      "bytes": 4192,
+      "canonicalId": 26,
+      "currentCanonicalPath": "specs/26.md"
+    },
+    {
+      "source": "docs/specs/bs-08-null-required-match.md",
+      "sha256": "74107ad49d2128c2e1898768ddfcdd7660382dbd7ab8bfda9ef9a34ec6b458b9",
+      "bytes": 4427,
+      "canonicalId": 25,
+      "currentCanonicalPath": "specs/25.md"
+    },
+    {
+      "source": "docs/specs/bs-08-quality.md",
+      "sha256": "e2496b45f9b2ecb722fa6343adc575abda767421f5c58beee85c48c70dc6a3de",
+      "bytes": 4046,
+      "canonicalId": 15,
+      "currentCanonicalPath": "specs/archive/15.md"
+    },
+    {
+      "source": "docs/specs/bs-09-external-io.md",
+      "sha256": "a089b44812e093c7bd9b49f548e75d922e1dd41de66346256ee9fcc5427d3035",
+      "bytes": 3803,
+      "canonicalId": 16,
+      "currentCanonicalPath": "specs/archive/16.md"
+    },
+    {
+      "source": "docs/specs/bs-10-experiments.md",
+      "sha256": "0e4430a3fe0e8b0466c05bda31f6398c6a63657afe5e2153d9c8f96cde9cf3c9",
+      "bytes": 3953,
+      "canonicalId": 17,
+      "currentCanonicalPath": "specs/archive/17.md"
+    },
+    {
+      "source": "docs/specs/bs-11-model-datasets.md",
+      "sha256": "ab3488b6a495dca45531d6f1ae47ad36105eb7a55bb213137b54d2c904967a4f",
+      "bytes": 2294,
+      "canonicalId": 18,
+      "currentCanonicalPath": "specs/archive/18.md"
+    },
+    {
+      "source": "docs/specs/bs-12-artifact-registration.md",
+      "sha256": "bb3f4ce5bc425211977e8f14188cd147e098a0330c216497054c3afba9283d24",
+      "bytes": 5311,
+      "canonicalId": 2,
+      "currentCanonicalPath": "specs/2.md"
+    },
+    {
+      "source": "docs/specs/bs-12-models.md",
+      "sha256": "c1366f49099a5bc882322c38c76a34d0330990d59da2e616b11d76f3f7988571",
+      "bytes": 4744,
+      "canonicalId": 19,
+      "currentCanonicalPath": "specs/19.md"
+    },
+    {
+      "source": "docs/specs/bs-13-monitoring.md",
+      "sha256": "3cd60b3230fdcb0c25a2adf7940d592f9927d998e67db05134e745009f056bfb",
+      "bytes": 5859,
+      "canonicalId": 20,
+      "currentCanonicalPath": "specs/archive/20.md"
+    },
+    {
+      "source": "docs/specs/bs-14-operations.md",
+      "sha256": "bbccf2f2e7a6d3e2959ac91292bd1c19c24d655c45e6ce0afe0baef670b85559",
+      "bytes": 4353,
+      "canonicalId": 21,
+      "currentCanonicalPath": "specs/archive/21.md"
+    },
+    {
+      "source": "docs/specs/bs-14-quoted-secret-redaction.md",
+      "sha256": "6f8d58f6d08bb76a9f308ca9932ee67372b8c5a944447adb5f3002fae207b0c5",
+      "bytes": 4227,
+      "canonicalId": 24,
+      "currentCanonicalPath": "specs/24.md"
+    },
+    {
+      "source": "docs/specs/bs-15-governance.md",
+      "sha256": "89706304f208efe2faa82d0134bf926874a5447ec347ad1c87ca5b9d174ec214",
+      "bytes": 2555,
+      "canonicalId": 22,
+      "currentCanonicalPath": "specs/archive/22.md"
+    },
+    {
+      "source": "docs/specs/bs-16-catalog.md",
+      "sha256": "a40c101194a601763df8ea175f11ad37c5f58c55dd3f33c281293f54334804b9",
+      "bytes": 4738,
+      "canonicalId": 3,
+      "currentCanonicalPath": "specs/3.md"
+    },
+    {
+      "source": "docs/specs/bs-16-template.md",
+      "sha256": "a8e8fa5349a3452c8d8a9fd9dca08d2f880bb0f71d76030d7d8a5578bb0efa47",
+      "bytes": 4824,
+      "canonicalId": 4,
+      "currentCanonicalPath": "specs/4.md"
+    },
+    {
+      "source": "docs/specs/bs-17-release-readiness.md",
+      "sha256": "4b141770fac0f6a998bbf71cc6d1b288bb946840301f5ac0100e87a4792b9947",
+      "bytes": 4255,
+      "canonicalId": 23,
+      "currentCanonicalPath": "specs/23.md"
+    },
+    {
+      "source": "docs/epics/0001-bricksmith-library.md",
+      "sha256": "4075f21e3b71a353f229164e4bbc8d55f6548495608d865884b7f04ea124393a",
+      "bytes": 41438,
+      "canonicalId": 5,
+      "currentCanonicalPath": "specs/5.md"
+    },
+    {
+      "source": "docs/epics/0002-autopilot-human-decisions.md",
+      "sha256": "1cbb4df4135eaee400839d515f7340c0e81137683afc0bed366c805d1e425d25",
+      "bytes": 3960,
+      "canonicalId": 6,
+      "currentCanonicalPath": "specs/6.md"
+    }
+  ],
+  "normalization": {
+    "id": 1,
+    "section": "Validation",
+    "normalization": "one private absolute machine checkout path replaced by generic project checkout text",
+    "originalSha256": "313a9a470dda2f458c98d720b2b64049c2762bcab3d657f93aea2de9ed2aff21",
+    "sanitizedSha256": "1f87f11b7cf7d18e4e3b4e42a76f59bd73d6af7d0b6192c52232f40de7e4fa7a",
+    "originalRetained": "ignored local export and original GitHub issue edit history",
+    "replacements": 1
+  },
+  "migrationRecord": 32,
+  "records": [
+    {
+      "id": 1,
+      "title": "Restore default development gate for documentation and optional PostgreSQL tests",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/1.md",
+      "tasks": {
+        "checked": 1,
+        "blocked": 0,
+        "total": 1
+      }
+    },
+    {
+      "id": 2,
+      "title": "Make logged model artifacts downloadable for Unity Catalog registration",
+      "phase": "plans",
+      "canonicalPath": "specs/2.md",
+      "tasks": {
+        "checked": 1,
+        "blocked": 1,
+        "total": 2
+      }
+    },
+    {
+      "id": 3,
+      "title": "Generate deterministic offline data and model catalog",
+      "phase": "plans",
+      "canonicalPath": "specs/3.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 3
+      }
+    },
+    {
+      "id": 4,
+      "title": "Prepare static Copier starter without executable automation",
+      "phase": "plans",
+      "canonicalPath": "specs/4.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 3
+      }
+    },
+    {
+      "id": 5,
+      "title": "Epic 0001. Deliver the complete bricksmith data and model workflow",
+      "phase": "plans",
+      "canonicalPath": "specs/5.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 24
+      }
+    },
+    {
+      "id": 6,
+      "title": "Autopilot human-decision epic — delivery execution surfaces",
+      "phase": "plans",
+      "canonicalPath": "specs/6.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 7,
+      "title": "BS-00 Packaging and delivery foundation",
+      "phase": "plans",
+      "canonicalPath": "specs/7.md",
+      "tasks": {
+        "checked": 5,
+        "blocked": 0,
+        "total": 6
+      }
+    },
+    {
+      "id": 8,
+      "title": "BS-01. Context, parameters and lazy integrations",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/8.md",
+      "tasks": {
+        "checked": 5,
+        "blocked": 0,
+        "total": 5
+      }
+    },
+    {
+      "id": 9,
+      "title": "BS-02. Discovery, identities and dependency graph",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/9.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 10,
+      "title": "BS-03. Inspectable execution and reprocessing",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/10.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 11,
+      "title": "BS-04. Storage and task write strategies",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/11.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 12,
+      "title": "BS-05. Schema evolution and maintenance",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/12.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 13,
+      "title": "BS-06. Native bundles and orchestration",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/13.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 14,
+      "title": "BS-07. Registry, naming and semantic metadata",
+      "phase": "plans",
+      "canonicalPath": "specs/14.md",
+      "tasks": {
+        "checked": 3,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 15,
+      "title": "BS-08. Data quality, comparison and regression evidence",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/15.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 16,
+      "title": "BS-09. External inputs, connectors and volume artifacts",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/16.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 17,
+      "title": "BS-10. Isolated experiments and frozen inputs",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/17.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 18,
+      "title": "BS-11. Model datasets and shared-scope task behaviors",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/18.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 19,
+      "title": "BS-12. Model training, artifacts and lifecycle",
+      "phase": "plans",
+      "canonicalPath": "specs/19.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 20,
+      "title": "BS-13. Data and model monitoring",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/20.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 21,
+      "title": "BS-14. Operational observability and cost controls",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/21.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 22,
+      "title": "BS-15. Governance declarations and verifiable state",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/22.md",
+      "tasks": {
+        "checked": 4,
+        "blocked": 0,
+        "total": 4
+      }
+    },
+    {
+      "id": 23,
+      "title": "Record release readiness and workspace capability evidence",
+      "phase": "plans",
+      "canonicalPath": "specs/23.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 2
+      }
+    },
+    {
+      "id": 24,
+      "title": "Redact entire quoted secret assignments with whitespace",
+      "phase": "plans",
+      "canonicalPath": "specs/24.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 2
+      }
+    },
+    {
+      "id": 25,
+      "title": "Fail required cardinality matches for null data keys",
+      "phase": "plans",
+      "canonicalPath": "specs/25.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 2
+      }
+    },
+    {
+      "id": 26,
+      "title": "Reject nonfinite freshness thresholds before evaluation",
+      "phase": "plans",
+      "canonicalPath": "specs/26.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 0,
+        "total": 2
+      }
+    },
+    {
+      "id": 27,
+      "title": "BS-18 Claude Code plugin delivery",
+      "phase": "plans",
+      "canonicalPath": "specs/27.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 4,
+        "total": 5
+      }
+    },
+    {
+      "id": 28,
+      "title": "Unattended free/corporate CI authentication",
+      "phase": "plans",
+      "canonicalPath": "specs/28.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 1,
+        "total": 1
+      }
+    },
+    {
+      "id": 29,
+      "title": "Generated CI and Copier execution surfaces",
+      "phase": "plans",
+      "canonicalPath": "specs/29.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 1,
+        "total": 1
+      }
+    },
+    {
+      "id": 30,
+      "title": "Plugin runtime workflow scope",
+      "phase": "plans",
+      "canonicalPath": "specs/30.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 1,
+        "total": 1
+      }
+    },
+    {
+      "id": 31,
+      "title": "Supported Claude installation and live smoke route",
+      "phase": "plans",
+      "canonicalPath": "specs/31.md",
+      "tasks": {
+        "checked": 0,
+        "blocked": 1,
+        "total": 1
+      }
+    },
+    {
+      "id": 32,
+      "title": "Move Bricksmith planning to the canonical quenching branch",
+      "phase": "archive",
+      "canonicalPath": "specs/archive/32.md",
+      "tasks": {
+        "checked": 3,
+        "blocked": 0,
+        "total": 3
+      }
+    }
+  ],
+  "countExplanation": "32 records: four existing tracker identities, 16 existing slice contracts, four previously local candidates, two native epics, one existing BS-18 requirement decomposition, four existing human decisions, and one metadata migration record. Local mirrors of tracker #2/#3/#4 fold into the same identities. README guidance is preserved in migration #32 and moved to durable development documentation.",
+  "verification": {
+    "localSourceCount": 26,
+    "exactLocalHashes": true,
+    "canonicalRecords": 32,
+    "development": "paused",
+    "normalHooksEnabled": true,
+    "privateGate": "PASS",
+    "cards": "none",
+    "githubHistory": "retained; no hard delete"
+  },
+  "metadataCleanupCommit": "42b636eef7712425645b7c9d299730b678640844",
+  "migrationOutcome": "done; product development paused",
+  "branchRefAtVerification": "28a7394e6960d36d505d44685989345e74f05608"
+}

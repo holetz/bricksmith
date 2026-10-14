@@ -1,6 +1,6 @@
 # Configure Databricks test environments
 
-- Status: configuration contract and setup guide; remote harness still planned in BS-00/BS-01
+- Status: configuration contract and setup guide; the preflight (`bricksmith env check`) and the remote harness (`tests/remote`) exist and are proven on the free environment, see [evidence](../evidence/bs-00-free.md); corporate and CI remote workflows are not run
 - Documentation checked: 2026-10-13
 
 ## Test policy
@@ -37,7 +37,7 @@ both test environments using the following names; unused environment fields may 
 | `BRICKSMITH_FREE_SCHEMA_PREFIX` / `BRICKSMITH_CORPORATE_SCHEMA_PREFIX` | Test schema prefix; harness adds a unique run ID and records ownership |
 | `BRICKSMITH_FREE_COMPUTE` / `BRICKSMITH_CORPORATE_COMPUTE` | `serverless` initially; any corporate classic-compute proof needs its own explicit configuration/specification |
 
-These `BRICKSMITH_*` values describe the planned test harness. The current Databricks CLI does not
+These `BRICKSMITH_*` values are read by the bricksmith test harness. The current Databricks CLI does not
 interpret them, and simply creating `.env` does not authenticate or configure a workspace.
 
 Only the selected environment is validated and activated. Its profile maps to the standard
@@ -96,9 +96,11 @@ presence of a setting. Validate the actual method; leave it pending when unavail
 can load it for a command; before the harness exists, CLI commands above use explicit profile
 flags. The library must not discover/load dotenv files or authenticate as an import side effect.
 
-## Planned preflight and setup proof
+## Preflight and setup proof
 
-BS-00/BS-01 must implement an environment check and remote-test runner with these behaviors:
+`bricksmith env check` (module `bricksmith.preflight`) and `tests/remote` implement these behaviors.
+Run remote tests with `BRICKSMITH_RUN_REMOTE_TESTS=true uv run --group remote pytest tests/remote`;
+the `remote` dependency group is not installed by default:
 
 | Stage | Required proof |
 |---|---|
@@ -109,8 +111,8 @@ BS-00/BS-01 must implement an environment check and remote-test runner with thes
 | Bundle deployment | Validate, deploy and run the minimal Python-resource job under target `ci`; inspect result and destroy test resources |
 | Recovery | Inject failure, stop dependent work and perform teardown; report resources left over rather than declaring cleanup successful |
 
-Report configured, authenticated, compute-tested and deployment-tested as separate states. This
-guide and a filled `.env` alone prove none of the remote stages. Running the preflight requires
+Report configured, authenticated, compute-tested, resources-tested and deployment-tested as separate states. A
+filled `.env` alone proves none of the remote stages; the preflight reports deployment as not run and the bundle test proves it. Running the preflight requires
 the selected environment's fields; the unused environment is not a setup blocker.
 
 The planned precedence for bricksmith invocation is explicit command/API parameters, process

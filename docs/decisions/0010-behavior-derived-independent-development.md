@@ -42,7 +42,7 @@ from observed behavior and starts implementation from an empty library.
 ## Consequences
 
 - The [capability review](../planning/capability-review.md) and
-  [development epic](../epics/0001-bricksmith-library.md) govern the next implementation work.
+  [development epic](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md) govern the next implementation work.
 - Their generic requirements are the implementation handoff. The private source path and local
   evidence map are not requested inputs, and their absence does not block implementation. Close
   remaining API questions in child specifications using public contracts and independent tests.

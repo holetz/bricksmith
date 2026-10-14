@@ -1,0 +1,19 @@
+# Remote proof bundle: resources come from bricksmith.dab (Python), not from YAML. No host is
+# declared; the test passes the selected profile to the CLI explicitly.
+bundle:
+  name: bricksmith_jobs_fixture
+
+python:
+  venv_path: __VENV__
+  resources:
+    - "bricksmith.dab:load_resources"
+
+variables:
+  catalog:
+    description: Catalog that owns the test schema (supplied by the test)
+  schema:
+    description: Unique test schema name (supplied by the test)
+
+targets:
+  ci:
+    mode: development

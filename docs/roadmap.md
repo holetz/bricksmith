@@ -1,6 +1,6 @@
 # Roadmap
 
-The implementation plan is [Epic 0001](epics/0001-bricksmith-library.md): 19 delivery slices,
+The implementation plan is [Epic 0001](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md): 19 delivery slices,
 their dependencies, implementation tasks, acceptance criteria and release scenarios. The
 [capability review](planning/capability-review.md) explains which reference behaviors, documented
 limitations and independent additions informed it. This roadmap summarizes that plan.

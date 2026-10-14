@@ -5,7 +5,7 @@ Language: en
 bricksmith is a Python framework and project template for Databricks data projects, shipped as
 one library with growing capabilities under `src/bricksmith`. The [README](README.md) has the
 map; the [roadmap](docs/roadmap.md) summarizes delivery waves and
-[Epic 0001](docs/epics/0001-bricksmith-library.md) owns the tasks, dependencies and acceptance criteria.
+[Epic 0001](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md) owns the tasks, dependencies and acceptance criteria.
 
 ## Operate the repo
 
@@ -46,3 +46,13 @@ uv run pytest
   [decision 0002](docs/decisions/0002-native-python-bundle-resources.md) before changing that.
 - Read [docs/decisions/](docs/decisions/) before changing direction; record a new decision when
   you do.
+
+## Canonical specifications
+
+The `quenching` git branch is the sole specification store. `.agents/quenching.json` selects
+`backend: git`; `.claude/quenching.json` shares that envelope. GitHub issue cards are disabled.
+Use `cq specs` to read and update canonical plans, tasks and lifecycle records; do not recreate
+editable planning bodies under `docs/specs` or `docs/epics`. See
+[specification workflow](docs/development/spec-workflow.md) and
+[migration provenance](docs/development/specs-migration.md). Product development remains paused
+until explicitly resumed; this metadata conversion does not restart the autopilot.

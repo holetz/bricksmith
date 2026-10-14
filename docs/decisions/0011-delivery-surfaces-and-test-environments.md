@@ -42,7 +42,7 @@ workspace without a way to validate capabilities unavailable there.
 
 ## Consequences
 
-- [Epic 0001](../epics/0001-bricksmith-library.md) includes explicit plugin slice BS-18 and expanded
+- [Epic 0001](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md) includes explicit plugin slice BS-18 and expanded
   configuration, template and release tasks.
 - [Delivery contracts](../planning/delivery-contracts.md),
   [test setup](../development/databricks-tests.md) and [.env.example](../../.env.example) specify
