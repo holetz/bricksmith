@@ -42,3 +42,24 @@ them and must record any deviation.
   teardown. A skip is recorded as "not run", never as passing evidence.
 - Fixtures are synthetic and authored for bricksmith with hand-derived expected values.
 - Evidence of remote runs goes to `docs/evidence/` with environment, versions, date and result.
+
+## Slice delivery checklist
+
+Every slice delivers, in this order:
+
+1. `docs/specs/bs-NN-<topic>.md` closing its open decisions (see the epic's decision table).
+2. Code under its modules in `src/bricksmith`, with a CLI group in its own module exposing
+   `register(subparsers)` and appended to `GROUPS` in `src/bricksmith/cli/groups.py`.
+3. Offline tests under `tests/unit/<capability>/` covering the slice's acceptance paragraph, and
+   remote tests under `tests/remote/` (reusing `tests/remote/conftest.py`) when the behavior
+   depends on the platform. Remote tests are run for real on the selected environment
+   (`BRICKSMITH_RUN_REMOTE_TESTS=true uv run --group remote pytest tests/remote/<file> -q`), kept
+   tiny, and leave nothing behind in the workspace.
+4. `docs/evidence/bs-NN-<env>.md` for remote proof: date, versions, per-scenario state (passed,
+   failed, unsupported, not run) and cleanup result, with no hosts, profile names or identities.
+5. A short user guide under `docs/guide/`, and ticks in the epic only for work done and proven.
+
+Gates before a slice is finished: `uv run ruff check && uv run ruff format && uv run pyright &&
+uv run pytest -q`. Ruff selects every rule: write docstrings and full type hints and add only
+narrow, justified ignores. Extend earlier slices' public contracts rather than replacing them, and
+record any change in the slice specification.
