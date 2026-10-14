@@ -298,13 +298,13 @@ resources can share a schema without a per-model naming requirement.
 
 Depends on: BS-02, BS-05, BS-08, BS-09.
 
-- [ ] BS-10.1 Model an experimental revision with scope, input versions, code/configuration
+- [x] BS-10.1 Model an experimental revision with scope, input versions, code/configuration
   fingerprints and an evidence record.
-- [ ] BS-10.2 Build a dependency-aware isolation plan with explicit boundaries and live-versus-frozen
+- [x] BS-10.2 Build a dependency-aware isolation plan with explicit boundaries and live-versus-frozen
   inputs; detect physical target collisions before creation.
-- [ ] BS-10.3 Run and compare a revision in an isolated destination, preserving temporal history
+- [x] BS-10.3 Run and compare a revision in an isolated destination, preserving temporal history
   needed by stateful tasks and recording unpinned inputs as such.
-- [ ] BS-10.4 Plan promotion and retirement using immutable evidence and impact reports; separate
+- [x] BS-10.4 Plan promotion and retirement using immutable evidence and impact reports; separate
   experimental output cleanup from source-data and model-artifact retention.
 
 Acceptance: a synthetic change cannot modify baseline outputs. Pinning inputs reproduces the
@@ -316,13 +316,13 @@ private reference classes.
 
 Depends on: BS-02, BS-04, BS-07, BS-08.
 
-- [ ] BS-11.1 Define cohorts/samples, segments, exclusions, feature schemas and labels as explicit
+- [x] BS-11.1 Define cohorts/samples, segments, exclusions, feature schemas and labels as explicit
   metadata independent of catalog names and model directory conventions.
-- [ ] BS-11.2 Construct population, features, labels and training/prediction datasets through the
+- [x] BS-11.2 Construct population, features, labels and training/prediction datasets through the
   common tasks; persist exclusion reasons and dataset provenance.
-- [ ] BS-11.3 Validate feature types/order, label maturity, train/evaluation separation and
+- [x] BS-11.3 Validate feature types/order, label maturity, train/evaluation separation and
   point-in-time boundaries; fingerprint the resolved dataset configuration and inputs.
-- [ ] BS-11.4 Add examples with multiple model identities and datasets in a shared schema, plus
+- [x] BS-11.4 Add examples with multiple model identities and datasets in a shared schema, plus
   optional dedicated scopes; make all preprocessing dependencies visible in the graph.
 
 Acceptance: fixed synthetic inputs and seed reproduce cohort membership and exclusions. Future
@@ -367,15 +367,15 @@ the same schema and has no hidden metadata-table writes.
 
 ### BS-14. Operational observability and cost controls
 
-Depends on: BS-03, BS-06, BS-09; integrate BS-13 when available.
+Depends on: BS-03, BS-06, BS-09; integrate BS-13 when available (pending: BS-13 must emit `bricksmith.ops.AlertEvent`; see [spec](../specs/bs-14-operations.md)).
 
-- [ ] BS-14.1 Emit structured run/task events with identity, plan, target, attempt, timings and
+- [x] BS-14.1 Emit structured run/task events with identity, plan, target, attempt, timings and
   error classification; preserve actionable errors without logging secrets or row contents.
-- [ ] BS-14.2 Expose run reports, freshness/completeness, input readiness and resource usage where
+- [x] BS-14.2 Expose run reports, freshness/completeness, input readiness and resource usage where
   supported; label unavailable cost information instead of estimating it as fact.
-- [ ] BS-14.3 Define opt-in notification adapters and deduplicated alert delivery, including bounded
+- [x] BS-14.3 Define opt-in notification adapters and deduplicated alert delivery, including bounded
   payloads, retries and recorded delivery failure.
-- [ ] BS-14.4 Set concurrency, transfer, scan and maintenance budgets; provide diagnostic workflows
+- [x] BS-14.4 Set concurrency, transfer, scan and maintenance budgets; provide diagnostic workflows
   for failed/skipped tasks and partial-run recovery.
 
 Acceptance: an injected job failure is diagnosable from the report with its upstream context.
@@ -387,13 +387,13 @@ alerts. No specific notification provider is required for the first release.
 
 Depends on: BS-05, BS-06, BS-07.
 
-- [ ] BS-15.1 Configure sensitivity categories, ownership, retention and principal references with
+- [x] BS-15.1 Configure sensitivity categories, ownership, retention and principal references with
   neutral policy hooks and an explicit unclassified state.
-- [ ] BS-15.2 Diff and reconcile supported tags/grants/metadata only for managed resources and
+- [x] BS-15.2 Diff and reconcile supported tags/grants/metadata only for managed resources and
   explicitly declared policies; respect externally managed controls.
-- [ ] BS-15.3 Audit desired, applied, verified and unavailable states; add adapters for advanced
+- [x] BS-15.3 Audit desired, applied, verified and unavailable states; add adapters for advanced
   masks/filters only after platform feasibility and policy ownership are specified.
-- [ ] BS-15.4 Feed coverage and drift reports into checks and catalog docs with configurable
+- [x] BS-15.4 Feed coverage and drift reports into checks and catalog docs with configurable
   severity and independently designed policy examples.
 
 Acceptance: metadata-only classification is never reported as effective masking. A declared tag

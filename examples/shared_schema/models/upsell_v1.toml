@@ -1,0 +1,44 @@
+model = "upsell_v1"
+reference_date = "2026-06-15"
+
+[columns]
+key = ["customer_id"]
+snapshot = "snapshot_date"
+feature_time = "feature_time"
+
+[sample]         # keep keys whose seeded hash fraction is below 0.5
+fraction = 0.5
+seed = 7
+
+[[exclusions]]
+name = "minor"
+where = { column = "age", op = "lt", value = 18 }
+
+[[exclusions]]
+name = "low_tenure"
+where = { column = "tenure_months", op = "lt", value = 10 }
+
+[[segments]]
+name = "pro"
+where = { column = "plan", op = "eq", value = "pro" }
+
+[[segments]]
+name = "basic"
+where = { column = "plan", op = "ne", value = "pro" }
+
+[[features]]
+name = "spend"
+type = "double"
+
+[[features]]
+name = "plan"
+type = "string"
+
+[label]
+name = "upsold"
+type = "int"
+maturity_days = 45
+
+[split]
+train_until = "2026-02-28"
+evaluation_from = "2026-03-15"

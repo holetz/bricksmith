@@ -9,4 +9,8 @@ GROUPS: tuple[str, ...] = (
     "bricksmith.dab.cli",
     "bricksmith.evolution.cli",
     "bricksmith.quality.cli",
+    "bricksmith.experiments.cli",
+    "bricksmith.ops.cli",
+    "bricksmith.mlops.cli",
+    "bricksmith.governance.cli",
 )

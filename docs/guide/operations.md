@@ -2,6 +2,7 @@
 
 ```python
 from bricksmith.ops import JsonLinesSink
+
 report = run_plan(plan, project_root=".", execution=ctx, table_io=io, events=JsonLinesSink(sys.stderr))
 ```
 
@@ -37,9 +38,14 @@ max_null_fraction = { order_id = 0.0 }
 ## Alerts
 
 ```python
-notifier = AlertNotifier([FileAdapter("alerts.jsonl")], JsonFileAlertStore("alerts-state.json"),
-                         dedup_window_seconds=3600, max_payload_bytes=4096, max_attempts=3)
-notify_report(report, notifier)   # delivery failures are recorded in notifier.records; the report is untouched
+notifier = AlertNotifier(
+    [FileAdapter("alerts.jsonl")],
+    JsonFileAlertStore("alerts-state.json"),
+    dedup_window_seconds=3600,
+    max_payload_bytes=4096,
+    max_attempts=3,
+)
+notify_report(report, notifier)  # delivery failures are recorded in notifier.records; the report is untouched
 ```
 
 Adapters are opt-in and generic (`LogAdapter`, `FileAdapter`, `WebhookAdapter`); write your own with
