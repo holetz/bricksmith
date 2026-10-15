@@ -1,1 +1,4 @@
-../.agents/quenching.json
+{
+  "backend": "git",
+  "specs": {}
+}
