@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 def predicate_column(predicate: Mapping[str, Any]) -> Any:  # noqa: ANN401, PLR0911 - Spark Column, one branch per operator
     """Translate a declarative predicate to a Spark boolean Column that is never null."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     if "all" in predicate:
         out = f.lit(True)
@@ -57,7 +57,7 @@ def predicate_column(predicate: Mapping[str, Any]) -> Any:  # noqa: ANN401, PLR0
 
 def sample_column(spec: ModelSpec) -> Any:  # noqa: ANN401
     """Boolean Column: the key's seeded hash fraction is below the sample fraction (same hash as the reference)."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     if spec.sample is None:
         return f.lit(True)
@@ -77,7 +77,7 @@ def _first_match(rules: Any, spec_rules: Any) -> Any:  # noqa: ANN401
 
 def build_population(source: Any, spec: ModelSpec) -> tuple[Any, Any]:  # noqa: ANN401
     """Return ``(population, exclusions)`` DataFrames: sample by key hash, then first matching exclusion reason."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     base = [f.col(k) for k in spec.key] + [f.to_date(f.col(spec.snapshot)).alias(spec.snapshot)]
     sampled = (
@@ -94,7 +94,7 @@ def build_population(source: Any, spec: ModelSpec) -> tuple[Any, Any]:  # noqa: 
 
 def build_features(source: Any, spec: ModelSpec) -> Any:  # noqa: ANN401
     """Project key, snapshot, feature time and features in contract order, cast to the declared types."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     return source.select(
         *spec.key,
@@ -106,7 +106,7 @@ def build_features(source: Any, spec: ModelSpec) -> Any:  # noqa: ANN401
 
 def build_labels(source: Any, spec: ModelSpec) -> Any:  # noqa: ANN401
     """Project key, snapshot, the label and the date it becomes observable."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     snapshot = f.to_date(f.col(spec.snapshot))
     return source.select(
@@ -119,7 +119,7 @@ def build_labels(source: Any, spec: ModelSpec) -> Any:  # noqa: ANN401
 
 def build_training(population: Any, features: Any, labels: Any, spec: ModelSpec, *, drop_immature: bool = False) -> Any:  # noqa: ANN401
     """Join on key and snapshot, add the split (gap rows dropped); immature labels stay unless ``drop_immature``."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     on = [*spec.key, spec.snapshot]
     snap = f.col(spec.snapshot)
@@ -144,7 +144,7 @@ def build_training(population: Any, features: Any, labels: Any, spec: ModelSpec,
 
 def build_prediction(population: Any, features: Any, spec: ModelSpec, as_of: object) -> Any:  # noqa: ANN401
     """Return the population rows of the snapshot ``as_of`` joined with the features observed by ``as_of``."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     day = f.lit(to_date(as_of))
     on = [*spec.key, spec.snapshot]
@@ -224,6 +224,6 @@ def resolve_fingerprint(ctx: Any, spec: ModelSpec, role: str) -> DatasetFingerpr
 
 def latest_snapshot(population: Any, spec: ModelSpec) -> object:  # noqa: ANN401
     """Return the latest snapshot date in a population DataFrame (the natural ``as_of`` of a prediction run)."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     return population.agg(f.max(spec.snapshot)).collect()[0][0]

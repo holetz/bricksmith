@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 def _f() -> Any:  # noqa: ANN401
-    from pyspark.sql import functions  # noqa: PLC0415 - heavy import only where Spark is used
+    from pyspark.sql import functions  # noqa: PLC0415 - heavy import only where Spark is used  # pyright: ignore[reportMissingImports]
 
     return functions
 

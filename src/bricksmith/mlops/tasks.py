@@ -239,7 +239,7 @@ def predict_task(  # noqa: PLR0913 - the task passes its reads and output explic
 
     A missing, ambiguous or incompatible model fails the task; nothing is fitted as a fallback.
     """
-    from pyspark.sql import types as t  # noqa: PLC0415
+    from pyspark.sql import types as t  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     declared, spec = model_task(function)
     rows = _rows(prediction)
