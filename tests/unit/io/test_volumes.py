@@ -139,7 +139,10 @@ def test_filesystem_client_and_symlink_escape(tmp_path: Path) -> None:
         store.write("a/b.txt", "again", overwrite=False)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (root / "cat/sch/vol/link").symlink_to(outside)
+    try:
+        (root / "cat/sch/vol/link").symlink_to(outside)
+    except OSError as error:
+        pytest.skip(f"symlinks are not permitted on this system: {error}")
     with pytest.raises(PathError):
         store.write("link/stolen.txt", "x")
     assert not (outside / "stolen.txt").exists()
