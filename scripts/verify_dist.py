@@ -42,15 +42,22 @@ def run(*command: str | Path) -> None:
     sys.stdout.write(result.stdout)
 
 
+def venv_executable(env: Path, name: str) -> Path:
+    """Return the path of ``name`` inside the virtual environment ``env`` on any platform."""
+    if sys.platform == "win32":
+        return env / "Scripts" / f"{name}.exe"
+    return env / "bin" / name
+
+
 def verify(artifact: Path, workdir: Path) -> None:
     """Install ``artifact`` into a fresh environment and run the import probe with isolated mode."""
     env = workdir / f"venv-{artifact.suffix.lstrip('.') or 'sdist'}"
     run("uv", "venv", "--quiet", "--python", f"{sys.version_info.major}.{sys.version_info.minor}", env)
-    python = env / "bin" / "python"
+    python = venv_executable(env, "python")
     run("uv", "pip", "install", "--quiet", "--python", python, artifact)
     sys.stdout.write(f"{artifact.name}: ")
     run(python, "-I", "-c", PROBE.format(heavy=HEAVY))
-    run(env / "bin" / "bricksmith", "context", "show")
+    run(venv_executable(env, "bricksmith"), "context", "show")
 
 
 def main() -> int:
