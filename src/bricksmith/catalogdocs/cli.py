@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,9 @@ from bricksmith.errors import EXIT_OK, UsageError
 if TYPE_CHECKING:
     import argparse
 
+# Exemption expiry is a gate concern; pinning the date keeps catalog bytes independent of the clock.
+_CATALOG_DATE = date.min
+
 
 def _render(args: argparse.Namespace) -> int:
     from bricksmith.catalogdocs import build_catalog, to_json, to_markdown  # noqa: PLC0415 - keeps parser light
@@ -19,7 +23,7 @@ def _render(args: argparse.Namespace) -> int:
     from bricksmith.registry import load_registry  # noqa: PLC0415
 
     registry = load_registry(args.registry) if args.registry else None
-    report = build_catalog(load_graph(args.project), registry)
+    report = build_catalog(load_graph(args.project, today=_CATALOG_DATE), registry)
     text = to_json(report) if args.format == "json" or args.json else to_markdown(report)
     if args.output:
         try:
