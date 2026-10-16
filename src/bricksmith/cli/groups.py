@@ -15,4 +15,5 @@ GROUPS: tuple[str, ...] = (
     "bricksmith.mlops.model_cli",
     "bricksmith.governance.cli",
     "bricksmith.monitor.cli",
+    "bricksmith.catalogdocs.cli",
 )
