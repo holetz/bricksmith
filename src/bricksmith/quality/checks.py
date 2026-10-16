@@ -8,6 +8,7 @@ and always yields a reportable :class:`CheckResult` of ``passed``, ``failed`` or
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +23,23 @@ if TYPE_CHECKING:
 PASSED, FAILED, UNAVAILABLE = "passed", "failed", "unavailable"
 KINDS = ("grain", "cardinality", "nullability", "accepted_values", "completeness", "freshness")
 EXPECTATIONS = ("one_to_one", "one_to_many", "many_to_one", "many_to_many")
+
+
+def _finite_non_negative(value: object) -> bool:
+    """Return whether value is a real number (not a bool) that is finite and at least zero."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+
+
+def _number(value: object, field_name: str) -> float:
+    """Convert a mapping value to float, raising :class:`QualityError` for anything that is not a real number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        msg = f"{field_name} must be a number, got {value!r}"
+        raise QualityError(msg)
+    try:
+        return float(value)
+    except ValueError:
+        msg = f"{field_name} must be a number, got {value!r}"
+        raise QualityError(msg) from None
 
 
 @dataclass(frozen=True)
@@ -49,8 +67,8 @@ class Check:
         if self.kind == "accepted_values" and (len(self.columns) != 1 or not self.values):
             msg = "accepted_values needs exactly one column and at least one value"
             raise QualityError(msg)
-        if self.kind == "freshness" and (len(self.columns) != 1 or self.max_age_seconds < 0):
-            msg = "freshness needs exactly one column and a non-negative max_age_seconds"
+        if self.kind == "freshness" and (len(self.columns) != 1 or not _finite_non_negative(self.max_age_seconds)):
+            msg = "freshness needs exactly one column and a finite, non-negative max_age_seconds"
             raise QualityError(msg)
         if self.expect not in EXPECTATIONS:
             msg = f"unknown cardinality {self.expect!r}; expected one of {', '.join(EXPECTATIONS)}"
@@ -146,7 +164,7 @@ class Check:
             bool(data.get("require_match", False)),
             bool(data.get("allow_null", False)),
             float(data.get("min_ratio", 1.0)),
-            float(data.get("max_age_seconds", 0.0)),
+            _number(data.get("max_age_seconds", 0.0), "max_age_seconds"),
         )
 
 
