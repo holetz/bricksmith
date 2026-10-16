@@ -27,7 +27,12 @@ EXPECTATIONS = ("one_to_one", "one_to_many", "many_to_one", "many_to_many")
 
 def _finite_non_negative(value: object) -> bool:
     """Return whether value is a real number (not a bool) that is finite and at least zero."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
 
 
 def _number(value: object, field_name: str) -> float:
@@ -37,7 +42,7 @@ def _number(value: object, field_name: str) -> float:
         raise QualityError(msg)
     try:
         return float(value)
-    except ValueError:
+    except (ValueError, OverflowError):
         msg = f"{field_name} must be a number, got {value!r}"
         raise QualityError(msg) from None
 

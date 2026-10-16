@@ -183,3 +183,13 @@ def test_freshness_from_dict_rejects_nonfinite_text(bad: object) -> None:
 def test_freshness_accepts_finite_non_negative_threshold(ok: float) -> None:
     assert Check.freshness("seen", max_age_seconds=ok).max_age_seconds == ok
     assert Check.from_dict({"kind": "freshness", "columns": ["seen"], "max_age_seconds": ok}).max_age_seconds == ok
+
+
+def test_freshness_rejects_threshold_too_large_for_float() -> None:
+    huge = 10**400
+    with pytest.raises(QualityError):
+        Check.freshness("seen", max_age_seconds=huge)
+    with pytest.raises(QualityError):
+        Check.from_dict({"kind": "freshness", "columns": ["seen"], "max_age_seconds": huge})
+    with pytest.raises(QualityError):
+        load_checks('[{"kind": "freshness", "columns": ["seen"], "max_age_seconds": ' + str(huge) + "}]")
