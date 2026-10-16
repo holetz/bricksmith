@@ -8,7 +8,9 @@ report = run_plan(plan, project_root=".", execution=ctx, table_io=io, events=Jso
 
 One JSON line per event carries run id, plan fingerprint, task, targets, attempt, timings, state and an error
 with a class: `task_failure`, `missing_input`, `configuration`, `platform` or `statistical_alert`. Secrets and
-row contents are redacted before they reach any event, report or alert.
+row contents are redacted before they reach any event, report or alert. A quoted assignment such as
+`password="two words"` is masked whole, including any whitespace inside the quotes; an unterminated quote masks the
+rest of the text.
 
 ## Reports and diagnosis
 

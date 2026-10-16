@@ -21,6 +21,12 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}"), rf"\1 {REDACTED}"),
     (
         re.compile(
+            r"(?i)([\w.-]*(?:pass|secret|token|api[_-]?key|credential|authorization|private[_-]?key)[\w.-]*)(['\"]?\s*[=:]\s*)(['\"])(?:\\.?|(?!\3)[^\\])*(?:\3|$)"
+        ),
+        rf"\1\2\3{REDACTED}\3",
+    ),
+    (
+        re.compile(
             r"(?i)([\w.-]*(?:pass|secret|token|api[_-]?key|credential|authorization|private[_-]?key)[\w.-]*)(['\"]?\s*[=:]\s*)(['\"]?)[^\s,;'\"&)]+"
         ),
         rf"\1\2\3{REDACTED}",
