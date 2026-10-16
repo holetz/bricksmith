@@ -48,7 +48,7 @@ def _cardinality(
     lcounts, lnulls = _key_stats(rows, check.columns)
     rcounts, rnulls = _key_stats(other, check.columns)
     ldup, rdup = _dups(lcounts)[0] + lnulls, _dups(rcounts)[0] + rnulls
-    unmatched = sum(n for k, n in lcounts.items() if k not in rcounts)
+    unmatched = sum(n for k, n in lcounts.items() if k not in rcounts) + lnulls
     problems = []
     if check.expect in ("one_to_one", "one_to_many") and ldup:
         problems.append(f"{ldup} duplicate or null key group(s) on the data side")

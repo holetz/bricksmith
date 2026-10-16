@@ -141,3 +141,25 @@ def test_conditions_render_sql_for_the_storage_hooks() -> None:
         }
     )
     assert len(spec.input_checks) == 2 and len(spec.target_checks) == 1
+
+
+def test_required_match_fails_null_data_keys() -> None:
+    required = Check.cardinality("id", expect="many_to_one", require_match=True)
+    single = run_check(required, [{"id": None}], [{"id": 1}], sample_limit=3)
+    assert single.status == "failed" and single.observed["unmatched_rows"] == 1 and single.samples == ()
+    both = run_check(required, [{"id": None}], [{"id": None}])
+    assert both.status == "failed" and both.observed["unmatched_rows"] == 1
+    mixed = run_check(required, [{"id": None}, {"id": 1}, {"id": 2}], [{"id": 1}], sample_limit=3)
+    assert mixed.observed["unmatched_rows"] == 2 and mixed.samples == ({"id": 2},)
+    empty = run_check(required, [{"id": None}], [])
+    assert empty.status == "failed" and empty.observed["unmatched_rows"] == 1
+    composite = Check.cardinality("a", "b", expect="many_to_one", require_match=True)
+    partial = run_check(composite, [{"a": 1, "b": None}], [{"a": 1, "b": 2}])
+    assert partial.status == "failed" and partial.observed["unmatched_rows"] == 1
+    assert run_check(required, [{"id": 1}], [{"id": 1}]).status == "passed"
+
+
+def test_null_data_keys_without_require_match_keep_cardinality_behavior() -> None:
+    result = run_check(Check.cardinality("id", expect="many_to_one"), [{"id": None}], [{"id": 1}])
+    assert result.observed["unmatched_rows"] == 1
+    assert result.observed["data_invalid_groups"] == 1 and result.status == "passed"

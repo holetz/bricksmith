@@ -38,6 +38,8 @@ returns `passed`, `failed` or `unavailable` (with a reason) instead of raising; 
 unless passed. As write conditions use `condition_sql(Check.not_null("id"))` in the `input_checks` or
 `target_checks` metadata (`relation=` names the target for dataset-level checks).
 
+With `Check.cardinality(..., require_match=True)`, a data row with a null in any key column counts as unmatched and fails the check, since a null key can never match.
+
 ## Regression gate
 
 ```bash
