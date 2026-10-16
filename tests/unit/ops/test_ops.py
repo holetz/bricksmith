@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import textwrap
+import time
 import urllib.error
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -174,6 +175,19 @@ def test_error_classes_are_distinct() -> None:
         == "statistical_alert"
     )
     assert classify_error({"code": "io_transient", "type": "TransientIoError", "message": "x"}) == "platform"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["pass" * 50_000, "a" * 200_000, "rows=[ " * 30_000, "token='" * 30_000],
+    ids=["key-prefix", "word", "open-bracket", "open-quote"],
+)
+def test_redaction_of_long_input_stays_bounded_in_time(text: str) -> None:
+    # The unbounded patterns took minutes at this size; the ceiling is ~10x the measured worst case.
+    start = time.perf_counter()
+    out = redact_text(text)
+    assert time.perf_counter() - start < 5.0
+    assert len(out) <= 500
 
 
 def test_redaction_masks_secrets_rows_and_bounds_text() -> None:
