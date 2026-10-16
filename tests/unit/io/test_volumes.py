@@ -127,7 +127,7 @@ def test_two_artifact_resources_share_one_schema_without_naming_rules() -> None:
     assert sorted(files.blobs) == ["/Volumes/cat/shared/exports/same.txt", "/Volumes/cat/shared/scratch/same.txt"]
 
 
-def test_filesystem_client_and_symlink_escape(tmp_path: Path) -> None:
+def test_filesystem_client_round_trip_delete_and_limit(tmp_path: Path) -> None:
     root = tmp_path / "Volumes"
     store = ArtifactStore("cat.sch.vol", FilesystemVolumeClient(root), max_bytes=32)
     store.write("a/b.txt", "hello")
@@ -137,6 +137,17 @@ def test_filesystem_client_and_symlink_escape(tmp_path: Path) -> None:
     assert store.list("missing") == []
     with pytest.raises(PermanentIoError):
         store.write("a/b.txt", "again", overwrite=False)
+    store.delete("a/b.txt")
+    with pytest.raises(ArtifactNotFoundError):
+        store.delete("a/b.txt")
+    with pytest.raises(LimitExceededError):
+        store.write("big", b"z" * 33)
+
+
+def test_filesystem_client_rejects_symlink_escape(tmp_path: Path) -> None:
+    root = tmp_path / "Volumes"
+    store = ArtifactStore("cat.sch.vol", FilesystemVolumeClient(root), max_bytes=32)
+    store.write("a/b.txt", "hello")
     outside = tmp_path / "outside"
     outside.mkdir()
     try:
@@ -146,11 +157,6 @@ def test_filesystem_client_and_symlink_escape(tmp_path: Path) -> None:
     with pytest.raises(PathError):
         store.write("link/stolen.txt", "x")
     assert not (outside / "stolen.txt").exists()
-    store.delete("a/b.txt")
-    with pytest.raises(ArtifactNotFoundError):
-        store.delete("a/b.txt")
-    with pytest.raises(LimitExceededError):
-        store.write("big", b"z" * 33)
 
 
 def _materializer(*, enabled: bool = True, **policy: int) -> tuple[Materializer, FakeFiles]:
