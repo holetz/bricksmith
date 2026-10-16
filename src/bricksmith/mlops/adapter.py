@@ -66,7 +66,7 @@ def contract_of(spec: ModelSpec) -> tuple[tuple[str, str], ...]:
 
 def feature_frame(features: Contract, rows: Sequence[Mapping[str, Any]]) -> Any:  # noqa: ANN401
     """Build a pandas frame in contract order and types; missing columns, nulls and string features are rejected."""
-    import pandas as pd  # noqa: PLC0415
+    import pandas as pd  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     names = [n for n, _ in features]
     for name, kind in features:
@@ -104,7 +104,7 @@ class SklearnAdapter:
 
     def train(self, spec: ModelSpec, rows: Sequence[Mapping[str, Any]], params: Mapping[str, Any]) -> object:
         """Fit a logistic regression; the labels must contain both classes."""
-        from sklearn.linear_model import LogisticRegression  # noqa: PLC0415
+        from sklearn.linear_model import LogisticRegression  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
         labels = [int(r[spec.label.name]) for r in rows]
         if set(labels) != {0, 1}:
@@ -147,7 +147,7 @@ class SklearnAdapter:
 
     def save(self, model: object, path: Path, features: Contract, rows: Sequence[Mapping[str, Any]]) -> None:
         """Write an MLflow sklearn-flavor model with an inferred signature."""
-        from mlflow.models import infer_signature  # noqa: PLC0415
+        from mlflow.models import infer_signature  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
         flavor = importlib.import_module("mlflow.sklearn")
 

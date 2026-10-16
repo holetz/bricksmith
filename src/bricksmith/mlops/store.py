@@ -93,7 +93,7 @@ class ResolvedModel:
 
 def _default_download(uris: tuple[str, str] | None) -> Callable[[str, int, Path], Path]:
     def download(name: str, version: int, dest: Path) -> Path:
-        import mlflow.artifacts  # noqa: PLC0415
+        import mlflow.artifacts  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
         tracking, registry = uris or (None, None)
         got = mlflow.artifacts.download_artifacts(

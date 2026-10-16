@@ -16,7 +16,7 @@ from bricksmith.errors import MissingExtraError, ValidationError
 from bricksmith.tasks.project import PROJECT_FILE
 
 if TYPE_CHECKING:
-    from databricks.bundles.core import Bundle, Resources
+    from databricks.bundles.core import Bundle, Resources  # pyright: ignore[reportMissingImports]
 
     from bricksmith.dab.model import JobResource, JobTask, ResourceSet
 
@@ -25,7 +25,7 @@ ENVIRONMENT_KEY = "bricksmith"
 
 def _require() -> None:
     try:
-        import databricks.bundles  # noqa: F401, PLC0415 - presence check only
+        import databricks.bundles  # noqa: F401, PLC0415 - presence check only  # pyright: ignore[reportMissingImports]
     except ImportError as error:
         msg = "bundle resources need databricks-bundles; install it with: pip install 'bricksmith[bundle]'"
         raise MissingExtraError(msg) from error
@@ -130,11 +130,11 @@ def to_resources(resources: ResourceSet, project: Path | str = ".") -> Resources
     Relative paths in tasks resolve against ``project`` (the bundle root), not against this module.
     """
     _require()
-    from databricks.bundles.catalogs import Catalog  # noqa: PLC0415
-    from databricks.bundles.core import Location, Resources  # noqa: PLC0415
-    from databricks.bundles.jobs import Job  # noqa: PLC0415
-    from databricks.bundles.schemas import Schema  # noqa: PLC0415
-    from databricks.bundles.volumes import Volume  # noqa: PLC0415
+    from databricks.bundles.catalogs import Catalog  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    from databricks.bundles.core import Location, Resources  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    from databricks.bundles.jobs import Job  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    from databricks.bundles.schemas import Schema  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    from databricks.bundles.volumes import Volume  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     native = Resources()
     where = Location(file=str(Path(project).resolve() / PROJECT_FILE), line=1, column=1)

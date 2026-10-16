@@ -300,7 +300,7 @@ def test_cli_validate_and_resources(tmp_path: Path, capsys: pytest.CaptureFixtur
 
 def test_adapter_builds_native_objects_and_refuses_invalid_projects(tmp_path: Path) -> None:
     pytest.importorskip("databricks.bundles")
-    from databricks.bundles.core import Bundle  # noqa: PLC0415
+    from databricks.bundles.core import Bundle  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     from bricksmith.dab import load_resources  # noqa: PLC0415
     from bricksmith.errors import ValidationError  # noqa: PLC0415

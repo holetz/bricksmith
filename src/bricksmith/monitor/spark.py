@@ -11,14 +11,14 @@ from bricksmith.monitor.measure import NULL_SEGMENT, Measurement, Summary, measu
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from pyspark.sql import Column, DataFrame
+    from pyspark.sql import Column, DataFrame  # pyright: ignore[reportMissingImports]
 
     from bricksmith.monitor.reference import Reference
 
 
 def bin_expression(spec: BinSpec) -> Column:
     """Return the Spark expression assigning the bin id of ``spec`` (the same rules as ``BinSpec.assign``)."""
-    from pyspark.sql import functions as f  # noqa: PLC0415 - heavy integration, loaded where used
+    from pyspark.sql import functions as f  # noqa: PLC0415 - heavy integration, loaded where used  # pyright: ignore[reportMissingImports]
 
     if spec.kind == "categorical":
         text = f.col(spec.column).cast("string")
@@ -38,7 +38,7 @@ def bin_expression(spec: BinSpec) -> Column:
 
 def window_frame(df: DataFrame, window: Mapping[str, str] | None) -> DataFrame:
     """Keep rows whose window column text lies in ``[start, end)``."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     if not window:
         return df
@@ -55,7 +55,7 @@ def fit_spark(df: DataFrame, columns: Mapping[str, Mapping[str, Any]], **meta: A
 
 def summarize_spark(reference: Reference, df: DataFrame) -> Summary:
     """Reduce a windowed DataFrame to a ``Summary`` with remote aggregations."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     summary = Summary(n=df.count())
     period_kind = reference.metric_config.get("stability_period", "") if reference.time else ""
@@ -107,7 +107,7 @@ def measure_spark(
     reference: Reference, df: DataFrame, window: Mapping[str, str] | None = None, *, segments: bool = True
 ) -> list[Measurement]:
     """Compare a DataFrame with the reference on the cluster; equals ``measure`` on the same rows."""
-    from pyspark.sql import functions as f  # noqa: PLC0415
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     scoped = window_frame(df, window)
     out = measure_summary(reference, summarize_spark(reference, scoped))

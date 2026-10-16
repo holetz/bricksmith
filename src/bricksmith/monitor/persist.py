@@ -13,7 +13,7 @@ from bricksmith.monitor.reference import Reference
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from pyspark.sql import DataFrame, SparkSession
+    from pyspark.sql import DataFrame, SparkSession  # pyright: ignore[reportMissingImports]
 
 WINDOW_KEYS = ("reference", "version", "window_start", "window_end")
 REFERENCE_KEYS = ("reference", "version")
