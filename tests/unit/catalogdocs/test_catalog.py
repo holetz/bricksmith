@@ -191,3 +191,18 @@ def test_render_never_executes_or_imports_heavy_modules(tmp_path: Path) -> None:
     )
     done = subprocess.run([sys.executable, "-c", script, str(root)], capture_output=True, text=True, check=True)
     assert done.stdout.strip() == "[]"
+
+
+EXEMPTION_TOML = '[[exemptions]]\nrule = "cycle"\nsubject = "x"\nreason = "r"\nexpires = {expires}\n'
+
+
+def test_catalog_output_does_not_depend_on_exemption_expiry(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = project(tmp_path)
+    base = ["--env", "free", "--env-file", str(tmp_path / "none.env")]
+    (tmp_path / "none.env").write_text("", encoding="utf-8")
+    for expires in ("2020-01-01", "2099-01-01"):
+        (root / "bricksmith.toml").write_text(EXEMPTION_TOML.format(expires=expires), encoding="utf-8")
+        assert main([*base, "catalog", "render", "--project", str(root), "--format", "json"]) == 0
+        text = capsys.readouterr().out
+        assert "unused_exemption" in text
+        assert "expired_exemption" not in text
