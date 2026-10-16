@@ -63,7 +63,7 @@ def _cardinality(check: Check, frame: Any, other: Any, limit: int | None) -> Che
     rg, _, rn, _ = _groups(other, cols)
     ldup, rdup = lg + ln, rg + rn
     lonly = frame.where(~_null_any(cols)).join(other.select(*cols).distinct(), cols, "left_anti")
-    unmatched = int(lonly.count())
+    unmatched = int(lonly.count()) + ln
     problems = []
     if check.expect in ("one_to_one", "one_to_many") and ldup:
         problems.append(f"{ldup} duplicate or null key group(s) on the data side")
