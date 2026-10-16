@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 REDACTED = "<redacted>"
 MAX_TEXT = 500
-_WINDOW_FACTOR = 4  # patterns scan at most this many times ``limit`` characters
+_MAX_SCAN = 32_768  # patterns scan at most this many characters, whatever the limit
 _SENSITIVE_KEY = re.compile(
     r"pass|secret|token|api[_-]?key|credential|authorization|auth|private[_-]?key|cookie|dsn", re.IGNORECASE
 )
@@ -48,7 +48,7 @@ def redact_text(text: str, secrets: Iterable[str] = (), limit: int = MAX_TEXT) -
     out = text
     for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
         out = out.replace(secret, REDACTED)
-    window = max(limit, 1) * _WINDOW_FACTOR
+    window = max(limit, _MAX_SCAN)
     cut = len(out) > window
     out = out[:window]
     for pattern, replacement in _PATTERNS:
