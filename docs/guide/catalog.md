@@ -23,7 +23,7 @@ Without `--registry`, or for a table the registry does not describe, the table i
 
 ## Determinism
 
-Every collection is sorted and nothing is time dependent, so identical inputs produce byte-identical output regardless of discovery order.
+Every collection is sorted and nothing is time dependent, so identical inputs produce byte-identical output regardless of discovery order. The catalog evaluates the graph at a fixed date, so every exemption counts as live and none renders as expired; exemption expiry is enforced by graph validation, not by the catalog.
 
 ## Library use
 
