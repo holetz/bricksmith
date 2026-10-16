@@ -33,7 +33,7 @@ def check_orders(ctx):
     require_check(Check.accepted_values("status", ["open", "closed"]), orders)
 ```
 
-Kinds (constructors): `Check.grain`, `Check.cardinality`, `Check.not_null` (kind `nullability`), `Check.accepted_values`, `Check.completeness`, `Check.freshness`. `run_check`
+Kinds (constructors): `Check.grain`, `Check.cardinality`, `Check.not_null` (kind `nullability`), `Check.accepted_values`, `Check.completeness`, `Check.freshness` (its `max_age_seconds` must be a finite, non-negative number; NaN, infinity and negatives raise `QualityError`). `run_check`
 returns `passed`, `failed` or `unavailable` (with a reason) instead of raising; `require_check` raises
 unless passed. As write conditions use `condition_sql(Check.not_null("id"))` in the `input_checks` or
 `target_checks` metadata (`relation=` names the target for dataset-level checks).

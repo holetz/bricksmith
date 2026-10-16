@@ -163,3 +163,23 @@ def test_null_data_keys_without_require_match_keep_cardinality_behavior() -> Non
     result = run_check(Check.cardinality("id", expect="many_to_one"), [{"id": None}], [{"id": 1}])
     assert result.observed["unmatched_rows"] == 1
     assert result.observed["data_invalid_groups"] == 1 and result.status == "passed"
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -1, True, "x"])
+def test_freshness_rejects_invalid_threshold(bad: object) -> None:
+    with pytest.raises(QualityError):
+        Check.freshness("seen", max_age_seconds=bad)  # type: ignore[arg-type]
+    with pytest.raises(QualityError):
+        Check.from_dict({"kind": "freshness", "columns": ["seen"], "max_age_seconds": bad})
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", None])
+def test_freshness_from_dict_rejects_nonfinite_text(bad: object) -> None:
+    with pytest.raises(QualityError):
+        Check.from_dict({"kind": "freshness", "columns": ["seen"], "max_age_seconds": bad})
+
+
+@pytest.mark.parametrize("ok", [0, 0.0, 1, 86400.5, 1e300])
+def test_freshness_accepts_finite_non_negative_threshold(ok: float) -> None:
+    assert Check.freshness("seen", max_age_seconds=ok).max_age_seconds == ok
+    assert Check.from_dict({"kind": "freshness", "columns": ["seen"], "max_age_seconds": ok}).max_age_seconds == ok
