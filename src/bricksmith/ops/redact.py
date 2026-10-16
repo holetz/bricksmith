@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 REDACTED = "<redacted>"
 MAX_TEXT = 500
+_MAX_SCAN = 32_768  # patterns scan at most this many characters, whatever the limit
 _SENSITIVE_KEY = re.compile(
     r"pass|secret|token|api[_-]?key|credential|authorization|auth|private[_-]?key|cookie|dsn", re.IGNORECASE
 )
@@ -21,13 +22,13 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}"), rf"\1 {REDACTED}"),
     (
         re.compile(
-            r"(?i)([\w.-]*(?:pass|secret|token|api[_-]?key|credential|authorization|private[_-]?key)[\w.-]*)(['\"]?\s*[=:]\s*)(['\"])(?:\\.?|(?!\3)[^\\])*(?:\3|$)"
+            r"(?i)(?<![\w.-])(?=[\w.-]*?(?:pass|secret|token|api[_-]?key|credential|authorization|private[_-]?key))([\w.-]+)(['\"]?\s*[=:]\s*)(['\"])(?:\\.?|(?!\3)[^\\])*(?:\3|$)"
         ),
         rf"\1\2\3{REDACTED}\3",
     ),
     (
         re.compile(
-            r"(?i)([\w.-]*(?:pass|secret|token|api[_-]?key|credential|authorization|private[_-]?key)[\w.-]*)(['\"]?\s*[=:]\s*)(['\"]?)[^\s,;'\"&)]+"
+            r"(?i)(?<![\w.-])(?=[\w.-]*?(?:pass|secret|token|api[_-]?key|credential|authorization|private[_-]?key))([\w.-]+)(['\"]?\s*[=:]\s*)(['\"]?)[^\s,;'\"&)]+"
         ),
         rf"\1\2\3{REDACTED}",
     ),
@@ -47,9 +48,12 @@ def redact_text(text: str, secrets: Iterable[str] = (), limit: int = MAX_TEXT) -
     out = text
     for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
         out = out.replace(secret, REDACTED)
+    window = max(limit, _MAX_SCAN)
+    cut = len(out) > window
+    out = out[:window]
     for pattern, replacement in _PATTERNS:
         out = pattern.sub(replacement, out)
-    if len(out) > limit:
+    if cut or len(out) > limit:
         out = out[: max(limit - 1, 0)] + "…"
     return out
 
