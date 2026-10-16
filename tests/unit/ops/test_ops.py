@@ -187,6 +187,34 @@ def test_redaction_masks_secrets_rows_and_bounds_text() -> None:
     assert value == {"rows": "<redacted>", "api_key": "<redacted>", "note": "password=<redacted>", "n": 3}
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('password="synthetic alpha beta"', 'password="<redacted>"'),
+        ("token='synthetic alpha beta' next step", "token='<redacted>' next step"),
+        ('{"api_key": "synthetic alpha beta", "ok": 1}', '{"api_key": "<redacted>", "ok": 1}'),
+        (r'secret="alpha \"beta\" gamma" tail', 'secret="<redacted>" tail'),
+        ("password='alpha \"beta\" gamma' tail", "password='<redacted>' tail"),
+        ('password="synthetic alpha beta', 'password="<redacted>"'),
+        ('password="alpha\nbeta gamma"', 'password="<redacted>"'),
+        ('password="alpha beta\\', 'password="<redacted>"'),
+    ],
+)
+def test_quoted_secret_assignments_are_redacted_whole(text: str, expected: str) -> None:
+    out = redact_text(text)
+    assert out == expected
+    assert "alpha" not in out and "beta" not in out
+    assert redact_value({"note": text})["note"] == expected
+
+
+def test_quoted_secret_redaction_keeps_bounds_and_unquoted_behaviour() -> None:
+    assert redact_text('password="alpha ' + "x" * 5000 + '" ok') == 'password="<redacted>" ok'
+    assert len(redact_text('password="' + "a b " * 5000)) <= 500
+    assert redact_text("password=zzz other=1") == "password=<redacted> other=1"
+    assert redact_text('password="a b", user=ann') == 'password="<redacted>", user=ann'
+    assert "alpha" not in redact_text("pw alpha", secrets=["alpha"])
+
+
 def test_injected_failure_is_diagnosable_from_the_report_with_upstream_context(
     failed_run: tuple[Path, Any, RunReport, ListSink],
 ) -> None:
