@@ -34,7 +34,7 @@ def compare(
     if is_frame(left) and is_frame(right):
         from bricksmith.quality.spark import compare_frames  # noqa: PLC0415
 
-        return compare_frames(left, right, plan, sample_limit=sample_limit)
+        return compare_frames(left, right, plan, sample_limit=sample_limit, numeric_severity=numeric_severity)
     if is_frame(left) or is_frame(right):
         msg = "compare two Spark DataFrames or two row lists, not a mix"
         raise TypeError(msg)

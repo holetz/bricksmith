@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import decimal
+import re
 from typing import TYPE_CHECKING, Any
 
+from bricksmith.quality.coltypes import is_numeric, normalize
+from bricksmith.quality.errors import QualityError
 from bricksmith.quality.report import (
     ColumnResult,
     ComparisonReport,
     SideStats,
     blocked_reasons,
     check_sample_limit,
+    format_deviation,
     invalid_reasons,
 )
 
@@ -62,15 +67,73 @@ def _mismatch(index: int, column: ColumnPlan, joined: Any) -> Any:  # noqa: ANN4
     return ~match_expression(joined[f"l_{index}"], joined[f"r_{index}"], column.tolerance)
 
 
+MAX_DECIMAL_DIGITS = 38
+_FLOATING = ("float", "double", "real")
+_INTEGRAL_DIGITS = {
+    "tinyint": 3,
+    "byte": 3,
+    "smallint": 5,
+    "short": 5,
+    "int": 10,
+    "integer": 10,
+    "bigint": 19,
+    "long": 19,
+}
+_DECIMAL = re.compile(r"(?:decimal|numeric|dec)\s*(?:\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\))?$")
+
+
+def _precision_scale(type_name: str) -> tuple[int, int]:
+    name = normalize(type_name)
+    if name in _INTEGRAL_DIGITS:
+        return _INTEGRAL_DIGITS[name], 0
+    found = _DECIMAL.match(name)
+    if not found:
+        return MAX_DECIMAL_DIGITS, 0
+    return int(found.group(1) or 10), int(found.group(2) or 0)
+
+
+def deviation_expression(index: int, column: ColumnPlan, joined: Any) -> Any:  # noqa: ANN401
+    """Return the absolute deviation of a numeric column's pair, null when the pair is not eligible.
+
+    Floating columns use the double difference (non-finite results are null); exact columns subtract in a decimal
+    wide enough for the result, and a column pair that would need more than 38 digits raises ``QualityError``.
+    """
+    f = _functions()
+    left, right = joined[f"l_{index}"], joined[f"r_{index}"]
+    if any(normalize(t).split("(", 1)[0] in _FLOATING for t in (column.left_type, column.right_type)):
+        dev = f.abs(left.cast("double") - right.cast("double"))
+        return f.when(dev.isNotNull() & ~f.isnan(dev) & (dev < f.lit(float("inf"))), dev)
+    (lp, ls), (rp, rs) = _precision_scale(column.left_type), _precision_scale(column.right_type)
+    scale = max(ls, rs)
+    digits = max(lp - ls, rp - rs) + scale
+    if digits + 1 > MAX_DECIMAL_DIGITS:
+        msg = (
+            f"column {column.name!r}: {column.left_type} vs {column.right_type} needs {digits + 1} digits for an exact "
+            f"deviation; the supported maximum is {MAX_DECIMAL_DIGITS}"
+        )
+        raise QualityError(msg)
+    target = f"decimal({digits},{scale})"
+    return f.abs(left.cast(target) - right.cast(target))
+
+
 def _key_rows(frame: Any, plan: ComparisonPlan, limit: int) -> list[object]:  # noqa: ANN401
     return [row.asDict() for row in frame.select(*plan.keys).limit(limit).collect()]
 
 
-def compare_frames(left: Any, right: Any, plan: ComparisonPlan, *, sample_limit: int | None = None) -> ComparisonReport:  # noqa: ANN401
+def compare_frames(
+    left: Any,  # noqa: ANN401
+    right: Any,  # noqa: ANN401
+    plan: ComparisonPlan,
+    *,
+    sample_limit: int | None = None,
+    numeric_severity: bool = False,
+) -> ComparisonReport:
     """Compare two Spark DataFrames under ``plan`` without collecting them.
 
     Duplicate or null keys on either side make the report ``invalid`` and skip value comparison. Without an
     explicit ``sample_limit`` nothing but counts is returned; with one, at most that many rows per category.
+    ``numeric_severity`` adds each numeric column's largest finite absolute deviation (one more aggregate) and orders
+    its mismatch samples by it, largest first, then by key.
     """
     f = _functions()
     limit = check_sample_limit(sample_limit)
@@ -95,6 +158,7 @@ def compare_frames(left: Any, right: Any, plan: ComparisonPlan, *, sample_limit:
         "missing_in_right": counts[0],
         "extra_in_right": counts[1],
         "sample_limit": limit,
+        "numeric_severity": numeric_severity,
     }
     if reasons:
         return ComparisonReport(**base, samples=samples)
@@ -107,16 +171,23 @@ def compare_frames(left: Any, right: Any, plan: ComparisonPlan, *, sample_limit:
         any_diff = any_diff | flag
     aggregates = [f.count(f.lit(1)).alias("matched"), f.sum(f.when(any_diff, 1).otherwise(0)).alias("differing")]
     aggregates += [f.sum(f.when(flag, 1).otherwise(0)).alias(f"c{i}") for i, flag in enumerate(flags)]
+    devs = _deviations(plan, joined, flags) if numeric_severity else {}
+    aggregates += [f.max(dev).alias(f"d{i}") for i, dev in devs.items()]
     row = joined.agg(*aggregates).collect()[0]
-    results = tuple(ColumnResult(c.name, int(row[f"c{i}"] or 0)) for i, c in enumerate(plan.columns))
+    results = tuple(
+        ColumnResult(c.name, int(row[f"c{i}"] or 0), format_deviation(_as_decimal(row[f"d{i}"])) if i in devs else None)
+        for i, c in enumerate(plan.columns)
+    )
     if limit is not None:
         for i, (column, flag) in enumerate(zip(plan.columns, flags, strict=True)):
             bad = joined.where(flag).select(*plan.keys, f.col(f"l_{i}").alias("left"), f.col(f"r_{i}").alias("right"))
-            found = bad.orderBy(*plan.keys).limit(limit).collect()
+            order = [f.col(k) for k in plan.keys]
+            if i in devs:
+                bad = bad.withColumn("abs_deviation", devs[i])
+                order = [f.col("abs_deviation").desc_nulls_last(), *order]
+            found = bad.orderBy(*order).limit(limit).collect()
             if found:
-                samples[f"mismatch:{column.name}"] = [
-                    {"key": {k: r[k] for k in plan.keys}, "left": r["left"], "right": r["right"]} for r in found
-                ]
+                samples[f"mismatch:{column.name}"] = [_sample(r, plan, severity=i in devs) for r in found]
     return ComparisonReport(
         **base,
         matched_keys=int(row["matched"]),
@@ -124,6 +195,32 @@ def compare_frames(left: Any, right: Any, plan: ComparisonPlan, *, sample_limit:
         columns=results,
         samples=samples,
     )
+
+
+def _deviations(plan: ComparisonPlan, joined: Any, flags: list[Any]) -> dict[int, Any]:  # noqa: ANN401
+    f = _functions()
+    return {
+        i: f.when(flag, deviation_expression(i, c, joined))
+        for i, (c, flag) in enumerate(zip(plan.columns, flags, strict=True))
+        if is_numeric(c.left_type) and is_numeric(c.right_type)
+    }
+
+
+def _as_decimal(value: object) -> decimal.Decimal | None:
+    if value is None:
+        return None
+    return decimal.Decimal(repr(value)) if isinstance(value, float) else decimal.Decimal(value)  # type: ignore[arg-type]
+
+
+def _sample(found: Any, plan: ComparisonPlan, *, severity: bool) -> dict[str, object]:  # noqa: ANN401
+    sample: dict[str, object] = {
+        "key": {k: found[k] for k in plan.keys},
+        "left": found["left"],
+        "right": found["right"],
+    }
+    if severity:
+        sample["abs_deviation"] = format_deviation(_as_decimal(found["abs_deviation"]))
+    return sample
 
 
 def _any_null(keys: tuple[str, ...]) -> Any:  # noqa: ANN401
