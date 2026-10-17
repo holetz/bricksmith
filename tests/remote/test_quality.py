@@ -158,7 +158,7 @@ def test_every_check_kind_on_spark(env: Env) -> None:
         "null_key_rows": 1,
         "rows": 3,
     }
-    assert result.samples == ({"id": 1},) and run_check(Check.grain("id"), dup).samples == ()
+    assert result.samples == ({"id": None}, {"id": 1}) and run_check(Check.grain("id"), dup).samples == ()
     other = env.table("o", [(1,), (2,), (2,)], "id INT")
     assert run_check(Check.cardinality("id", expect="one_to_many"), data, other).status == "passed"
     assert run_check(Check.cardinality("id"), data, other).status == "failed"
@@ -180,6 +180,52 @@ def test_every_check_kind_on_spark(env: Env) -> None:
     assert run_check(Check.completeness("id"), empty).status == "unavailable"
     assert run_check(Check.freshness("seen", max_age_seconds=1), empty, now=now).status == "unavailable"
     assert run_check(Check.grain("nope"), data).status == "unavailable"
+
+
+def test_spark_matches_row_engine_on_null_semantics_precision_and_samples(env: Env) -> None:
+    ddl = "v INT, seen TIMESTAMP, d DATE"
+    ts = dt.datetime(2026, 1, 1, 12, 0, 0, 900000, tzinfo=dt.UTC)
+    day = dt.date(2026, 1, 2)
+    raw = [(1, ts, day), (None, ts, day), (2, ts, day)]
+    frame = env.table("par", raw, ddl)
+    rows = [{"v": v, "seen": s, "d": d} for v, s, d in raw]
+    now = dt.datetime(2026, 1, 1, 12, 0, 1, tzinfo=dt.UTC)
+    day_now = dt.datetime(2026, 1, 2, 12, 0, tzinfo=dt.UTC)
+    cases: list[tuple[Check, dt.datetime | None]] = [
+        (Check.accepted_values("v", [1, None], allow_null=True), None),
+        (Check.accepted_values("v", [1, 2], allow_null=True), None),
+        (Check.accepted_values("v", [1, 2]), None),
+        (Check.freshness("seen", max_age_seconds=0.2), now),
+        (Check.freshness("seen", max_age_seconds=0.1), now),
+        (Check.freshness("seen", max_age_seconds=0.09), now),
+        (Check.freshness("d", max_age_seconds=12 * 3600), day_now),
+        (Check.freshness("d", max_age_seconds=12 * 3600 - 1), day_now),
+    ]
+    for check, at in cases:
+        spark = run_check(check, frame, sample_limit=5, now=at)
+        local = run_check(check, rows, sample_limit=5, now=at)
+        assert (spark.status, spark.observed.get("invalid_rows"), spark.samples) == (
+            local.status,
+            local.observed.get("invalid_rows"),
+            local.samples,
+        ), check.name
+    empty = env.table("par_e", [], ddl)
+    allnull = env.table("par_n", [(1, None, None)], ddl)
+    for target in (empty, allnull):
+        assert run_check(Check.freshness("seen", max_age_seconds=1), target, now=now).status == "unavailable"
+    keys = [(1, "x"), (1, "x"), (None, "y"), (2, None), (2, None), (None, None)]
+    kframe = env.table("par_k", keys, "a INT, b STRING")
+    krows = [{"a": a, "b": b} for a, b in keys]
+    for limit in (None, 2, 10):
+        spark = run_check(Check.grain("a", "b"), kframe, sample_limit=limit)
+        local = run_check(Check.grain("a", "b"), krows, sample_limit=limit)
+        assert (spark.status, dict(spark.observed), spark.samples) == (
+            local.status,
+            dict(local.observed),
+            local.samples,
+        )
+    nullonly = env.table("par_o", [(1,), (None,), (None,)], "a INT")
+    assert run_check(Check.grain("a"), nullonly, sample_limit=3).samples == ({"a": None},)
 
 
 def _project(root: Path, files: dict[str, str]) -> None:
