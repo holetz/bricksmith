@@ -1,0 +1,2 @@
+# Synthetic marker searched for in redaction tests; not a credential.
+763c68885d94d5f1a0cf254e4237608c8a0854f9:tests/unit/io/test_secrets.py:generic-api-key:32
