@@ -49,6 +49,20 @@ def check_sample_limit(limit: int | None) -> int | None:
     return limit
 
 
+def format_deviation(value: decimal.Decimal | None) -> str | None:
+    """Render a deviation as a plain decimal string without trailing zeros; ``None`` stays ``None``."""
+    if value is None:
+        return None
+    return format(value.normalize(), "f")
+
+
+def sample_order(deviation: str | None, key: tuple[object, ...]) -> tuple[bool, decimal.Decimal, tuple[object, ...]]:
+    """Order severity samples: largest deviation first, ineligible last, then the key ascending."""
+    if deviation is None:
+        return (True, decimal.Decimal(0), key)
+    return (False, -decimal.Decimal(deviation), key)
+
+
 @dataclass(frozen=True)
 class SideStats:
     """Row and key statistics of one side."""
@@ -79,10 +93,14 @@ class ColumnResult:
 
     name: str
     mismatches: int
+    max_abs_deviation: str | None = None
 
-    def to_dict(self) -> dict[str, object]:
-        """Return the serializable form."""
-        return {"mismatches": self.mismatches, "name": self.name}
+    def to_dict(self, *, severity: bool = False) -> dict[str, object]:
+        """Return the serializable form; the deviation appears only for a severity report."""
+        data: dict[str, object] = {"mismatches": self.mismatches, "name": self.name}
+        if severity:
+            data["max_abs_deviation"] = self.max_abs_deviation
+        return data
 
 
 @dataclass(frozen=True)
@@ -100,6 +118,7 @@ class ComparisonReport:
     columns: tuple[ColumnResult, ...] = ()
     samples: Mapping[str, list[object]] = field(default_factory=dict)
     sample_limit: int | None = None
+    numeric_severity: bool = False
 
     @property
     def status(self) -> str:
@@ -111,8 +130,8 @@ class ComparisonReport:
 
     def to_dict(self) -> dict[str, object]:
         """Return the serializable form."""
-        return {
-            "columns": [c.to_dict() for c in self.columns],
+        data: dict[str, object] = {
+            "columns": [c.to_dict(severity=self.numeric_severity) for c in self.columns],
             "extra_in_right": self.extra_in_right,
             "left": self.left.to_dict() if self.left else None,
             "matched_keys": self.matched_keys,
@@ -126,6 +145,9 @@ class ComparisonReport:
             "status": self.status,
             "version": REPORT_VERSION,
         }
+        if self.numeric_severity:
+            data["numeric_severity"] = True
+        return data
 
     def to_json(self) -> str:
         """Return stable, sorted JSON."""
@@ -146,9 +168,12 @@ class ComparisonReport:
             extra_in_right=data["extra_in_right"],
             matched_keys=data["matched_keys"],
             rows_with_differences=data["rows_with_differences"],
-            columns=tuple(ColumnResult(c["name"], c["mismatches"]) for c in data["columns"]),
+            columns=tuple(
+                ColumnResult(c["name"], c["mismatches"], c.get("max_abs_deviation")) for c in data["columns"]
+            ),
             samples={k: list(v) for k, v in data["samples"].items()},
             sample_limit=data["sample_limit"],
+            numeric_severity=bool(data.get("numeric_severity", False)),
         )
 
     def to_text(self) -> str:
@@ -159,7 +184,10 @@ class ComparisonReport:
             lines.append(f"  rows: {self.left.rows} vs {self.right.rows}; matched keys: {self.matched_keys}")
             lines.append(f"  missing in right: {self.missing_in_right}; extra in right: {self.extra_in_right}")
             lines.append(f"  rows with differences: {self.rows_with_differences}")
-        lines += [f"  column {c.name}: {c.mismatches} mismatch(es)" for c in self.columns if c.mismatches]
+        for c in self.columns:
+            if c.mismatches:
+                extra = f"; max abs deviation {c.max_abs_deviation}" if c.max_abs_deviation is not None else ""
+                lines.append(f"  column {c.name}: {c.mismatches} mismatch(es){extra}")
         lines += [f"  {d.severity} {d.code}: {d.message}" for d in self.plan.diagnostics]
         return "\n".join(lines)
 

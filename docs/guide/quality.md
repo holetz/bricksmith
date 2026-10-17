@@ -17,6 +17,23 @@ report = compare(before, after, plan, sample_limit=5)  # samples only when a lim
 `|l - r| <= max(absolute, relative * max(|l|, |r|))`; the boundary is inclusive. Nulls are equal to nulls.
 Maps, binaries and similar types are reported as `unsupported_type` diagnostics, never skipped silently.
 
+### Numeric severity (opt-in)
+
+```python
+report = compare(before, after, plan, sample_limit=5, numeric_severity=True)
+```
+
+By default a comparison reports mismatch counts and key-ordered samples, and nothing else changes. With
+`numeric_severity=True` each numeric column gets `max_abs_deviation`, the largest finite `|l - r|` among its
+mismatches (null when no mismatch is eligible, never zero for "nothing"), and, only with an explicit
+`sample_limit`, its mismatch samples are ordered by largest deviation, ties by key ascending, each carrying
+`abs_deviation`. Pairs with a null, non-numeric, bool, NaN or infinite operand, or a non-finite difference, keep
+their mismatch count but are excluded from the maximum and ranked last. Floating columns use the double
+difference; integer and `DECIMAL` columns are exact, and a pair needing more than 38 digits raises `QualityError`
+instead of rounding. Values are plain decimal strings with trailing zeros removed. Matching pairs, including
+those inside a tolerance, are never sampled. Reports without the option serialize exactly as before and old
+reports still load.
+
 Duplicate or null keys make the report `invalid` (no value comparison, never a one-to-one result).
 
 ## Checks

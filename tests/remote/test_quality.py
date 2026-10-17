@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import decimal
 import json
 import textwrap
 from typing import TYPE_CHECKING, Any
@@ -226,6 +227,36 @@ def test_spark_matches_row_engine_on_null_semantics_precision_and_samples(env: E
         )
     nullonly = env.table("par_o", [(1,), (None,), (None,)], "a INT")
     assert run_check(Check.grain("a"), nullonly, sample_limit=3).samples == ({"a": None},)
+
+
+def test_spark_numeric_severity_matches_row_engine(env: Env) -> None:
+    ddl = "a INT, b INT, amt DECIMAL(30,4), x DOUBLE, s STRING"
+    big = decimal.Decimal("123456789012345678901234.5678")
+    nan, inf = float("nan"), float("inf")
+    left = [
+        (1, 1, big, 0.0, "k"),
+        (1, 2, decimal.Decimal("10.5000"), 0.0, "k"),
+        (2, 1, None, 1.0, "k"),
+        (2, 2, None, 0.0, "k"),
+    ]
+    right = [
+        (1, 1, decimal.Decimal("0.0001"), -2.0, "k"),
+        (1, 2, decimal.Decimal("10.5001"), 2.0, "k"),
+        (2, 1, decimal.Decimal("1.0000"), nan, "z"),
+        (2, 2, None, inf, "k"),
+    ]
+    lf, rf = env.table("sv_l", left, ddl), env.table("sv_r", right, ddl)
+    plan = plan_for_frames(lf, rf, ["a", "b"])
+    names = ["a", "b", "amt", "x", "s"]
+    rows_l = [dict(zip(names, r, strict=True)) for r in left]
+    rows_r = [dict(zip(names, r, strict=True)) for r in right]
+    for limit in (None, 2, 10):
+        spark = compare(lf, rf, plan, sample_limit=limit, numeric_severity=True)
+        local = compare_rows(rows_l, rows_r, plan, sample_limit=limit, numeric_severity=True)
+        assert spark.to_dict() == local.to_dict(), limit
+    full = compare(lf, rf, plan, sample_limit=10, numeric_severity=True)
+    assert {c.name: c.max_abs_deviation for c in full.columns}["amt"] == "123456789012345678901234.5677"
+    assert "numeric_severity" not in compare(lf, rf, plan, sample_limit=2).to_dict()
 
 
 def _project(root: Path, files: dict[str, str]) -> None:
