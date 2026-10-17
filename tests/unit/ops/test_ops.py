@@ -549,6 +549,17 @@ def test_secret_values_are_masked_across_quote_styles_and_separators(text: str, 
     assert redact_text(out) == expected
 
 
+@pytest.mark.parametrize(
+    "key",
+    ["clientsecret", "accesstoken", "authtoken", "sessiontoken", "refreshtoken", "apitoken", "secretkey", "dbpass"],
+)
+@pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
+def test_compound_secret_keys_are_masked_in_any_case(key: str, case: object) -> None:
+    name = case(key)  # type: ignore[operator]
+    assert redact_text(f"{name}=s3cretval") == f"{name}=<redacted>"
+    assert redact_text(f"{name}: 's3 cret'") == f"{name}: '<redacted>'"
+
+
 def test_many_assignments_are_masked_in_linear_time() -> None:
     start = time.perf_counter()
     out = redact_text("password='a b' " * 30_000, limit=100_000)

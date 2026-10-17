@@ -21,7 +21,8 @@ _ROW_KEYS = frozenset(
 _KEYWORD = (
     r"(?:(?-i:(?<![a-z])|(?<=[a-z])(?=[A-Z]))"
     r"(?:pass(?:word|wd|phrase|code)?|secret|token|credentials?|authorization|(?:api[ _-]?|private[_-]?)key)"
-    r"|password|passwd|passphrase|apikey)(?-i:(?![a-z]))"
+    r"|(?:(?<=db)|(?<=user)|(?<=sql)|(?<=ftp)|(?<=ssh)|(?<=admin)|(?<=root))pass"
+    r"|(?:secret|token)(?:[_-]?key)?|secretkey|password|passwd|passphrase|apikey)(?-i:(?![a-z]))"
 )
 _SEP = r"\s*(?:=>|:=|==|=|:)\s*"
 _HEADER = re.compile(
