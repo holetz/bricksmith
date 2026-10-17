@@ -180,11 +180,12 @@ def compare_frames(
     )
     if limit is not None:
         for i, (column, flag) in enumerate(zip(plan.columns, flags, strict=True)):
-            bad = joined.where(flag).select(*plan.keys, f.col(f"l_{i}").alias("left"), f.col(f"r_{i}").alias("right"))
+            chosen = [*plan.keys, f.col(f"l_{i}").alias("left"), f.col(f"r_{i}").alias("right")]
             order = [f.col(k) for k in plan.keys]
             if i in devs:
-                bad = bad.withColumn("abs_deviation", devs[i])
+                chosen.append(devs[i].alias("abs_deviation"))
                 order = [f.col("abs_deviation").desc_nulls_last(), *order]
+            bad = joined.where(flag).select(*chosen)
             found = bad.orderBy(*order).limit(limit).collect()
             if found:
                 samples[f"mismatch:{column.name}"] = [_sample(r, plan, severity=i in devs) for r in found]
