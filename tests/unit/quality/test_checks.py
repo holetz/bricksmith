@@ -34,9 +34,9 @@ def test_grain_passes_and_fails_with_hand_counted_findings() -> None:
     assert run_check(Check.grain("id"), []).status == "passed"
     dup = [*ROWS, {"id": 1}, {"id": 1}, {"id": None}]
     result = run_check(Check.grain("id"), dup, sample_limit=5)
-    assert result.samples == ({"id": None}, {"id": 1})
+    assert result.status == "failed"
     assert result.observed == {"duplicate_groups": 1, "duplicate_rows": 3, "null_key_rows": 1, "rows": 6}
-    assert result.samples == ({"id": 1},)
+    assert result.samples == ({"id": None}, {"id": 1})
     assert run_check(Check.grain("id"), dup).samples == ()
 
 
