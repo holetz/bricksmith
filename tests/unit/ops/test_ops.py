@@ -565,3 +565,34 @@ def test_many_assignments_are_masked_in_linear_time() -> None:
     out = redact_text("password='a b' " * 30_000, limit=100_000)
     assert time.perf_counter() - start < 5.0
     assert "a b" not in out
+
+
+@pytest.mark.parametrize(
+    ("text", "leaked"),
+    [
+        (r"{\"password\": \"a\\\" b c\"}", "b c"),
+        ("credentials:\n  password: s3cretvalue", "s3cretvalue"),
+        ("password: |2\n  s3cretvalue", "s3cretvalue"),
+        ("password: >2-\n  s3cretvalue", "s3cretvalue"),
+        ("password: |-1\n  s3cretvalue", "s3cretvalue"),
+        ("jdbc:x://h;user=a; password=abc def;db=1", "def"),
+        ("jdbc:x://h;user=a;\t password=abc def;db=1", "def"),
+    ],
+)
+def test_spelling_variants_leave_no_secret_fragment(text: str, leaked: str) -> None:
+    out = redact_text(text)
+    assert leaked not in out
+    assert "<redacted>" in out
+
+
+def test_nested_yaml_keeps_the_parent_key_and_the_sibling_after_the_value() -> None:
+    out = redact_text("credentials:\n  password: s3cretvalue\n  user: bob")
+    assert out == "credentials:\n  password: <redacted>\n  user: bob"
+    assert redact_text("jdbc:x://h;user=a; password=abc def;db=1") == "jdbc:x://h;user=a; password=<redacted>;db=1"
+
+
+def test_escaped_backslash_runs_are_linear_and_masked() -> None:
+    start = time.perf_counter()
+    out = redact_text('{\\"password\\": \\"' + "\\\\" * 20_000 + "x", limit=100_000)
+    assert time.perf_counter() - start < 5.0
+    assert "xx" not in out
