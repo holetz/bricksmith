@@ -82,6 +82,7 @@ def project(root: Path) -> Path:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(textwrap.dedent(text), encoding="utf-8")
+    (root / "bricksmith.toml").write_text("", encoding="utf-8")
     return root
 
 
@@ -206,3 +207,18 @@ def test_catalog_output_does_not_depend_on_exemption_expiry(tmp_path: Path, caps
         text = capsys.readouterr().out
         assert "unused_exemption" in text
         assert "expired_exemption" not in text
+
+
+def test_missing_project_file_fails_without_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    base = ["--env", "free", "--env-file", str(tmp_path / "none.env")]
+    (tmp_path / "none.env").write_text("", encoding="utf-8")
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    out = tmp_path / "catalog.json"
+    for target in (tmp_path / "does-not-exist", bare):
+        args = [*base, "catalog", "render", "--project", str(target), "--format", "json", "--output", str(out)]
+        assert main(args) == EXIT_CONFIG
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "bricksmith.toml" in captured.err
+        assert not out.exists()
