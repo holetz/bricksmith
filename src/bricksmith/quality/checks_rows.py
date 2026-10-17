@@ -57,9 +57,11 @@ def _cardinality(
     if check.require_match and unmatched:
         problems.append(f"{unmatched} data row(s) have no match in the other relation")
     observed = {"data_invalid_groups": ldup, "other_invalid_groups": rdup, "unmatched_rows": unmatched}
-    samples = [
-        dict(zip(check.columns, k, strict=True)) for k in sorted((k for k in lcounts if k not in rcounts), key=repr)
-    ]
+    unmatched_keys = {k for k in lcounts if k not in rcounts}
+    null_keys = (tuple(row.get(c) for c in check.columns) for row in rows)
+    unmatched_keys.update(key for key in null_keys if any(v is None for v in key))
+    ordered = sorted(unmatched_keys, key=lambda k: tuple((v is not None, repr(v)) for v in k))
+    samples = [dict(zip(check.columns, k, strict=True)) for k in ordered]
     return _verdict(check, problems, observed, samples[:limit] if limit and check.require_match else ())
 
 
