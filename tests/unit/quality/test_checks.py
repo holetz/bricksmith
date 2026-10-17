@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 
 import pytest
@@ -122,7 +123,10 @@ def test_checks_as_ordinary_tasks_raise_unless_they_pass() -> None:
 def test_conditions_render_sql_for_the_storage_hooks() -> None:
     assert condition_sql(Check.not_null("id", "kind")) == "`id` IS NOT NULL AND `kind` IS NOT NULL"
     assert condition_sql(Check.accepted_values("kind", ["a", "b"])) == "coalesce(`kind` IN ('a', 'b'), false)"
-    assert condition_sql(Check.accepted_values("kind", ["a"], allow_null=True)) == "(`kind` IN ('a') OR `kind` IS NULL)"
+    assert (
+        condition_sql(Check.accepted_values("kind", ["a"], allow_null=True))
+        == "(coalesce(`kind` IN ('a'), false) OR `kind` IS NULL)"
+    )
     assert condition_sql(Check.grain("id", "kind")) == (
         "(SELECT count(*) FROM (SELECT 1 FROM {input} GROUP BY `id`, `kind` HAVING count(*) > 1 "
         "OR `id` IS NULL OR `kind` IS NULL)) = 0"
@@ -208,3 +212,40 @@ def test_truncated_samples_order_by_value_like_spark() -> None:
     assert grain.samples == ({"a": 2},)
     accepted = run_check(Check.accepted_values("a", ["ok"]), [{"a": 10}, {"a": 2}, {"a": None}], sample_limit=2)
     assert accepted.samples == (None, 2)
+
+
+@pytest.mark.parametrize("flag", ["require_match", "allow_null"])
+@pytest.mark.parametrize("bad", ["false", "true", 0, 1, None, []])
+def test_boolean_flags_reject_non_booleans(flag: str, bad: object) -> None:
+    kind = "cardinality" if flag == "require_match" else "accepted_values"
+    base: dict[str, object] = {"kind": kind, "columns": ["a"], "values": [1]}
+    with pytest.raises(QualityError, match=flag):
+        Check.from_dict({**base, flag: bad})
+    with pytest.raises(QualityError, match=flag):
+        dataclasses.replace(Check.from_dict(base), **{flag: bad})
+
+
+def test_boolean_flags_load_from_json_and_toml_and_round_trip() -> None:
+    (js,) = load_checks('[{"kind": "accepted_values", "columns": ["a"], "values": [1], "allow_null": true}]')
+    assert js.allow_null is True
+    with pytest.raises(QualityError, match="allow_null"):
+        load_checks('[{"kind": "accepted_values", "columns": ["a"], "values": [1], "allow_null": "false"}]')
+    toml = '[[check]]\nkind = "cardinality"\ncolumns = ["a"]\nrequire_match = true\n'
+    (tm,) = load_checks(toml, fmt="toml")
+    assert tm.require_match is True
+    with pytest.raises(QualityError, match="require_match"):
+        load_checks('[[check]]\nkind = "cardinality"\ncolumns = ["a"]\nrequire_match = "no"\n', fmt="toml")
+    assert Check.from_dict(js.to_dict()) == js
+    assert Check.from_dict({"kind": "grain", "columns": ["a"]}).require_match is False
+
+
+def test_nullable_accepted_values_still_rejects_other_values() -> None:
+    rows = [{"v": 1}, {"v": None}, {"v": 2}]
+    check = Check.accepted_values("v", [1, None], allow_null=True)
+    result = run_check(check, rows, sample_limit=5)
+    assert result.status == "failed"
+    assert result.observed["invalid_rows"] == 1
+    assert result.samples == (2,)
+    assert run_check(check, rows[:2]).status == "passed"
+    assert "IS NULL" in condition_sql(check)
+    assert condition_sql(check).startswith("(coalesce(")

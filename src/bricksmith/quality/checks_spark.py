@@ -92,10 +92,8 @@ def _accepted(check: Check, frame: Any, limit: int | None) -> CheckResult:  # no
     f = _f()
     column = f.col(check.columns[0])
     values = list(check.values)
-    if check.allow_null:
-        condition = column.isNotNull() & ~column.isin(values)
-    else:
-        condition = ~f.coalesce(column.isin(values), _const(value=False))
+    accepted = f.coalesce(column.isin(values), _const(value=False))
+    condition = ~(accepted | column.isNull()) if check.allow_null else ~accepted
     bad = frame.where(condition)
     count = int(bad.count())
     problems = [f"{count} row(s) outside the accepted values"] if count else []

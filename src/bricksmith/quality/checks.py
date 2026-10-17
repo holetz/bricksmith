@@ -75,6 +75,10 @@ class Check:
         if self.kind == "freshness" and (len(self.columns) != 1 or not _finite_non_negative(self.max_age_seconds)):
             msg = "freshness needs exactly one column and a finite, non-negative max_age_seconds"
             raise QualityError(msg)
+        for flag in ("require_match", "allow_null"):
+            if not isinstance(getattr(self, flag), bool):
+                msg = f"{flag} must be a boolean, got {getattr(self, flag)!r}"
+                raise QualityError(msg)
         if self.expect not in EXPECTATIONS:
             msg = f"unknown cardinality {self.expect!r}; expected one of {', '.join(EXPECTATIONS)}"
             raise QualityError(msg)
@@ -166,8 +170,8 @@ class Check:
             columns,
             tuple(data.get("values", ())),
             str(data.get("expect", "one_to_one")),
-            bool(data.get("require_match", False)),
-            bool(data.get("allow_null", False)),
+            data.get("require_match", False),
+            data.get("allow_null", False),
             float(data.get("min_ratio", 1.0)),
             _number(data.get("max_age_seconds", 0.0), "max_age_seconds"),
         )
@@ -289,7 +293,8 @@ def condition_sql(check: Check, relation: str = INPUT, other: str | None = None)
     if check.kind == "accepted_values":
         column = quote(cols[0])
         listed = f"{column} IN ({', '.join(literal(v) for v in check.values)})"
-        return f"({listed} OR {column} IS NULL)" if check.allow_null else f"coalesce({listed}, false)"
+        matched = f"coalesce({listed}, false)"
+        return f"({matched} OR {column} IS NULL)" if check.allow_null else matched
     if check.kind == "grain":
         return f"({_dup_groups(relation, cols)}) = 0"
     if check.kind == "completeness":
