@@ -196,3 +196,15 @@ def test_freshness_rejects_threshold_too_large_for_float() -> None:
         Check.from_dict({"kind": "freshness", "columns": ["seen"], "max_age_seconds": huge})
     with pytest.raises(QualityError):
         load_checks('[{"kind": "freshness", "columns": ["seen"], "max_age_seconds": ' + str(huge) + "}]")
+
+
+def test_truncated_samples_order_by_value_like_spark() -> None:
+    required = Check.cardinality("a", expect="many_to_many", require_match=True)
+    nums = run_check(required, [{"a": 10}, {"a": 2}], [{"a": 1}], sample_limit=1)
+    assert nums.samples == ({"a": 2},)
+    strs = run_check(required, [{"a": "zed's"}, {"a": "apple"}], [{"a": "x"}], sample_limit=1)
+    assert strs.samples == ({"a": "apple"},)
+    grain = run_check(Check.grain("a"), [{"a": 10}, {"a": 10}, {"a": 2}, {"a": 2}], sample_limit=1)
+    assert grain.samples == ({"a": 2},)
+    accepted = run_check(Check.accepted_values("a", ["ok"]), [{"a": 10}, {"a": 2}, {"a": None}], sample_limit=2)
+    assert accepted.samples == (None, 2)

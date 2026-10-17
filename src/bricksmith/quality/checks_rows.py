@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections import Counter
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from bricksmith.quality.checks import Check, CheckResult, _unavailable, _verdict
@@ -24,6 +25,21 @@ def _key_stats(rows: Sequence[Mapping[str, object]], cols: Sequence[str]) -> tup
     return counts, nulls
 
 
+def _value_key(value: object) -> tuple[int, object, str]:
+    """Order values like Spark ascending: nulls first, numbers and strings by value, the rest by type and text."""
+    if value is None:
+        return (0, 0, "")
+    if isinstance(value, bool | int | float | Decimal):
+        return (1, value, "")
+    if isinstance(value, str):
+        return (2, value, "")
+    return (3, 0, f"{type(value).__name__}:{value!r}")
+
+
+def _tuple_key(key: tuple[object, ...]) -> tuple[tuple[int, object, str], ...]:
+    return tuple(_value_key(v) for v in key)
+
+
 def _dups(counts: Counter[tuple[object, ...]]) -> tuple[int, int]:
     over = [n for n in counts.values() if n > 1]
     return len(over), sum(over)
@@ -37,7 +53,11 @@ def _grain(check: Check, rows: Sequence[Mapping[str, object]], limit: int | None
         problems.append(f"{groups} duplicate key group(s) over {dup_rows} row(s)")
     if nulls:
         problems.append(f"{nulls} row(s) with a null key")
-    samples = [dict(zip(check.columns, k, strict=True)) for k, n in sorted(counts.items(), key=repr) if n > 1]
+    samples = [
+        dict(zip(check.columns, k, strict=True))
+        for k, n in sorted(counts.items(), key=lambda item: _tuple_key(item[0]))
+        if n > 1
+    ]
     observed = {"duplicate_groups": groups, "duplicate_rows": dup_rows, "null_key_rows": nulls, "rows": len(rows)}
     return _verdict(check, problems, observed, samples[:limit] if limit else ())
 
@@ -60,7 +80,7 @@ def _cardinality(
     unmatched_keys = {k for k in lcounts if k not in rcounts}
     null_keys = (tuple(row.get(c) for c in check.columns) for row in rows)
     unmatched_keys.update(key for key in null_keys if any(v is None for v in key))
-    ordered = sorted(unmatched_keys, key=lambda k: tuple((v is not None, repr(v)) for v in k))
+    ordered = sorted(unmatched_keys, key=_tuple_key)
     samples = [dict(zip(check.columns, k, strict=True)) for k in ordered]
     return _verdict(check, problems, observed, samples[:limit] if limit and check.require_match else ())
 
@@ -79,11 +99,9 @@ def _accepted(check: Check, rows: Sequence[Mapping[str, object]], limit: int | N
         if (r.get(column) is None and not check.allow_null)
         or (r.get(column) is not None and r.get(column) not in check.values)
     ]
-    distinct = sorted({repr(v): v for v in bad}.items())
+    distinct = sorted({repr(v): v for v in bad}.values(), key=_value_key)
     problems = [f"{len(bad)} row(s) outside the accepted values"] if bad else []
-    return _verdict(
-        check, problems, {"invalid_rows": len(bad), "rows": len(rows)}, [v for _, v in distinct][: limit or 0]
-    )
+    return _verdict(check, problems, {"invalid_rows": len(bad), "rows": len(rows)}, distinct[: limit or 0])
 
 
 def _completeness(check: Check, rows: Sequence[Mapping[str, object]]) -> CheckResult:
