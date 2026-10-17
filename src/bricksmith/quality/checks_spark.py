@@ -72,7 +72,8 @@ def _cardinality(check: Check, frame: Any, other: Any, limit: int | None) -> Che
     if check.require_match and unmatched:
         problems.append(f"{unmatched} data row(s) have no match in the other relation")
     observed = {"data_invalid_groups": ldup, "other_invalid_groups": rdup, "unmatched_rows": unmatched}
-    return _verdict(check, problems, observed, _keys(lonly.distinct(), cols, limit if check.require_match else None))
+    sampled = lonly.select(*cols).union(frame.where(_null_any(cols)).select(*cols)).distinct()
+    return _verdict(check, problems, observed, _keys(sampled, cols, limit if check.require_match else None))
 
 
 def _nullability(check: Check, frame: Any) -> CheckResult:  # noqa: ANN401
