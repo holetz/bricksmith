@@ -4,8 +4,10 @@ On 2026-10-14 the human authorized converting Bricksmith planning to the `quench
 branch after Quenching prerequisite spec 1654. Product development remains **paused**.
 The conversion publishes specification metadata only; no product PR, merge or release occurred.
 
-Both agent hosts share `.agents/quenching.json` (`backend: git`); `.claude/quenching.json`
-points to that same envelope. Branch configuration disables GitHub cards with `provider: none`.
+Both agent hosts use regular files, `.agents/quenching.json` and `.claude/quenching.json`,
+containing copies of the same configuration envelope (`backend: git`).
+`tests/test_quenching_config.py` requires equal parsed JSON and the git backend.
+Branch configuration disables GitHub cards with `provider: none`.
 GitHub issues 1–4 are closed, thin retired projections; their history remains available.
 Closing those cards does not mark unfinished canonical specifications done.
 
