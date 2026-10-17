@@ -512,3 +512,56 @@ def test_cli_report_diagnose_readiness_and_explain(
     assert main([*base, "explain", "--project", str(root), "--concurrency", "3"]) == EXIT_VALIDATION
     assert "max_concurrency" in capsys.readouterr().out
     assert main([*base, "explain", "--project", str(root), "--concurrency", "1"]) == EXIT_OK
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("password='it''s my secret' z", "password='<redacted>' z"),
+        ('password="a""b c" z', 'password="<redacted>" z'),
+        ('password="""a b""" z', 'password="""<redacted>""" z'),
+        ("password=`a b` z", "password=`<redacted>` z"),
+        ("password=\u201ca b\u201d z", "password=\u201c<redacted>\u201d z"),
+        ("{'password': b'x y'}", "{'password': '<redacted>'}"),
+        ("password => 'x y'", "password => '<redacted>'"),
+        ("password := 'x y' z", "password := '<redacted>' z"),
+        ("password == 'x y'", "password == '<redacted>'"),
+        ('"API Key": "x y"', '"API Key": "<redacted>"'),
+        (r"{\"password\": \"x y\"}", r"{\"password\": \"<redacted>\"}"),
+        ("https://user:pa/ss@host/x", "https://user:<redacted>@host/x"),
+        ("https://user:p@ss@host/x u", "https://user:<redacted>@host/x u"),
+        ("http://host:8080/path", "http://host:8080/path"),
+        ("jdbc:x://h;user=a;password=abc def;db=1", "jdbc:x://h;user=a;password=<redacted>;db=1"),
+        ("password: |\n  multi line secret\n  more\nnext: 1", "password: <redacted>\nnext: 1"),
+        ("compass: 'north east'", "compass: 'north east'"),
+        ("bypass='keep this text'", "bypass='keep this text'"),
+        ("tokens: 'the quick brown fox'", "tokens: 'the quick brown fox'"),
+        (
+            "access_token=t DB_PASSWORD=p clientSecret=s dbpassword=q",
+            "access_token=<redacted> DB_PASSWORD=<redacted> clientSecret=<redacted> dbpassword=<redacted>",
+        ),
+        ("api_key=k private-key=k", "api_key=<redacted> private-key=<redacted>"),
+    ],
+)
+def test_secret_values_are_masked_across_quote_styles_and_separators(text: str, expected: str) -> None:
+    out = redact_text(text)
+    assert out == expected
+    assert redact_text(out) == expected
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["clientsecret", "accesstoken", "authtoken", "sessiontoken", "refreshtoken", "apitoken", "secretkey", "dbpass"],
+)
+@pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
+def test_compound_secret_keys_are_masked_in_any_case(key: str, case: object) -> None:
+    name = case(key)  # type: ignore[operator]
+    assert redact_text(f"{name}=s3cretval") == f"{name}=<redacted>"
+    assert redact_text(f"{name}: 's3 cret'") == f"{name}: '<redacted>'"
+
+
+def test_many_assignments_are_masked_in_linear_time() -> None:
+    start = time.perf_counter()
+    out = redact_text("password='a b' " * 30_000, limit=100_000)
+    assert time.perf_counter() - start < 5.0
+    assert "a b" not in out
