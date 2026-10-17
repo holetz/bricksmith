@@ -18,8 +18,19 @@ def is_frame(data: object) -> bool:
     return hasattr(data, "groupBy") and hasattr(data, "schema")
 
 
-def compare(left: Any, right: Any, plan: ComparisonPlan, *, sample_limit: int | None = None) -> ComparisonReport:  # noqa: ANN401
-    """Compare two Spark DataFrames (remotely) or two row lists under ``plan``."""
+def compare(
+    left: Any,  # noqa: ANN401
+    right: Any,  # noqa: ANN401
+    plan: ComparisonPlan,
+    *,
+    sample_limit: int | None = None,
+    numeric_severity: bool = False,
+) -> ComparisonReport:
+    """Compare two Spark DataFrames (remotely) or two row lists under ``plan``.
+
+    ``numeric_severity`` (off by default) adds the largest finite absolute deviation per numeric column and orders
+    mismatch samples (which still need ``sample_limit``) by it.
+    """
     if is_frame(left) and is_frame(right):
         from bricksmith.quality.spark import compare_frames  # noqa: PLC0415
 
@@ -27,7 +38,7 @@ def compare(left: Any, right: Any, plan: ComparisonPlan, *, sample_limit: int | 
     if is_frame(left) or is_frame(right):
         msg = "compare two Spark DataFrames or two row lists, not a mix"
         raise TypeError(msg)
-    return compare_rows(left, right, plan, sample_limit=sample_limit)
+    return compare_rows(left, right, plan, sample_limit=sample_limit, numeric_severity=numeric_severity)
 
 
 def plan_for_frames(  # noqa: PLR0913 - mirrors plan_comparison

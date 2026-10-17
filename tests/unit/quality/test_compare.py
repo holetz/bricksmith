@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import decimal
+import json
+
 import pytest
 
 from bricksmith.quality import (
@@ -14,6 +17,7 @@ from bricksmith.quality import (
     plan_comparison,
     values_equal,
 )
+from bricksmith.quality.rows import absolute_deviation
 
 SCHEMA = {"id": "int", "name": "string", "score": "double"}
 
@@ -206,3 +210,99 @@ def test_plan_and_report_round_trip_with_stable_json() -> None:
     assert "different" in report.to_text() and "name" in report.to_text()
     with pytest.raises(QualityError):
         ComparisonPlan.from_dict({**chosen.to_dict(), "version": 99})
+
+
+D = decimal.Decimal
+NUM = {"a": "int", "b": "int", "amt": "decimal(30,4)", "x": "double", "s": "string"}
+
+
+def num_plan() -> ComparisonPlan:
+    return plan_comparison(NUM, NUM, ["a", "b"])
+
+
+def row(a: int, b: int, **cells: object) -> dict[str, object]:
+    base: dict[str, object] = {"a": a, "b": b, "amt": D(0), "x": 0.0, "s": "k"}
+    return base | cells
+
+
+def column(report: ComparisonReport, name: str):  # noqa: ANN201
+    return next(c for c in report.columns if c.name == name)
+
+
+def test_severity_is_off_by_default_and_output_is_unchanged() -> None:
+    report = compare_rows([row(1, 1, x=1.0)], [row(1, 1, x=5.0)], num_plan(), sample_limit=2)
+    assert not report.numeric_severity and column(report, "x").max_abs_deviation is None
+    data = report.to_dict()
+    assert "numeric_severity" not in data and all("max_abs_deviation" not in c for c in data["columns"])  # type: ignore[attr-defined]
+    assert report.samples["mismatch:x"] == [{"key": {"a": 1, "b": 1}, "left": 1.0, "right": 5.0}]
+    assert "deviation" not in report.to_text()
+
+
+def test_max_deviation_and_samples_ordered_by_largest_deviation_with_composite_key_ties() -> None:
+    left = [row(1, 1, x=0.0), row(1, 2, x=0.0), row(2, 1, x=0.0), row(2, 2, x=0.0), row(3, 1, x=1.0), row(3, 2, x=0.0)]
+    right = [
+        row(1, 1, x=-2.0),  # |dev| 2
+        row(1, 2, x=0.5),  # 0.5
+        row(2, 1, x=2.0),  # 2 ties with (1, 1)
+        row(2, 2, x=0.0),  # match
+        row(3, 1, x=1.0),  # match
+        row(3, 2, x=float("nan")),  # mismatch, ineligible
+    ]
+    report = compare_rows(left, right, num_plan(), sample_limit=3, numeric_severity=True)
+    assert column(report, "x").mismatches == 4 and column(report, "x").max_abs_deviation == "2"
+    samples = report.samples["mismatch:x"]
+    assert [s["key"] for s in samples] == [{"a": 1, "b": 1}, {"a": 2, "b": 1}, {"a": 1, "b": 2}]  # type: ignore[index]
+    assert [s["abs_deviation"] for s in samples] == ["2", "2", "0.5"]  # type: ignore[index]
+    all_of_them = compare_rows(left, right, num_plan(), sample_limit=10, numeric_severity=True).samples["mismatch:x"]
+    assert all_of_them[-1]["key"] == {"a": 3, "b": 2} and all_of_them[-1]["abs_deviation"] is None  # type: ignore[index]
+    assert len(all_of_them) == 4  # matching pairs are never sampled
+    assert compare_rows(left, right, num_plan(), numeric_severity=True).samples == {}  # no limit, no samples
+
+
+def test_decimal_deviation_is_exact_and_normalized() -> None:
+    big = D("123456789012345678901234.5678")
+    assert absolute_deviation(big, D("0.0001")) == D("123456789012345678901234.5677")
+    left, right = [row(1, 1, amt=D("10.50"))], [row(1, 1, amt=D("10.5000001"))]
+    report = compare_rows(left, right, num_plan(), numeric_severity=True)
+    assert column(report, "amt").max_abs_deviation == "0.0000001"
+    same = compare_rows([row(1, 1, amt=D("5.00"))], [row(1, 1, amt=D("0"))], num_plan(), numeric_severity=True)
+    assert column(same, "amt").max_abs_deviation == "5"
+    assert absolute_deviation(10**40, D("1")) == D(10**40 - 1)  # beyond the default 28 digits, still exact
+
+
+def test_ineligible_pairs_keep_counts_but_give_no_metric() -> None:
+    inf, nan = float("inf"), float("nan")
+    for a, b in ((None, 1.0), (1.0, None), (nan, 1.0), (inf, 1.0), (1.0, -inf), (True, 1), ("1", 2), (D("NaN"), D(1))):
+        assert absolute_deviation(a, b) is None
+    assert absolute_deviation(1e308, -1e308) is None  # non-finite deviation
+    assert absolute_deviation(-3, 4) == 7 and absolute_deviation(0, 0) == 0
+    report = compare_rows([row(1, 1, x=1.0)], [row(1, 1, x=inf)], num_plan(), numeric_severity=True)
+    assert column(report, "x").mismatches == 1 and column(report, "x").max_abs_deviation is None
+    assert column(report, "s").max_abs_deviation is None  # non-numeric column
+
+
+def test_empty_matching_and_within_tolerance_inputs() -> None:
+    empty = compare_rows([], [], num_plan(), sample_limit=2, numeric_severity=True)
+    assert all(c.max_abs_deviation is None for c in empty.columns)
+    tolerant = plan_comparison(NUM, NUM, ["a", "b"], tolerances={"x": Tolerance(absolute=0.5)})
+    report = compare_rows([row(1, 1, x=0.0)], [row(1, 1, x=0.5)], tolerant, sample_limit=2, numeric_severity=True)
+    assert column(report, "x").mismatches == 0 and column(report, "x").max_abs_deviation is None
+    assert "mismatch:x" not in report.samples
+
+
+def test_severity_samples_stay_bounded_and_ranked_over_many_mismatches() -> None:
+    left = [row(i, 0, x=0.0) for i in range(50)]
+    right = [row(i, 0, x=float((i * 7) % 11)) for i in range(50)]
+    report = compare_rows(left, right, num_plan(), sample_limit=3, numeric_severity=True)
+    samples = report.samples["mismatch:x"]
+    assert [s["abs_deviation"] for s in samples] == ["10", "10", "10"] and len(samples) == 3  # type: ignore[index]
+    assert [s["key"]["a"] for s in samples] == sorted(s["key"]["a"] for s in samples)  # type: ignore[index]
+
+
+def test_severity_report_round_trips_and_old_reports_load() -> None:
+    report = compare_rows([row(1, 1, x=1.0)], [row(1, 1, x=4.0)], num_plan(), sample_limit=1, numeric_severity=True)
+    again = ComparisonReport.from_dict(json.loads(report.to_json()))
+    assert again == report and again.to_json() == report.to_json()
+    assert json.loads(report.to_json())["numeric_severity"] is True
+    plain = compare_rows([row(1, 1, x=1.0)], [row(1, 1, x=4.0)], num_plan(), sample_limit=1)
+    assert ComparisonReport.from_dict(json.loads(plain.to_json())) == plain
