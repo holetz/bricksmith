@@ -34,7 +34,7 @@ def test_grain_passes_and_fails_with_hand_counted_findings() -> None:
     assert run_check(Check.grain("id"), []).status == "passed"
     dup = [*ROWS, {"id": 1}, {"id": 1}, {"id": None}]
     result = run_check(Check.grain("id"), dup, sample_limit=5)
-    assert result.status == "failed"
+    assert result.samples == ({"id": None}, {"id": 1})
     assert result.observed == {"duplicate_groups": 1, "duplicate_rows": 3, "null_key_rows": 1, "rows": 6}
     assert result.samples == ({"id": 1},)
     assert run_check(Check.grain("id"), dup).samples == ()
@@ -280,3 +280,36 @@ def test_freshness_dates_timezones_and_empty() -> None:
     assert _fresh(naive, max_age=3599, now=now) == "failed"
     assert _fresh(None, max_age=1, now=now) == "unavailable"
     assert run_check(Check.freshness("seen", max_age_seconds=1), [], now=now).status == "unavailable"
+
+
+def test_grain_samples_cover_null_keys_bounded_and_ordered() -> None:
+    rows = [
+        {"a": 1, "b": "x"},
+        {"a": 1, "b": "x"},
+        {"a": None, "b": "y"},
+        {"a": 2, "b": None},
+        {"a": 2, "b": None},
+        {"a": None, "b": None},
+    ]
+    check = Check.grain("a", "b")
+    full = run_check(check, rows, sample_limit=10)
+    assert full.status == "failed"
+    assert full.samples == (
+        {"a": None, "b": None},
+        {"a": None, "b": "y"},
+        {"a": 1, "b": "x"},
+        {"a": 2, "b": None},
+    )
+    assert full.observed["null_key_rows"] == 4
+    assert full.observed["duplicate_groups"] == 1
+    assert run_check(check, rows, sample_limit=2).samples == full.samples[:2]
+    assert run_check(check, rows).samples == ()
+
+
+def test_grain_null_only_failure_samples_keys() -> None:
+    rows = [{"a": 1}, {"a": None}, {"a": None}]
+    result = run_check(Check.grain("a"), rows, sample_limit=5)
+    assert result.status == "failed"
+    assert result.samples == ({"a": None},)
+    assert result.observed["duplicate_groups"] == 0
+    assert run_check(Check.grain("a"), rows).samples == ()

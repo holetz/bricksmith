@@ -61,11 +61,9 @@ def _grain(check: Check, rows: Sequence[Mapping[str, object]], limit: int | None
         problems.append(f"{groups} duplicate key group(s) over {dup_rows} row(s)")
     if nulls:
         problems.append(f"{nulls} row(s) with a null key")
-    samples = [
-        dict(zip(check.columns, k, strict=True))
-        for k, n in sorted(counts.items(), key=lambda item: _tuple_key(item[0]))
-        if n > 1
-    ]
+    offending = {k for k, n in counts.items() if n > 1}
+    offending.update(key for key in (tuple(r.get(c) for c in check.columns) for r in rows) if None in key)
+    samples = [dict(zip(check.columns, k, strict=True)) for k in sorted(offending, key=_tuple_key)]
     observed = {"duplicate_groups": groups, "duplicate_rows": dup_rows, "null_key_rows": nulls, "rows": len(rows)}
     return _verdict(check, problems, observed, samples[:limit] if limit else ())
 

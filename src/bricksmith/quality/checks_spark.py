@@ -62,7 +62,10 @@ def _grain(check: Check, frame: Any, limit: int | None) -> CheckResult:  # noqa:
         "null_key_rows": nulls,
         "rows": int(frame.count()),
     }
-    return _verdict(check, problems, observed, _keys(dup, check.columns, limit))
+    offending = (
+        dup.select(*check.columns).union(frame.where(_null_any(check.columns)).select(*check.columns)).distinct()
+    )
+    return _verdict(check, problems, observed, _keys(offending, check.columns, limit))
 
 
 def _cardinality(check: Check, frame: Any, other: Any, limit: int | None) -> CheckResult:  # noqa: ANN401
