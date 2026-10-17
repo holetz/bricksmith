@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bricksmith.cli.common import global_parent
-from bricksmith.errors import EXIT_OK, UsageError
+from bricksmith.errors import EXIT_OK, ConfigError, UsageError
 
 if TYPE_CHECKING:
     import argparse
@@ -22,6 +22,10 @@ def _render(args: argparse.Namespace) -> int:
     from bricksmith.graph import load_graph  # noqa: PLC0415
     from bricksmith.registry import load_registry  # noqa: PLC0415
 
+    config = Path(args.project) / "bricksmith.toml"
+    if not config.is_file():
+        msg = f"{config} not found: --project must be a project root holding bricksmith.toml"
+        raise ConfigError(msg)
     registry = load_registry(args.registry) if args.registry else None
     report = build_catalog(load_graph(args.project, today=_CATALOG_DATE), registry)
     text = to_json(report) if args.format == "json" or args.json else to_markdown(report)
