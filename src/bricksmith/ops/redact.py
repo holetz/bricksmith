@@ -24,13 +24,13 @@ _KEYWORD = (
     r"|(?:(?<=db)|(?<=user)|(?<=sql)|(?<=ftp)|(?<=ssh)|(?<=admin)|(?<=root))pass"
     r"|(?:secret|token)(?:[_-]?key)?|secretkey|password|passwd|passphrase|apikey)(?-i:(?![a-z]))"
 )
-_SEP = r"\s*(?:=>|:=|==|=|:)\s*"
+_SEP = r"[ \t]*(?:=>|:=|==|=|:)[ \t]*"
 _HEADER = re.compile(
     rf"(?P<qk>\\?[\"'`])(?=[\w .-]{{0,64}}?{_KEYWORD})[\w .-]{{1,64}}(?P=qk){_SEP}"
     rf"|(?<![\w.-])(?=[\w.-]*?{_KEYWORD})[\w.-]+[\"'`]?{_SEP}",
     re.IGNORECASE,
 )
-_BLOCK = re.compile(r"[|>][+-]?[ \t]*(?:\r?\n|$)")
+_BLOCK = re.compile(r"[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:\r?\n|$)")
 _PREFIX = re.compile(r"[bBrRuUfF]{1,2}(?=[\"'`])")
 _UNQUOTED = re.compile(r"[^\s,;'\"&)]+")
 _SEMICOLON_VALUE = re.compile(r"[^;\r\n]+")
@@ -59,14 +59,42 @@ def _quoted_value(text: str, start: int) -> tuple[str, int] | None:
         opener *= 3
     closer = _CURLY_CLOSERS.get(opener, opener)
     i = start + len(opener)
+    if escaped:
+        return _escaped_value(text, i, opener)
     while i < len(text):
         if text.startswith(closer, i):
             if len(closer) == 1 and text.startswith(closer, i + 1) and opener not in _CURLY_CLOSERS:
                 i += 2  # doubled quote is an escape
                 continue
             return f"{opener}{REDACTED}{closer}", i + len(closer)
-        i += 2 if text[i] == "\\" and not escaped else 1
+        i += 2 if text[i] == "\\" else 1
     return f"{opener}{REDACTED}{closer}", len(text)
+
+
+def _escaped_value(text: str, i: int, opener: str) -> tuple[str, int]:
+    """Scan an escaped-quoted value: a lone backslash before the quote closes it; longer runs are escapes."""
+    quote = opener[1]
+    n = len(text)
+    while i < n:
+        if text[i] != "\\":
+            i += 1
+            continue
+        j = i
+        while j < n and text[j] == "\\":
+            j += 1
+        if j < n and text[j] == quote:
+            if j - i == 1:
+                return f"{opener}{REDACTED}{opener}", j + 1
+            j += 1
+        i = j
+    return f"{opener}{REDACTED}{opener}", n
+
+
+def _after_semicolon(text: str, index: int) -> bool:
+    """Whether only spaces or tabs separate ``index`` from a preceding ``;``."""
+    while index > 0 and text[index - 1] in " \t":
+        index -= 1
+    return index > 0 and text[index - 1] == ";"
 
 
 def _block_scalar_end(text: str, start: int, key_start: int) -> int:
@@ -103,7 +131,7 @@ def _mask_assignments(text: str) -> str:
             replacement = (REDACTED, _block_scalar_end(text, block.end(), match.start()))
         elif quoted := _quoted_value(text, prefix.end() if (prefix := _PREFIX.match(text, i)) else i):
             replacement = quoted
-        elif match.start() > 0 and text[match.start() - 1] == ";":
+        elif _after_semicolon(text, match.start()):
             bare = _SEMICOLON_VALUE.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None
         else:
