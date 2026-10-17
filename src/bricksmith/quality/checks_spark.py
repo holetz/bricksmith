@@ -5,7 +5,15 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING, Any
 
-from bricksmith.quality.checks import Check, CheckResult, _unavailable, _verdict
+from bricksmith.quality.checks import (
+    MICROS,
+    Check,
+    CheckResult,
+    _epoch_micros,
+    _max_age_micros,
+    _unavailable,
+    _verdict,
+)
 from bricksmith.quality.coltypes import is_temporal
 
 if TYPE_CHECKING:
@@ -124,14 +132,22 @@ def _freshness(check: Check, frame: Any, now: dt.datetime | None) -> CheckResult
     type_name = frame.schema[column].dataType.simpleString()
     if not is_temporal(type_name):
         return _unavailable(check, f"freshness needs a date or timestamp column, {column!r} is {type_name}")
-    newest = frame.agg(f.max(f.col(column)).cast("timestamp").cast("long").alias("t")).collect()[0]["t"]
+    top = f.max(f.col(column))
+    if type_name == "date":
+        newest_expr = f.datediff(top, f.lit("1970-01-01").cast("date")).cast("long") * (86_400 * MICROS)
+    else:
+        newest_expr = f.unix_micros(top.cast("timestamp"))
+    newest = frame.agg(newest_expr.alias("t")).collect()[0]["t"]
     if newest is None:
         return _unavailable(check, "no non-null value to measure freshness")
-    age = (now or dt.datetime.now(dt.UTC)).timestamp() - float(newest)
+    age_micros = _epoch_micros(now or dt.datetime.now(dt.UTC)) - int(newest)
+    age = age_micros / MICROS
     problems = (
-        [f"newest value is {age:.0f}s old, above {check.max_age_seconds:.0f}s"] if age > check.max_age_seconds else []
+        [f"newest value is {age:.0f}s old, above {check.max_age_seconds:.0f}s"]
+        if age_micros > _max_age_micros(check)
+        else []
     )
-    return _verdict(check, problems, {"age_seconds": age, "newest_epoch": int(newest)})
+    return _verdict(check, problems, {"age_seconds": age, "newest_epoch": int(newest) // MICROS})
 
 
 def run(check: Check, frame: Any, other: Any, limit: int | None, now: dt.datetime | None) -> CheckResult:  # noqa: ANN401

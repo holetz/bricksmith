@@ -7,6 +7,7 @@ and always yields a reportable :class:`CheckResult` of ``passed``, ``failed`` or
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import math
 from dataclasses import dataclass, field
@@ -17,7 +18,6 @@ from bricksmith.quality.report import check_sample_limit, jsonable
 from bricksmith.storage.sql import INPUT, key_match, literal, quote
 
 if TYPE_CHECKING:
-    import datetime as dt
     from collections.abc import Mapping, Sequence
 
 PASSED, FAILED, UNAVAILABLE = "passed", "failed", "unavailable"
@@ -212,6 +212,20 @@ class CheckResult:
         )
 
 
+MICROS = 1_000_000
+_ONE_MICRO = dt.timedelta(microseconds=1)
+
+
+def _epoch_micros(moment: dt.datetime) -> int:
+    """Return the whole microseconds since the Unix epoch of an aware ``moment``."""
+    return (moment - dt.datetime(1970, 1, 1, tzinfo=dt.UTC)) // _ONE_MICRO
+
+
+def _max_age_micros(check: Check) -> int:
+    """Return the freshness threshold in whole microseconds, the unit both engines compare in."""
+    return round(check.max_age_seconds * MICROS)
+
+
 def _unavailable(check: Check, reason: str) -> CheckResult:
     return CheckResult(check.name, check.kind, UNAVAILABLE, reason)
 
@@ -303,8 +317,8 @@ def condition_sql(check: Check, relation: str = INPUT, other: str | None = None)
     if check.kind == "freshness":
         column = quote(cols[0])
         return (
-            f"(SELECT unix_timestamp(CAST(max({column}) AS TIMESTAMP)) FROM {relation}) "
-            f">= unix_timestamp(current_timestamp()) - {check.max_age_seconds!r}"
+            f"(SELECT unix_micros(CAST(max({column}) AS TIMESTAMP)) FROM {relation}) "
+            f">= unix_micros(current_timestamp()) - {_max_age_micros(check)}"
         )
     if other is None:
         msg = "a cardinality condition needs the other relation"

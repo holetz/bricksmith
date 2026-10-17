@@ -132,7 +132,9 @@ def test_conditions_render_sql_for_the_storage_hooks() -> None:
         "OR `id` IS NULL OR `kind` IS NULL)) = 0"
     )
     assert "count(`id`) / count(*)" in condition_sql(Check.completeness("id", min_ratio=0.5), relation="`c`.`s`.`t`")
-    assert "unix_timestamp(current_timestamp()) - 3600" in condition_sql(Check.freshness("seen", max_age_seconds=3600))
+    assert "unix_micros(current_timestamp()) - 3600000000" in condition_sql(
+        Check.freshness("seen", max_age_seconds=3600)
+    )
     card = condition_sql(Check.cardinality("id", require_match=True), other="`o`")
     assert "LEFT ANTI JOIN `o` AS r ON l.`id` = r.`id`" in card and card.count(") = 0") == 3
     with pytest.raises(QualityError):
@@ -249,3 +251,32 @@ def test_nullable_accepted_values_still_rejects_other_values() -> None:
     assert run_check(check, rows[:2]).status == "passed"
     assert "IS NULL" in condition_sql(check)
     assert condition_sql(check).startswith("(coalesce(")
+
+
+def _fresh(seen: object, *, max_age: float, now: dt.datetime, column: str = "seen") -> str:
+    return run_check(Check.freshness(column, max_age_seconds=max_age), [{column: seen}], now=now).status
+
+
+def test_freshness_keeps_subsecond_precision() -> None:
+    now = dt.datetime(2026, 1, 1, 12, 0, 1, tzinfo=dt.UTC)
+    newest = dt.datetime(2026, 1, 1, 12, 0, 0, 900000, tzinfo=dt.UTC)
+    assert _fresh(newest, max_age=0.2, now=now) == "passed"
+    assert _fresh(newest, max_age=0.1, now=now) == "passed"  # exactly 0.1s old
+    assert _fresh(newest, max_age=0.09, now=now) == "failed"
+    assert _fresh(newest, max_age=0.0, now=newest) == "passed"
+    assert "unix_micros" in condition_sql(Check.freshness("seen", max_age_seconds=0.2))
+    assert condition_sql(Check.freshness("seen", max_age_seconds=0.2)).endswith("- 200000")
+
+
+def test_freshness_dates_timezones_and_empty() -> None:
+    now = dt.datetime(2026, 1, 2, 12, 0, tzinfo=dt.UTC)
+    assert _fresh(dt.date(2026, 1, 2), max_age=12 * 3600, now=now, column="d") == "passed"
+    assert _fresh(dt.date(2026, 1, 2), max_age=12 * 3600 - 1, now=now, column="d") == "failed"
+    plus3 = dt.timezone(dt.timedelta(hours=3))
+    same_instant = dt.datetime(2026, 1, 2, 12, 0, 0, 500000, tzinfo=dt.UTC).astimezone(plus3)
+    assert _fresh(same_instant, max_age=0.0, now=now + dt.timedelta(microseconds=500000)) == "passed"
+    naive = dt.datetime(2026, 1, 2, 11, 0)  # noqa: DTZ001 - naive values read as UTC
+    assert _fresh(naive, max_age=3600, now=now) == "passed"
+    assert _fresh(naive, max_age=3599, now=now) == "failed"
+    assert _fresh(None, max_age=1, now=now) == "unavailable"
+    assert run_check(Check.freshness("seen", max_age_seconds=1), [], now=now).status == "unavailable"
