@@ -8,7 +8,7 @@ resources (jobs, schemas, volumes) are built natively in Python — nothing is g
 The same library grows to include a column registry with a naming grammar, a model development
 flow and data and model monitoring, with agent skills that cover the work end to end.
 
-> **Status:** planning. Private repository, nothing released. See the [roadmap](docs/roadmap.md)
+> **Status:** planning. Public repository, nothing released yet. See the [roadmap](docs/roadmap.md)
 > and [development epic](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md).
 
 ## One library, growing capabilities
