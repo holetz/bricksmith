@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
 from collections import Counter
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -33,15 +34,27 @@ def _key_stats(rows: Sequence[Mapping[str, object]], cols: Sequence[str]) -> tup
     return counts, nulls
 
 
+def _utc_naive(value: dt.datetime) -> dt.datetime:
+    return value.astimezone(dt.UTC).replace(tzinfo=None) if value.tzinfo is not None else value
+
+
+def _is_nan(value: float | Decimal) -> bool:
+    return value.is_nan() if isinstance(value, Decimal) else math.isnan(value)
+
+
 def _value_key(value: object) -> tuple[int, object, str]:
-    """Order values like Spark ascending: nulls first, numbers and strings by value, the rest by type and text."""
+    """Order values like Spark ascending: nulls first, NaN last among numbers, dates and timestamps chronologically."""
     if value is None:
         return (0, 0, "")
     if isinstance(value, bool | int | float | Decimal):
-        return (1, value, "")
+        return (1, (1, 0) if _is_nan(value) else (0, value), "")
     if isinstance(value, str):
         return (2, value, "")
-    return (3, 0, f"{type(value).__name__}:{value!r}")
+    if isinstance(value, dt.datetime):
+        return (4, _utc_naive(value), "")
+    if isinstance(value, dt.date):
+        return (3, value.toordinal(), "")
+    return (5, 0, f"{type(value).__name__}:{value!r}")
 
 
 def _tuple_key(key: tuple[object, ...]) -> tuple[tuple[int, object, str], ...]:
