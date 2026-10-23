@@ -313,3 +313,18 @@ def test_grain_null_only_failure_samples_keys() -> None:
     assert result.samples == ({"a": None},)
     assert result.observed["duplicate_groups"] == 0
     assert run_check(Check.grain("a"), rows).samples == ()
+
+
+def test_truncated_samples_order_dates_timestamps_and_nan_like_spark() -> None:
+    day = dt.date
+    dates = run_check(Check.grain("d"), [{"d": day(2024, 10, 1)}] * 2 + [{"d": day(2024, 9, 1)}] * 2, sample_limit=1)
+    assert dates.samples == ({"d": day(2024, 9, 1)},)
+    utc = dt.UTC
+    stamps = [dt.datetime(2024, 1, 1, 10, tzinfo=utc), dt.datetime(2024, 1, 1, 9, tzinfo=utc)]
+    ts = run_check(Check.grain("t"), [{"t": s} for s in stamps for _ in range(2)], sample_limit=1)
+    assert ts.samples == ({"t": stamps[1]},)
+    nan = float("nan")
+    check = Check.accepted_values("a", ["ok"])
+    first = run_check(check, [{"a": 5.0}, {"a": nan}, {"a": 2.0}, {"a": 3.0}], sample_limit=3)
+    second = run_check(check, [{"a": nan}, {"a": 2.0}, {"a": 3.0}, {"a": 5.0}], sample_limit=3)
+    assert first.samples == (2.0, 3.0, 5.0) == second.samples
