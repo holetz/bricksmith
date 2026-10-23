@@ -627,3 +627,23 @@ def test_repeated_plural_and_suffix_keys_stay_bounded_in_time() -> None:
     out = redact_text("passwords=a smtppass=b secrets=c " * 20_000)
     assert time.perf_counter() - start < 5.0
     assert len(out) <= 500
+
+
+@pytest.mark.parametrize("indicator", ["|", ">-", "|2", "|+"])
+def test_block_scalar_with_a_trailing_comment_is_masked(indicator: str) -> None:
+    out = redact_text(f"password: {indicator} # note\n  s3cretvalue\nuser: bob")
+    assert out == "password: <redacted>\nuser: bob"
+
+
+def test_hash_glued_to_the_indicator_is_treated_as_a_comment_and_leaks_nothing() -> None:
+    out = redact_text("password: |#x\n  s3cretvalue\nuser: bob")
+    assert "s3cretvalue" not in out
+    assert "<redacted>" in out
+
+
+def test_long_blank_run_after_a_block_indicator_stays_bounded_in_time() -> None:
+    start = time.perf_counter()
+    out = redact_text("password: |" + " " * 20_000 + "\n  s3cretvalue", limit=100_000)
+    out += redact_text("password: |" + " \t" * 10_000 + "# c\n  s3cretvalue\n", limit=100_000)
+    assert time.perf_counter() - start < 5.0
+    assert "s3cretvalue" not in out
