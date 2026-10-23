@@ -37,6 +37,7 @@ _SEMICOLON_VALUE = re.compile(r"[^;\r\n]+")
 _PLAIN_QUOTES = frozenset({'"', "'", "`"})
 _CURLY_CLOSERS = {"\u201c": "\u201d", "\u2018": "\u2019"}
 _URL_CREDENTIALS = re.compile(r"(://[^/\s:@]+:)(\S+)")
+_PORT = re.compile(r"\d{1,5}(?:[/?#]|$)")
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bdapi[0-9a-f]{12,}\b"), REDACTED),
     (re.compile(r"\b(?:eyJ[A-Za-z0-9_-]{8,}\.){1,2}[A-Za-z0-9_-]{8,}\b"), REDACTED),
@@ -145,15 +146,31 @@ def _mask_assignments(text: str) -> str:
     return "".join(out)
 
 
+def _credential_separator(rest: str) -> int:
+    """Index of the ``@`` that ends the password in ``rest``, or ``-1`` when the text holds no credential.
+
+    A leading ``1-5 digits`` followed by ``/``, ``?``, ``#`` or the end is ``host:port``. The separator is the
+    last ``@`` before the first ``?`` or ``#`` that does not directly follow a ``/`` (a path handle); a password
+    holding ``?`` or ``#`` falls back to the whole text, so it is masked rather than shown.
+    """
+    if _PORT.match(rest):
+        return -1
+    for end in (min((i for i in (rest.find("?"), rest.find("#")) if i >= 0), default=len(rest)), len(rest)):
+        at = rest.rfind("@", 0, end)
+        while at > 0 and rest[at - 1] == "/":
+            at = rest.rfind("@", 0, at)
+        if at >= 0:
+            return at
+    return -1
+
+
 def _mask_url_credentials(match: re.Match[str]) -> str:
     """Keep the user and the host; mask the password, which may itself hold ``/`` or ``@``."""
     rest = match.group(2)
-    first = rest.find("@")
-    if first < 0:
+    at = _credential_separator(rest)
+    if at < 0:
         return match.group(0)
-    slash = rest.find("/", first)
-    last = rest.rfind("@", 0, len(rest) if slash < 0 else slash)
-    return f"{match.group(1)}{REDACTED}{rest[last:]}"
+    return f"{match.group(1)}{REDACTED}{rest[at:]}"
 
 
 def redact_text(text: str, secrets: Iterable[str] = (), limit: int = MAX_TEXT) -> str:

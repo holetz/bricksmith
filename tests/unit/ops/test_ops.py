@@ -531,6 +531,13 @@ def test_cli_report_diagnose_readiness_and_explain(
         ("https://user:pa/ss@host/x", "https://user:<redacted>@host/x"),
         ("https://user:p@ss@host/x u", "https://user:<redacted>@host/x u"),
         ("http://host:8080/path", "http://host:8080/path"),
+        ("GET http://host:8080/api?email=bob@example.com 200", "GET http://host:8080/api?email=bob@example.com 200"),
+        ("https://host:443/users/@alice", "https://host:443/users/@alice"),
+        ("https://u:pw@host:8080/api?e=a@b.com", "https://u:<redacted>@host:8080/api?e=a@b.com"),
+        ("https://u:pw@host/users/@alice", "https://u:<redacted>@host/users/@alice"),
+        ("https://user:p@ss/w@host/x", "https://user:<redacted>@host/x"),
+        ("https://user:1234@host/x", "https://user:<redacted>@host/x"),
+        ("https://user:p?x@host/y", "https://user:<redacted>@host/y"),
         ("jdbc:x://h;user=a;password=abc def;db=1", "jdbc:x://h;user=a;password=<redacted>;db=1"),
         ("password: |\n  multi line secret\n  more\nnext: 1", "password: <redacted>\nnext: 1"),
         ("compass: 'north east'", "compass: 'north east'"),
@@ -647,3 +654,11 @@ def test_long_blank_run_after_a_block_indicator_stays_bounded_in_time() -> None:
     out += redact_text("password: |" + " \t" * 10_000 + "# c\n  s3cretvalue\n", limit=100_000)
     assert time.perf_counter() - start < 5.0
     assert "s3cretvalue" not in out
+
+
+def test_url_credential_masking_stays_bounded_in_time() -> None:
+    started = time.perf_counter()
+    redact_text("https://user:" + "a@/" * 40_000, limit=200_000)
+    redact_text("https://user:" + "@/" * 40_000 + "?x", limit=200_000)
+    redact_text("https://user:12/" + "@" * 40_000, limit=200_000)
+    assert time.perf_counter() - started < 5
