@@ -596,3 +596,34 @@ def test_escaped_backslash_runs_are_linear_and_masked() -> None:
     out = redact_text('{\\"password\\": \\"' + "\\\\" * 20_000 + "x", limit=100_000)
     assert time.perf_counter() - start < 5.0
     assert "xx" not in out
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("passwords=s3cretval tail", "passwords=<redacted> tail"),
+        ('secrets: "s3 cret" tail', 'secrets: "<redacted>" tail'),
+        ("smtppass=s3cretval tail", "smtppass=<redacted> tail"),
+        ("ldappass: s3cretval", "ldappass: <redacted>"),
+        ("mypass=s3cretval", "mypass=<redacted>"),
+        ("dbpass=s3cretval", "dbpass=<redacted>"),
+        ("passphrases=s3cretval", "passphrases=<redacted>"),
+    ],
+)
+def test_plural_and_suffix_secret_keys_are_masked(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["compass=north", "bypass=on", "overpass=1", "tokens=12", "passing=1", "secretsmanager=1"],
+)
+def test_lookalike_keys_are_not_masked(text: str) -> None:
+    assert redact_text(text) == text
+
+
+def test_repeated_plural_and_suffix_keys_stay_bounded_in_time() -> None:
+    start = time.perf_counter()
+    out = redact_text("passwords=a smtppass=b secrets=c " * 20_000)
+    assert time.perf_counter() - start < 5.0
+    assert len(out) <= 500
