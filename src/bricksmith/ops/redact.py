@@ -30,7 +30,7 @@ _HEADER = re.compile(
     rf"|(?<![\w.-])(?=[\w.-]*?{_KEYWORD})[\w.-]+[\"'`]?{_SEP}",
     re.IGNORECASE,
 )
-_BLOCK = re.compile(r"[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:\r?\n|$)")
+_BLOCK = re.compile(r"[|>](?:[1-9][+-]?|[+-][1-9]?)?(?:[ \t]+#[^\r\n]*|[ \t]*)(?:\r?\n|$)")
 _PREFIX = re.compile(r"[bBrRuUfF]{1,2}(?=[\"'`])")
 _UNQUOTED = re.compile(r"[^\s,;'\"&)]+")
 _SEMICOLON_VALUE = re.compile(r"[^;\r\n]+")
