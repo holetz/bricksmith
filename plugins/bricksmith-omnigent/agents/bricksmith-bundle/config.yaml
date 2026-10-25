@@ -1,0 +1,20 @@
+spec_version: 1
+name: "bricksmith-bundle"
+description: "Inspect a bricksmith project's bundle resources and task graph, read-only. Use for \"validate the bundle resources\", \"show the resource plan\", \"check the task graph\". Not for: deploying or running anything."
+instructions: instructions.md
+executor:
+  type: omnigent
+  config:
+    harness: opencode
+os_env:
+  type: caller_process
+  cwd: .
+guardrails:
+  policies:
+    source_tools:
+      type: function
+      function:
+        path: omnigent.policies.builtins.cel.cel_policy
+        arguments:
+          expression: "(event.type == \"tool_call\" && event.data.name in [\"sys_os_write\", \"Write\", \"write\", \"sys_os_edit\", \"Edit\", \"MultiEdit\", \"edit\", \"NotebookEdit\", \"WebFetch\", \"webfetch\", \"WebSearch\", \"websearch\", \"sys_session_create\", \"Task\", \"Agent\", \"task\", \"Skill\"]) ? {\"result\": \"DENY\", \"reason\": \"Tool not granted by the bricksmith agent.\"} : ((event.type == \"tool_call\" && event.data.name in [\"sys_os_shell\", \"Bash\", \"Shell\", \"bash\"] && !(\"arguments\" in event.data && \"command\" in event.data.arguments && type(event.data.arguments.command) == string && event.data.arguments.command.matches(r\"^[ \\t]*bricksmith (?:bundle resources|bundle validate|tasks list|tasks graph|tasks validate|context show)(?: [^;&|<>$`\\\\\\n]*)?(?:[ \\t]*(?:&&|\\|\\||;)[ \\t]*bricksmith (?:bundle resources|bundle validate|tasks list|tasks graph|tasks validate|context show)(?: [^;&|<>$`\\\\\\n]*)?)*[ \\t]*$\"))) ? {\"result\": \"DENY\", \"reason\": \"Shell call outside the granted bricksmith verbs.\"} : {\"result\": \"ALLOW\"})"
+          reason: "Denied by the bricksmith minimal tool grant."
