@@ -1,5 +1,6 @@
 ---
 name: bricksmith-analysis
+allowed-tools: Bash(bricksmith ops report:*), Bash(bricksmith ops diagnose:*), Bash(bricksmith ops readiness:*), Bash(bricksmith ops explain:*), Bash(bricksmith monitor compare:*), Bash(bricksmith monitor evaluate:*), Bash(bricksmith tasks list:*), Bash(bricksmith context show:*), Read, Grep, Glob
 ---
 
 <!-- Omnigent agent bundle; the tool grant is in config.yaml and is the only authority. -->

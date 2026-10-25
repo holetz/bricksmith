@@ -179,7 +179,7 @@ def test_verbs_are_read_only_in_the_parser(agent: str) -> None:
 @pytest.mark.parametrize("agent", IDS)
 def test_instructions_content_rules(agent: str) -> None:
     text = (AGENTS / agent / "instructions.md").read_text(encoding="utf-8")
-    assert text.startswith(f"---\nname: {agent}\n---")
+    assert text.startswith(f"---\nname: {agent}\nallowed-tools: ")
     for verb in VERBS[agent]:
         assert f"`bricksmith {verb}`" in text
     for code in ("0", "1", "2", "3", "4"):
@@ -187,6 +187,21 @@ def test_instructions_content_rules(agent: str) -> None:
     for phrase in ("stays denied", "DEFAULT", "--json", "overlay"):
         assert phrase in text
     assert "`.env`" in text
+
+
+@pytest.mark.parametrize("agent", IDS)
+def test_frontmatter_grant_equals_the_config_grant(agent: str) -> None:
+    text = (AGENTS / agent / "instructions.md").read_text(encoding="utf-8")
+    match = re.match(r"---\nname: [^\n]+\nallowed-tools: ([^\n]+)\n---\n", text)
+    assert match
+    items = [item.strip() for item in match.group(1).split(", ")]
+    assert "*" not in items
+    shell = [item for item in items if item.startswith("Bash(")]
+    assert shell == [f"Bash(bricksmith {verb}:*)" for verb in VERBS[agent]]
+    assert [item for item in items if not item.startswith("Bash(")] == ["Read", "Grep", "Glob"]
+    config = _config(agent)
+    listed = set(re.search(r"bricksmith \(\?:([^)]*)\)", config).group(1).split("|"))  # type: ignore[union-attr]
+    assert {item[len("Bash(bricksmith ") : -len(":*)")] for item in shell} == listed
 
 
 def test_bundle_files_pass_the_generic_leak_scan() -> None:

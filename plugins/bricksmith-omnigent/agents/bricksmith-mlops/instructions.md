@@ -1,5 +1,6 @@
 ---
 name: bricksmith-mlops
+allowed-tools: Bash(bricksmith dataset validate:*), Bash(bricksmith dataset describe:*), Bash(bricksmith model card:*), Bash(bricksmith tasks list:*), Bash(bricksmith tasks graph:*), Bash(bricksmith tasks validate:*), Bash(bricksmith context show:*), Read, Grep, Glob
 ---
 
 <!-- Omnigent agent bundle; the tool grant is in config.yaml and is the only authority. -->
