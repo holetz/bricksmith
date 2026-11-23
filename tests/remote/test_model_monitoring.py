@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from bricksmith.graph import load_graph
 from bricksmith.monitor.model import parse_config
 from bricksmith.monitor.model.engine import MemoryStore, check
-from bricksmith.monitor.model.tables import view_statements
+from bricksmith.monitor.model.tables import ALERTS, RESULTS, RUNS, SCHEMAS, view_statements
 from bricksmith.plan import build_plan
 from bricksmith.runner import apply_plan
 from bricksmith.storage import SparkTableIO
@@ -38,6 +38,25 @@ DECLARATION: dict[str, Any] = {
     "min_rows": 10,
     "gate": {"fail_on": ["red"]},
 }
+#: The declaration with every limit kind, a short trend window and the default persistence policy.
+JUDGED: dict[str, Any] = {
+    **DECLARATION,
+    "limits": {
+        "ks": {"kind": "relative", "green": -0.15, "red": -0.30, "direction": "lower"},
+        "auc": {"kind": "relative", "green": -0.05, "red": -0.10, "direction": "lower", "reference": "out_of_time"},
+        "gini": {"kind": "control", "green": 2, "red": 3, "direction": "both"},
+    },
+    "trend": {"window": 3, "min_points": 3},
+    "trend_metrics": ["psi", "ks", "gini"],
+}
+#: Columns added after the first model monitoring release; tables created before them gain them on write.
+ADDED = {
+    RESULTS: ("limit_kind", "limit_reference", "compared_value", "baseline_mean", "baseline_sd", "baseline_points",
+              "trend_status", "trend_expected", "trend_deviation"),
+    ALERTS: ("kind", "state", "opened_period", "escalated_period", "closed_period", "last_period", "flagged_periods",
+             "recurrence"),
+    RUNS: ("open_alerts", "critical_alerts"),
+}  # fmt: skip
 TASKS = """
 from bricksmith.tasks import task
 
@@ -121,6 +140,17 @@ def test_spark_engine_equals_the_pure_engine(
     assert pure.outcome.to_dict() == remote.outcome.to_dict()
     assert {r["segment"] for r in remote.tables["results"]} == {"", "n", "s"}
 
+    judged = parse_config(JUDGED)
+    pure = check(as_dicts(synthetic()), judged, MemoryStore(), run_id="r", now="t")
+    remote = check(spark.table(table), judged, MemoryStore(), run_id="r", now="t")
+    assert_rows_equal(pure.tables["results"], remote.tables["results"], keys)
+    assert_rows_equal(pure.tables["alerts"], remote.tables["alerts"], ("alert_id",))
+    assert pure.outcome.to_dict() == remote.outcome.to_dict()
+    gini = [r for r in remote.tables["results"] if r["metric"] == "gini" and r["segment"] == ""]
+    assert all(r["limit_kind"] == "control" and r["baseline_points"] == 3 for r in gini)
+    ks = [r for r in remote.tables["results"] if r["metric"] == "ks" and r["segment"] == ""]
+    assert all(r["limit_reference"] == "development" and r["compared_value"] is not None for r in ks)
+
 
 def test_declared_task_writes_the_tables_and_the_views_read_them(
     remote_context: ExecutionContext, remote_clients: Clients, test_schema: str, tmp_path: Path
@@ -135,6 +165,10 @@ def test_declared_task_writes_the_tables_and_the_views_read_them(
 
     def t(name: str) -> str:
         return f"{catalog}.{test_schema}.{name}"
+
+    for kind, added in ADDED.items():  # tables as the first model monitoring release created them
+        columns = ", ".join(f"`{c}` {k}" for c, k in SCHEMAS[kind].items() if c not in added)
+        spark.sql(f"CREATE TABLE {t('model_monitoring_' + kind)} ({columns})")
 
     def run(drift: str) -> Any:  # noqa: ANN401
         context = dataclasses.replace(
@@ -170,3 +204,9 @@ def test_declared_task_writes_the_tables_and_the_views_read_them(
     status = spark.table(t("model_monitoring_model_status")).where("monitoring_period = '2025-05'").collect()
     assert [r["light"] for r in status] == ["red"]
     assert int(spark.table(t("model_monitoring_open_alerts")).count()) > 0
+    for kind, added in ADDED.items():
+        assert set(added) <= set(spark.table(t("model_monitoring_" + kind)).columns)
+    kinds = {r["kind"] for r in spark.table(t("model_monitoring_alerts")).select("kind").distinct().collect()}
+    assert "light" in kinds
+    runs = spark.table(t("model_monitoring_runs")).orderBy("finished_at").collect()
+    assert runs[-1]["open_alerts"] is not None and runs[-1]["critical_alerts"] is not None
