@@ -96,6 +96,20 @@ def _stability_targets(node: TaskNode, physical: dict[str, str], issues: list[Is
         return ()
 
 
+def _model_monitoring_targets(node: TaskNode, physical: dict[str, str], issues: list[Issue]) -> tuple[Target, ...]:
+    """Return the declared model monitoring targets of a task; an invalid declaration becomes an error issue."""
+    if "model_monitoring" not in node.metadata:
+        return ()
+    from bricksmith.errors import ValidationError  # noqa: PLC0415 - keep the import order light
+    from bricksmith.monitor.model.hook import model_monitoring_targets  # noqa: PLC0415 - only for declaring tasks
+
+    try:
+        return model_monitoring_targets(node.metadata, {n: physical[n] for n in node.outputs}, Target)
+    except ValidationError as error:
+        issues.append(Issue("invalid_model_monitoring", ERROR, f"{node.id}: {error}", node.id))
+        return ()
+
+
 def _entry(  # noqa: PLR0913 - the entry and where its issues go
     graph: TaskGraph, node: TaskNode, action: str, reason: str, by: str, *, issues: list[Issue]
 ) -> PlanEntry:
@@ -122,6 +136,7 @@ def _entry(  # noqa: PLR0913 - the entry and where its issues go
         targets=(
             *(Target(name, physical[name], operations, protected, options) for name in node.outputs),
             *_stability_targets(node, physical, issues),
+            *_model_monitoring_targets(node, physical, issues),
         ),
         sinks=_sinks(node),
     )
