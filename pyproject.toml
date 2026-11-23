@@ -71,6 +71,8 @@ ignore = ["COM812", "CPY001", "D203", "D213", "ISC001"]
 # Schema evolution renders DDL from validated identifiers and quoted literals by design.
 "src/bricksmith/evolution/**" = ["S608"]
 "src/bricksmith/quality/**" = ["S608"]
+# Stability views render SQL from validated identifiers only.
+"src/bricksmith/monitor/stability/tables.py" = ["S608"]
 
 [tool.pyright]
 pythonVersion = "3.12"
