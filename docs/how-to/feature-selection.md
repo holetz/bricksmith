@@ -27,11 +27,11 @@ from bricksmith.mlops.selection import select_features
 
 SELECTION = {
     "name": "churn_selection",
-    "closing": "closing_date",            # the closing (snapshot) column
-    "target": "churned",                  # binary 0/1 by default; target_kind: "continuous" for a number
+    "closing": "closing_date",  # the closing (snapshot) column
+    "target": "churned",  # binary 0/1 by default; target_kind: "continuous" for a number
     "development": ["2025-01-31", "2025-12-31"],
     "out_of_time": ["2026-01-31", "2026-03-31"],
-    "exclude": ["customer_id"],           # every other column is a candidate, or list them in "features"
+    "exclude": ["customer_id"],  # every other column is a candidate, or list them in "features"
     "expected_signs": {"days_past_due": "+"},
     "judgment": {
         "keep": {"tenure_months": "required by the model owner"},
@@ -40,9 +40,9 @@ SELECTION = {
 }
 
 result = select_features(training_frame, SELECTION)  # a Spark DataFrame, or a list of row dicts
-result.selected        # ("days_past_due", "tenure_months", ...), in candidate order
-result.ledger_rows()   # one row per variable, step and metric
-result.variable_rows() # one row per variable: selected, left_at, reason
+result.selected  # ("days_past_due", "tenure_months", ...), in candidate order
+result.ledger_rows()  # one row per variable, step and metric
+result.variable_rows()  # one row per variable: selected, left_at, reason
 ```
 
 The input is split by closing **before any metric**. Closings are compared as ISO text, and both ranges are
