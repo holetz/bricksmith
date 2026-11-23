@@ -11,8 +11,7 @@ from __future__ import annotations
 from functools import cached_property
 from typing import TYPE_CHECKING
 
-import numpy as np
-
+from bricksmith.features._numpy import np
 from bricksmith.features.catalog import aggregate, percentile_of
 
 if TYPE_CHECKING:

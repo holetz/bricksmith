@@ -9,8 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
+from bricksmith.features._numpy import np
 from bricksmith.features.catalog import INTEGER
 from bricksmith.features.errors import FeatureError
 from bricksmith.features.history import (

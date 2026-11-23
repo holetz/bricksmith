@@ -11,8 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
+from bricksmith.features._numpy import np
 from bricksmith.features.catalog import INTEGER
 from bricksmith.features.engine import Frame, compute_frame
 from bricksmith.features.spec import DAY, MONTH, QUARTER, WEEK
