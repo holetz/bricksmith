@@ -52,7 +52,7 @@ JUDGED: dict[str, Any] = {
 #: Columns added after the first model monitoring release; tables created before them gain them on write.
 ADDED = {
     RESULTS: ("limit_kind", "limit_reference", "compared_value", "baseline_mean", "baseline_sd", "baseline_points",
-              "trend_status", "trend_expected", "trend_deviation"),
+              "trend_status", "trend_expected", "trend_deviation", "lag", "lag_unit"),
     ALERTS: ("kind", "state", "opened_period", "escalated_period", "closed_period", "last_period", "flagged_periods",
              "recurrence"),
     RUNS: ("open_alerts", "critical_alerts"),
@@ -150,6 +150,25 @@ def test_spark_engine_equals_the_pure_engine(
     assert all(r["limit_kind"] == "control" and r["baseline_points"] == 3 for r in gini)
     ks = [r for r in remote.tables["results"] if r["metric"] == "ks" and r["segment"] == ""]
     assert all(r["limit_reference"] == "development" and r["compared_value"] is not None for r in ks)
+
+
+def test_lags_read_the_same_data_period_in_spark_and_in_the_pure_engine(
+    remote_clients: Clients, remote_context: ExecutionContext, test_schema: str
+) -> None:
+    spark = remote_clients.spark()
+    table = f"{remote_context.catalog}.{test_schema}.model_lag_input"
+    spark.createDataFrame(synthetic(), DDL).write.saveAsTable(table)
+    lagged = parse_config({**DECLARATION, "lags": {"auc": {"months": 1}, "gini": 1, "calibration": {"months": 9}}})
+    pure = check(as_dicts(synthetic()), lagged, MemoryStore(), run_id="r", now="t")
+    remote = check(spark.table(table), lagged, MemoryStore(), run_id="r", now="t")
+    keys = ("monitoring_period", "segment", "column", "metric")
+    assert_rows_equal(pure.tables["results"], remote.tables["results"], keys)
+    rows = [r for r in remote.tables["results"] if r["segment"] == "" and r["monitoring_period"] == "2025-05"]
+    by_metric = {r["metric"]: r for r in rows}
+    assert (by_metric["auc"]["data_period"], by_metric["auc"]["lag_unit"]) == ("2025-04", "months")
+    assert (by_metric["gini"]["data_period"], by_metric["gini"]["lag_unit"]) == ("2025-04", "periods")
+    assert by_metric["ks"]["data_period"] == "2025-05" and by_metric["ks"]["lag"] == 0
+    assert by_metric["brier"]["reason"] == "data_period_unavailable" and by_metric["brier"]["lag"] == 9
 
 
 def test_declared_task_writes_the_tables_and_the_views_read_them(
