@@ -23,11 +23,12 @@ authority: current
 |---|---|---|---|
 | Native Spark equals the numpy reference on every output (whole catalog, p10/p50/p95, windows 1–12, ratios, differences, category counts) | `BRICKSMITH_RUN_REMOTE_TESTS=true uv run --group remote pytest tests/remote/test_features.py -q` | passed | 2 passed; tolerance 1e-9 relative |
 | Native Spark refuses rows after `as_of` and returns only that closing | same | passed | `PointInTimeError` |
-| Arrow engine equals the reference; `auto` with mixed engines equals the reference | `BRICKSMITH_RUN_REMOTE_TESTS=true uv run --group remote pytest tests/remote/test_features_arrow.py -q` | failed (environment) | the free workspace refuses every Python UDF: a plain `udf`, `mapInPandas` and `applyInArrow` all fail with `ISOLATION_STARTUP_FAILURE.SANDBOX_STARTUP` (exec format error). Not a bricksmith failure; needs an environment with Python UDFs |
+| Arrow engine equals the reference; `auto` with mixed engines equals the reference | `BRICKSMITH_RUN_REMOTE_TESTS=true uv run --group remote pytest tests/remote/test_features_arrow.py -q` | unsupported | the free workspace refuses every Python UDF: a plain `udf`, `mapInPandas` and `applyInArrow` all fail with `ISOLATION_STARTUP_FAILURE.SANDBOX_STARTUP` (exec format error). The test probes for this and skips with that reason (2 skipped). Alternative: the local Arrow evidence below; corporate proof is on demand |
 
 The Arrow engine, `applyInPandas` fallback and mixed `auto` routing were checked against the reference on a
 local Spark (pyspark 4.0.1, `local[2]`, ANSI on): zero mismatches on every output. This is supporting
-evidence only; the remote Arrow proof stays open.
+the accepted Arrow evidence (epic 85 decision of 2026-11-23). The Databricks proof of the Arrow engine waits for an
+on-demand corporate run.
 
 ## Benchmark
 

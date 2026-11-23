@@ -16,7 +16,8 @@ missing values, and so on. You declare what to compute once. Every engine comput
 
 - A numpy reference (`compute_rows`) over Python rows. It is the oracle of every test.
 - Native Spark expressions (`engine="spark"`, the default).
-- An Arrow engine (`engine="arrow"`) that runs the numpy reference per entity on the cluster.
+- An Arrow engine (`engine="arrow"`) that runs the numpy reference per entity on the cluster. It is proven
+  locally only; its Databricks proof is pending an on-demand corporate run (see below).
 
 Install the extra for the numpy and Arrow engines: `pip install 'bricksmith[features]'`. Importing
 `bricksmith.features` loads none of numpy, pyarrow or pyspark.
@@ -81,13 +82,18 @@ frame = compute_features(df, spec, as_of="2026-06-30")  # one closing, point in 
 The native engine builds Spark SQL expressions from the spec over one shared window per spec. It uses no Python
 UDF, is ANSI-safe, and runs on serverless. The Arrow engine groups by the keys and uses `applyInArrow`, falling
 back to `applyInPandas` on runtimes without it. The cluster needs numpy and pyarrow; bricksmith ships with the
-function. Workspaces that refuse Python UDFs cannot run the Arrow engine.
+function.
+
+**Arrow support is locally proven only.** It matches the numpy reference on a local Spark session, through both
+`applyInArrow` and `applyInPandas`. On Databricks it is **Unsupported on Free Edition**: the free workspace
+refuses Python UDFs (`ISOLATION_STARTUP_FAILURE.SANDBOX_STARTUP`). Its proof on a workspace that allows Python
+UDFs waits for an on-demand corporate run. Use native Spark wherever you need a Databricks-proven engine.
 
 ## Default engine per family
 
 `DEFAULT_ENGINES` in `bricksmith.features.engines` maps every family to native Spark. The
 [recorded benchmark](../project/evidence/features-free.md) chose it: native Spark is the only engine proven on
-serverless, and Arrow is never faster by enough to justify a Python UDF. Measure your own sizes with:
+serverless. On the local benchmark, Arrow is never faster by enough to justify a Python UDF whose Databricks proof is pending. Measure your own sizes with:
 
 ```bash
 uv run --group remote python scripts/features_benchmark.py --sizes 2000x24x4 --engines reference,spark,arrow

@@ -50,6 +50,7 @@ The product needs named outputs, exact definitions, and an engine that runs on s
 - A new aggregate needs a catalog entry, a reference implementation with a golden test, and a native
   expression. An aggregate with no native expression raises `UnsupportedAggregateError`, which points to the
   Arrow engine.
-- The free workspace refuses Python UDFs, so the Arrow engine's remote parity is unproven there. It is proven
-  on a local Spark only. A workspace with Python UDFs must supply the remote proof before any family defaults
-  to Arrow.
+- The Arrow engine is Unsupported on Free Edition, because the free workspace refuses Python UDFs
+  (`ISOLATION_STARTUP_FAILURE.SANDBOX_STARTUP`). It is proven locally: numpy parity on a local Spark session,
+  plus a recorded benchmark. Its Databricks proof waits for an on-demand corporate run. No family defaults to
+  Arrow until that proof exists.
