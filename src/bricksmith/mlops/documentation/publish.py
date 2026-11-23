@@ -59,11 +59,10 @@ def collect_run(client: Any, run_id: str, directory: Path | str | None = None) -
         with tempfile.TemporaryDirectory(prefix="bricksmith-doc-") as tmp:
             return collect_run(client, run_id, tmp)
     root = Path(directory)
+    root.mkdir(parents=True, exist_ok=True)
     for path in PATHS:
-        target = root / Path(path).parent
-        target.mkdir(parents=True, exist_ok=True)
         try:
-            client.download_artifacts(run_id, path, str(target))
+            client.download_artifacts(run_id, path, str(root))  # written to ``root / path``
         except Exception as error:
             if not _missing(error):
                 raise

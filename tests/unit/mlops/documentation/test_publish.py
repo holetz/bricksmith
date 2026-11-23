@@ -32,7 +32,9 @@ class FakeClient:
         if not source.is_file():
             msg = f"RESOURCE_DOES_NOT_EXIST: {path}"
             raise NotFoundError(msg)
-        return str(shutil.copy(source, Path(dst_path) / source.name))
+        target = Path(dst_path) / path  # like MlflowClient: the artifact path is kept under dst_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return str(shutil.copy(source, target))
 
     def log_text(self, run_id: str, text: str, artifact_file: str) -> None:
         self.texts[run_id, artifact_file] = text
