@@ -7,7 +7,9 @@ that raises marks the run ``partial`` and leaves the others intact. Metrics come
 
 Each value is judged through its limit kind (absolute, relative to a reference, or control-chart distance from
 the per-period values of the development and out-of-time references), checked against its trend, and every
-series of lights is replayed into persistence and trend alerts with the shared core.
+series of lights is replayed into persistence and trend alerts with the shared core. The human actions stored for
+the model (analysis, closure, risk acceptance) are folded into the alerts at the run date, and an alert with an
+active risk acceptance no longer counts for the gate.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from bricksmith.monitor.bins import BinSpec, category_text, count_bins, fit_bins
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import COLORS, CONTROL, RED, RELATIVE, YELLOW, judge, rank
 from bricksmith.monitor.measure import OK, segment_name
+from bricksmith.monitor.model.actions import STATE_ACCEPTED, apply_actions
 from bricksmith.monitor.model.config import (
     CALIBRATION,
     COMPLETENESS,
@@ -39,7 +42,17 @@ from bricksmith.monitor.model.config import (
     SCORE_PSI,
     VOLUMETRY,
 )
-from bricksmith.monitor.model.tables import ALERTS, BINNINGS, DETAILS, FAILED, PARTIAL, RESULTS, RUNS, SUCCESS
+from bricksmith.monitor.model.tables import (
+    ACTIONS,
+    ALERTS,
+    BINNINGS,
+    DETAILS,
+    FAILED,
+    PARTIAL,
+    RESULTS,
+    RUNS,
+    SUCCESS,
+)
 from bricksmith.monitor.persistence import CRITICAL, OPEN, PersistencePolicy, alert_spans
 from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.stability.profile import period_date, period_text
@@ -783,6 +796,11 @@ def alert_rows(
     return out + _span_alerts(rows, persistence or PersistencePolicy(), created_at)
 
 
+def _light_key(row: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return what ties a light alert to its result: version, segment, column, metric and monitoring period."""
+    return (*_series(row), str(row.get("monitoring_period") or ""))
+
+
 def open_counts(alerts: Iterable[Mapping[str, Any]]) -> tuple[int, int]:
     """Return ``(open, critical)`` counts of the open persistence and trend alerts."""
     spans = [a for a in alerts if a.get("kind") in (PERSISTENCE, TREND) and a.get("state") == OPEN]
@@ -878,13 +896,21 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     in_latest = [r for r in results if r["monitoring_period"] == latest]
     red = sum(1 for r in in_latest if r["light"] == RED)
     yellow = sum(1 for r in in_latest if r["light"] == YELLOW)
-    alerts = alert_rows(results, started, config.persistence)
+    alerts = apply_actions(
+        alert_rows(results, started, config.persistence), store.rows(ACTIONS, config.model), started[:10]
+    )
+    accepted = {_light_key(a) for a in alerts if a["kind"] == LIGHT and a["state"] == STATE_ACCEPTED}
+    red -= sum(1 for r in in_latest if r["light"] == RED and _light_key(r) in accepted)
+    yellow -= sum(1 for r in in_latest if r["light"] == YELLOW and _light_key(r) in accepted)
     open_alerts, critical = open_counts(alerts)
     reasons = _gate(config, red, yellow, open_alerts, critical)
     status = GATE_FAILED if reasons else WARNED if red + yellow + open_alerts else PASSED
     run_status = PARTIAL if errors else SUCCESS
-    message = f"{config.model} {latest}: {red} red, {yellow} yellow, {open_alerts} open alert(s), {errors} error(s)" + (
-        f"; gate failed on {'; '.join(reasons)}" if reasons else ""
+    suppressed = sum(1 for a in alerts if a["state"] == STATE_ACCEPTED)
+    message = (
+        f"{config.model} {latest}: {red} red, {yellow} yellow, {open_alerts} open alert(s), {errors} error(s)"
+        + (f"; {suppressed} accepted" if suppressed else "")
+        + (f"; gate failed on {'; '.join(reasons)}" if reasons else "")
     )
     version_text = ",".join(sorted(v for v in measured.versions if v))
     outcome = Outcome(
@@ -895,7 +921,10 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         config, run_id=run_id, task_id=task_id, physical=physical, input_version=input_version, binning=binning,
         outcome=outcome, started=started, alerts=len(alerts),
     )  # fmt: skip
-    tables = {BINNINGS: binning_rows, RESULTS: results, DETAILS: measured.details, ALERTS: alerts, RUNS: [run_row]}
+    tables = {
+        BINNINGS: binning_rows, RESULTS: results, DETAILS: measured.details, ALERTS: alerts, ACTIONS: [],
+        RUNS: [run_row],
+    }  # fmt: skip
     return CheckResult(tables, outcome, binning)
 
 
