@@ -65,7 +65,8 @@ def churn_scores(ctx):
 | `feature_binning` | `own` (default: fit on development) or `{"stability": "<dataset>"}` to reuse the latest stored stability binning of that dataset (`prefix` defaults to `stability_`). |
 | `metrics` | A subset of the families below (default: every family the declared columns allow). |
 | `model_version` / `model_version_column` | A literal version, or the column holding it. |
-| `label_lag` | How many observed periods a label takes to mature (default 0). |
+| `label_lag` | How many observed periods a label takes to mature (default 0); the default lag of discrimination and calibration. |
+| `lags` | Per metric or family, how far back it reads: an integer or `{"periods": n}` (observed periods) or `{"months": n}` (calendar months). See [Periods and maturation](#periods-and-maturation). |
 | `limits` | Per metric `{"green", "red", "direction", "center", "kind", "reference"}` overriding the defaults; `null` drops a light. See [Limit kinds](#limit-kinds). |
 | `control_min_points` | Reference periods a control-chart baseline needs (default 3). |
 | `trend`, `trend_metrics` | Trend check `{"window", "min_points", "yellow", "red"}` (default 12, 6, 2, 3; `null` disables) and the metrics it applies to (default `psi`, `ks`, `auc`, `calibration_ratio`). |
@@ -150,6 +151,24 @@ calibration need mature labels, so they measure the period `label_lag` **observe
 `label_lag: 1`, the July result of AUC is computed on June's rows. The lag counts the periods present in the data,
 not calendar months, so a missing month shifts to the previous observed one. When the history is too short, the
 result has no value and the reason `data_period_unavailable`.
+
+`lags` refines this per metric or family; a metric wins over its family, a family over the default (`label_lag`
+for discrimination and calibration, no lag otherwise):
+
+```python
+"lags": {
+    "discrimination": {"months": 12},  # KS, AUC and Gini read the same month one year earlier
+    "brier": 6,                        # six observed periods
+    "volumetry": {"periods": 1},
+}
+```
+
+A calendar lag subtracts whole months from the monitoring period and writes the result in the period's own text
+format (`YYYY-MM`, `YYYY-MM-DD`, `YYYYMM` or `YYYYMMDD`; the day clamps to the month's end). If that month was not
+loaded, the result has no value and the reason `data_period_unavailable`: it never falls back to a neighbouring
+period, so immature data is not shown as mature. Each result carries `lag` and `lag_unit` (`periods` or `months`)
+beside `data_period`, and series, alerts and reprocessing stay keyed on the monitoring period. See
+[decision 0017](../decisions/0017-model-monitoring-maturation-lags.md).
 
 Each result also carries `development_value` and `out_of_time_value`: the same metric measured on the reference
 samples, so a dashboard can show how far production moved from development and out-of-time.
