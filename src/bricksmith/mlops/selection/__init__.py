@@ -14,6 +14,8 @@ from bricksmith.mlops.selection.funnel import (
     select_features,
 )
 from bricksmith.mlops.selection.metrics import WoeTable
+from bricksmith.mlops.selection.tables import table_rows, to_frame, write_options
+from bricksmith.mlops.selection.tracking import log_selection
 
 __all__ = [
     "STEPS",
@@ -24,6 +26,10 @@ __all__ = [
     "VariableOutcome",
     "WoeTable",
     "apply_woe",
+    "log_selection",
     "parse_config",
     "select_features",
+    "table_rows",
+    "to_frame",
+    "write_options",
 ]
