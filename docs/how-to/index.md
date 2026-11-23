@@ -21,4 +21,5 @@ User guides that answer "how do I do X" with bricksmith, one capability per page
 * [Schema evolution and maintenance](schema-evolution.md) — How to declare a target table, plan its Delta migration and run maintenance.
 * [Data stability](stability.md) — How to declare data-stability checks on tasks and read their dashboard-ready results.
 * [Tasks and the dependency graph](tasks-and-graph.md) — How to declare tasks and how bricksmith builds their dependency graph.
+* [Windowed feature engineering](features.md) — How to declare windowed features over a long table and compute them with the numpy, native Spark or Arrow engine.
 * [Writing tables from tasks](writes.md) — How to declare how a task output is written to Spark and Delta tables.
