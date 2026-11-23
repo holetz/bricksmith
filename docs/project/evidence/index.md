@@ -17,6 +17,7 @@ hosts, profile names or identities.
 * [BS-13 evidence: free environment](bs-13-free.md) — Remote test evidence for slice BS-13 on the free Databricks environment.
 * [BS-14 evidence: free environment](bs-14-free.md) — Remote test evidence for slice BS-14 on the free Databricks environment.
 * [BS-15 evidence: free environment](bs-15-free.md) — Remote test evidence for slice BS-15 on the free Databricks environment.
+* [Feature engineering evidence: free environment](features-free.md) — Remote parity and benchmark evidence for the feature-engineering engines on the free Databricks environment.
 * [Data stability evidence: free environment](stability-free.md) — Remote test evidence for the data-stability epic on the free Databricks environment.
 * [Feature store evidence: free environment](feature-store-free.md) — Remote test evidence for the closing-based feature store (spec 76) on the free Databricks environment.
 * [Model development stages evidence: free environment](model-stages-free.md) — Remote test evidence for model development stages (spec 79) on the free Databricks environment.
