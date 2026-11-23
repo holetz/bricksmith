@@ -94,7 +94,11 @@ def stability_targets(
 
 def declarations(entry: PlanEntry) -> tuple[Declaration, ...]:
     """Return the declarations of a plan entry (read back from its output targets' options)."""
-    outputs = {t.name: t.physical for t in entry.targets if "stability_table" not in t.options}
+    outputs = {
+        t.name: t.physical
+        for t in entry.targets
+        if "stability_table" not in t.options and "model_monitoring_table" not in t.options
+    }
     for target in entry.targets:
         if KEY in target.options:
             return resolve(target.options[KEY], outputs)

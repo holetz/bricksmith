@@ -1,6 +1,6 @@
 ---
 type: decision
-title: "0012. A closing-based feature store on plain Delta tables"
+title: "0013. A closing-based feature store on plain Delta tables"
 description: "Why feature tables are keyed by entity and closing, stamped at availability and joined by exact closing, with Feature Engineering only as an optional adapter."
 resource: "src/bricksmith/mlops/featurestore/**"
 timestamp: "2026-11-23T08:46:31-03:00"
@@ -8,7 +8,7 @@ audience: both
 authority: current
 ---
 
-# 0012. A closing-based feature store on plain Delta tables
+# 0013. A closing-based feature store on plain Delta tables
 
 - Status: accepted
 - Date: 2026-11-23

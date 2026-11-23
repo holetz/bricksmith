@@ -17,7 +17,7 @@ features to a spine by **exact closing equality**. Training and scoring use the 
 
 Feature tables are plain Delta tables written by ordinary tasks, so they share discovery, the graph and the runner
 with every other task. Their catalog and schema are your choice. Databricks Feature Engineering is an optional
-adapter, never a requirement (see [decision 0012](../decisions/0012-closing-based-feature-store.md)).
+adapter, never a requirement (see [decision 0013](../decisions/0013-closing-based-feature-store.md)).
 
 ## Declare a feature table on a task
 
