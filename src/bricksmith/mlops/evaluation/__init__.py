@@ -15,6 +15,8 @@ from bricksmith.mlops.evaluation.config import (
     parse_config,
 )
 from bricksmith.mlops.evaluation.engine import GRADE_PSI, INVERSIONS, WHOLE, EvaluationResult, evaluate
+from bricksmith.mlops.evaluation.tables import table_rows, to_frame, write_options
+from bricksmith.mlops.evaluation.tracking import log_evaluation
 
 __all__ = [
     "DECREASING",
@@ -27,5 +29,9 @@ __all__ = [
     "EvaluationError",
     "EvaluationResult",
     "evaluate",
+    "log_evaluation",
     "parse_config",
+    "table_rows",
+    "to_frame",
+    "write_options",
 ]
