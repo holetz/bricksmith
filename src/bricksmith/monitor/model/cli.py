@@ -11,6 +11,7 @@ from bricksmith.monitor.cli import _json  # pyright: ignore[reportPrivateUsage]
 from bricksmith.monitor.limits import RED
 from bricksmith.monitor.model.alerts import replay_alerts
 from bricksmith.monitor.model.config import parse_config
+from bricksmith.monitor.model.engine import LIGHT, open_counts
 from bricksmith.monitor.model.tables import RESULTS, RUNS, view_statements
 
 if TYPE_CHECKING:
@@ -39,7 +40,9 @@ def _alerts(args: argparse.Namespace) -> int:
     lines = [f"model monitoring alerts: {len(alerts)} from {len(rows)} trusted result(s)"]
     lines += [f"  {a['severity']}: {a['message']}" for a in alerts]
     emit(args, payload, "\n".join(lines))
-    return EXIT_VALIDATION if args.fail_on_red and any(a["light"] == RED for a in alerts) else EXIT_OK
+    red = args.fail_on_red and any(a["kind"] == LIGHT and a["light"] == RED for a in alerts)
+    critical = args.fail_on_critical and open_counts(alerts)[1] > 0
+    return EXIT_VALIDATION if red or critical else EXIT_OK
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -58,6 +61,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     alerts.add_argument("--state", required=True, help="JSON file with the stored 'results' and 'runs' rows")
     alerts.add_argument("--config", help="JSON declaration whose current limits recolor the stored values")
     alerts.add_argument("--fail-on-red", action="store_true", help="exit 4 when a red alert is replayed")
+    alerts.add_argument(
+        "--fail-on-critical",
+        action="store_true",
+        help="exit 4 when an open critical persistence or trend alert remains",
+    )
     alerts.set_defaults(handler=_alerts)
 
 

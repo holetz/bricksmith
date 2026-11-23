@@ -49,6 +49,14 @@ def test_alerts_replay_stored_lights(tmp_path: Path, capsys: pytest.CaptureFixtu
                                   "limits": {"psi": {"green": 0.4, "red": 0.6}}}))  # fmt: skip
     args = ["model-monitoring", "alerts", "--state", str(state), "--config", str(config), "--fail-on-red"]
     assert main(args) == 0 and "alerts: 0 from 1" in capsys.readouterr().out
+    assert main(["model-monitoring", "alerts", "--state", str(state), "--fail-on-critical"]) == 0
+    capsys.readouterr()
+    critical = tmp_path / "critical.json"
+    runs = [{"run_id": "r1", "model": "m", "status": "success", "finished_at": "2026-03-01"}]
+    rows = [{**_row("r1", 0.3, "red"), "monitoring_period": p, "direction": "higher"} for p in ("2026-01", "2026-02")]
+    critical.write_text(json.dumps({"results": rows, "runs": runs}))
+    assert main(["model-monitoring", "alerts", "--state", str(critical), "--fail-on-critical"]) == 4
+    assert "is persistently off: critical since 2026-02" in capsys.readouterr().out
     bad = tmp_path / "bad.json"
     bad.write_text("[]")
     assert main(["model-monitoring", "alerts", "--state", str(bad)]) != 0
