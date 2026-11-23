@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN, BinSpec
+from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN, ZERO, BinSpec
 from bricksmith.monitor.fit import build_reference
 from bricksmith.monitor.measure import NULL_SEGMENT, Measurement, Summary, measure_summary
 
@@ -29,6 +29,8 @@ def bin_expression(spec: BinSpec) -> Column:
     last = len(spec.edges) - 1
     separate = spec.outliers == "separate"
     expr = f.when(value.isNull() | f.isnan(value), f.lit(NULL))
+    if spec.zero:
+        expr = expr.when(value == f.lit(0.0), f.lit(ZERO))
     expr = expr.when(value < f.lit(spec.edges[0]), f.lit(BELOW if separate else "bin_0"))
     expr = expr.when(value > f.lit(spec.edges[-1]), f.lit(ABOVE if separate else f"bin_{last - 1}"))
     for i in range(last):

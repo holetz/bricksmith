@@ -81,7 +81,13 @@ def grants_from(values: list[str]) -> list[Authorization]:
 
 def run_summary(report: RunReport) -> str:
     """Return one line per task plus the counts."""
-    lines = [f"{r.state:10} {r.task_id}  {r.reason}".rstrip() for r in report.results]
+    lines: list[str] = []
+    for r in report.results:
+        lines.append(f"{r.state:10} {r.task_id}  {r.reason}".rstrip())
+        if r.stability:
+            from bricksmith.monitor.stability.hook import summary_line  # noqa: PLC0415 - only when checks ran
+
+            lines += [summary_line(s) for s in r.stability]
     counts = report.to_dict()["counts"]
     assert isinstance(counts, dict)  # noqa: S101 - narrowing for the type checker
     lines.append(", ".join(f"{k}={v}" for k, v in counts.items() if v))

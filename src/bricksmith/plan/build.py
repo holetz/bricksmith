@@ -82,7 +82,23 @@ def _sinks(node: TaskNode) -> tuple[str, ...]:
     return ()
 
 
-def _entry(graph: TaskGraph, node: TaskNode, action: str, reason: str, by: str) -> PlanEntry:
+def _stability_targets(node: TaskNode, physical: dict[str, str], issues: list[Issue]) -> tuple[Target, ...]:
+    """Return the declared stability targets of a task; an invalid declaration becomes an error issue."""
+    if "stability" not in node.metadata:
+        return ()
+    from bricksmith.errors import ValidationError  # noqa: PLC0415 - keep the import order light
+    from bricksmith.monitor.stability.hook import stability_targets  # noqa: PLC0415 - only for declaring tasks
+
+    try:
+        return stability_targets(node.metadata, {n: physical[n] for n in node.outputs}, Target)
+    except ValidationError as error:
+        issues.append(Issue("invalid_stability", ERROR, f"{node.id}: {error}", node.id))
+        return ()
+
+
+def _entry(  # noqa: PLR0913 - the entry and where its issues go
+    graph: TaskGraph, node: TaskNode, action: str, reason: str, by: str, *, issues: list[Issue]
+) -> PlanEntry:
     physical = {o.name: o.physical for o in graph.outputs}
     reads = {
         ReadBinding(e.reference, e.kind, physical.get(e.target, e.target))
@@ -103,7 +119,10 @@ def _entry(graph: TaskGraph, node: TaskNode, action: str, reason: str, by: str) 
         variant=dict(node.variant),
         depends_on=graph.dependencies(node.id, kind=DATA),
         reads=tuple(sorted(reads, key=lambda r: (r.kind, r.reference, r.physical))),
-        targets=tuple(Target(name, physical[name], operations, protected, options) for name in node.outputs),
+        targets=(
+            *(Target(name, physical[name], operations, protected, options) for name in node.outputs),
+            *_stability_targets(node, physical, issues),
+        ),
         sinks=_sinks(node),
     )
 
@@ -175,7 +194,7 @@ def build_plan(  # noqa: PLR0913 - one keyword per documented selection field
         node = graph.task(task_id)
         by = "root" if task_id in root_ids else ("upstream" if task_id in upstream_of_roots else "downstream")
         action, reason = _action(node, is_root=task_id in root_ids, selection=selection)
-        entries.append(_entry(graph, node, action, reason, by))
+        entries.append(_entry(graph, node, action, reason, by, issues=issues))
     issues.extend(_closure_issues(entries, WARNING if partial else ERROR))
     return Plan(selection, fingerprint, tuple(entries), tuple(issues))
 
