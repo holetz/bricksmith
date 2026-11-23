@@ -9,7 +9,7 @@ from typing import Any
 
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.infer import InferenceOptions
-from bricksmith.monitor.limits import BOTH, HIGHER, Limits
+from bricksmith.monitor.limits import ABSOLUTE, BOTH, HIGHER, Limits
 from bricksmith.monitor.persistence import PersistencePolicy
 from bricksmith.monitor.trend import TrendPolicy
 
@@ -267,7 +267,11 @@ def _limits(value: object, base: dict[str, Limits | None]) -> dict[str, Limits |
         if metric not in METRICS:
             msg = f"unknown metric {metric!r} in limits; known: {', '.join(METRICS)}"
             raise _fail(msg)
-        result[metric] = None if item is None else Limits.from_dict(item)
+        limits = None if item is None else Limits.from_dict(item)
+        if limits is not None and limits.kind != ABSOLUTE:
+            msg = f"limits of {metric!r}: kind {limits.kind!r} is not supported by stability (absolute only)"
+            raise _fail(msg)
+        result[metric] = limits
     return result
 
 
