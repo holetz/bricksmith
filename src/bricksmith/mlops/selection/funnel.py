@@ -455,10 +455,14 @@ class _Run:
 
 
 def engine_for(data: object, config: SelectionConfig) -> Engine:
-    """Return the engine for ``data``: rows (a list or tuple of mappings)."""
+    """Return the engine for ``data``: rows (a list or tuple of mappings) or a Spark DataFrame."""
     if isinstance(data, list | tuple):
         return RowsEngine(data, config)
-    return fail(f"input must be a list of mappings, got {type(data).__name__}")
+    if hasattr(data, "sparkSession") and hasattr(data, "groupBy"):
+        from bricksmith.mlops.selection.spark import SparkEngine  # noqa: PLC0415 - Spark loads where used
+
+        return SparkEngine(data, config)  # type: ignore[arg-type]
+    return fail(f"input must be a list of mappings or a Spark DataFrame, got {type(data).__name__}")
 
 
 def select_features(data: object, config: Mapping[str, Any] | SelectionConfig) -> SelectionResult:
