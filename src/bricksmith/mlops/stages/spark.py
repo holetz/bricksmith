@@ -198,13 +198,13 @@ def attach_labels(frame: DataFrame, development: Development, labels: DataFrame 
     frame = _aligned(frame, development)
     if labels is not None:
         keys = list(development.spine_keys)
-        labels = _aligned(labels, development).select(*keys, label.name)
-        repeated = labels.groupBy(*keys).count().where(f.col("count") > 1).limit(1).collect()
+        label_frame = _aligned(labels, development).select(*keys, label.name)
+        repeated = label_frame.groupBy(*keys).count().where(f.col("count") > 1).limit(1).collect()
         if repeated:
             msg = f"label rows repeat the key {tuple(repeated[0][k] for k in keys)!r}"
             raise DatasetValidationError(msg)
         kept = [c for c in frame.columns if c != label.name]
-        frame = frame.select(*kept).join(labels, keys, "left").select(*kept, label.name)
+        frame = frame.select(*kept).join(label_frame, keys, "left").select(*kept, label.name)
     elif label.name not in frame.columns:
         frame = frame.withColumn(label.name, f.lit(None))
     late = frame.where(shift_column(f.col(development.closing), label.horizon, development.frequency) > f.lit(as_of))
