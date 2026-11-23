@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,7 @@ class _Worker:
     sleep: Callable[[float], None]
     externals: ExternalProvider | None = None
     events: RunEvents | None = None
+    run_id: str = ""
 
     def __call__(self, entry: PlanEntry) -> TaskResult:
         result = self._execute(entry)
@@ -105,9 +107,24 @@ class _Worker:
                 self.sleep(wait_for)
                 wait_for *= self.retry.backoff
             else:
+                return self._observe(entry, ctx, attempts, started)
+
+    def _observe(self, entry: PlanEntry, ctx: TaskContext, attempts: int, started: float) -> TaskResult:
+        """Run the declared stability checks after a successful task; the gate may still fail the task."""
+        outcomes: tuple[dict[str, object], ...] = ()
+        if any("stability" in t.options for t in entry.targets):
+            from bricksmith.monitor.stability.hook import run_stability  # noqa: PLC0415 - only for declaring tasks
+
+            found, failure = run_stability(ctx, self.run_id)
+            outcomes = tuple(o.to_dict() for o in found)
+            if failure is not None:
                 return TaskResult(
-                    entry.task_id, SUCCEEDED, "", attempts, None, (), tuple(ctx.writes), time.monotonic() - started
+                    entry.task_id, FAILED, "stability check failed", attempts, _error(failure), (),
+                    tuple(ctx.writes), time.monotonic() - started, outcomes,
                 )  # fmt: skip
+        return TaskResult(
+            entry.task_id, SUCCEEDED, "", attempts, None, (), tuple(ctx.writes), time.monotonic() - started, outcomes
+        )  # fmt: skip
 
 
 def _targets(entry: PlanEntry) -> tuple[str, ...]:
@@ -118,7 +135,9 @@ def _emit_finished(events: RunEvents | None, entry: PlanEntry, result: TaskResul
     """Emit ``task_finished`` for a result, with its classified error and the upstream that blocked it."""
     if events is None:
         return
-    fields = {"blocked_by": list(result.blocked_by), "reason": result.reason}
+    fields: dict[str, object] = {"blocked_by": list(result.blocked_by), "reason": result.reason}
+    if result.stability:
+        fields["stability"] = [dict(s) for s in result.stability]
     events.emit(
         TASK_FINISHED,
         task_id=result.task_id,
@@ -196,8 +215,9 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
 
     granted = frozenset((g.object, op) for g in plan.grants for op in g.operations)
     worker = _Worker(
-        Path(project_root), execution, table_io, granted, retry or RetryPolicy(), loader, sleep, externals, stream
-    )
+        Path(project_root), execution, table_io, granted, retry or RetryPolicy(), loader, sleep, externals, stream,
+        stream.run_id if stream else run_id or uuid.uuid4().hex,
+    )  # fmt: skip
     _drive(worker, pending, results, {e.task_id for e in plan.entries}, limit, fail_fast=fail_fast)
     for entry in pending:
         results[entry.task_id] = TaskResult(entry.task_id, NOT_RUN, "run stopped after a failure")

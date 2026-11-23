@@ -124,15 +124,14 @@ def _quantile_edges(counts: Mapping[Hashable, int], bins: int, *, allow_empty: b
         raise MonitorError(msg)
     low, high = ordered[0][0], ordered[-1][0]
     cuts: set[float] = set()
-    for j in range(1, bins):
-        rank = -(-j * total // bins)  # ceil(j * n / B), nearest rank
+    for rank in cut_ranks(total, bins):
         running = 0
         for value, count in ordered:
             running += count
             if running >= rank:
                 cuts.add(value)
                 break
-    return (low, *sorted(c for c in cuts if c < high), high)
+    return edges_from_cuts(low, cuts, high)
 
 
 def fit_bins(column: str, counts: Mapping[Hashable, int], config: Mapping[str, Any]) -> BinSpec:
@@ -142,41 +141,24 @@ def fit_bins(column: str, counts: Mapping[Hashable, int], config: Mapping[str, A
     ``{"type": "categorical", "max_categories": 20, "min_count": 1}``; numeric also takes ``outliers`` and
     ``zero: "separate"`` (exact zeros get their own bin and quantile edges are fitted on the non-zero values).
     """
-    kind = str(config.get("type", "numeric"))
-    if kind == "categorical":
+    options = bin_options(column, config)
+    if options.kind == "categorical":
         tally: dict[str, int] = {}
         for value, count in counts.items():
             if not is_null(value) and count > 0:
                 text = category_text(value)
                 tally[text] = tally.get(text, 0) + int(count)
-        min_count = int(config.get("min_count", 1))
-        limit = int(config.get("max_categories", 20))
         ranked = sorted(tally.items(), key=lambda item: (-item[1], item[0]))
-        kept = tuple(v for v, c in ranked if c >= min_count)[:limit]
+        kept = tuple(v for v, c in ranked if c >= options.min_count)[: options.max_categories]
         spec = BinSpec(column, "categorical", categories=kept, method="categories")
-    elif kind == "numeric":
-        outliers = str(config.get("outliers", "separate"))
-        if outliers not in OUTLIERS:
-            msg = f"outliers must be one of {', '.join(OUTLIERS)}, got {outliers!r}"
-            raise MonitorError(msg)
-        zero = _zero_option(column, config.get("zero", False))
-        if "edges" in config:
-            edges = tuple(float(e) for e in config["edges"])
-            if len(edges) < MIN_EDGES or any(b <= a for a, b in itertools.pairwise(edges)):
-                msg = f"{column}: fixed edges must be at least two strictly increasing numbers"
-                raise MonitorError(msg)
-            method = "fixed"
-        else:
-            method = str(config.get("method", "quantile"))
-            bins = int(config.get("bins", 10))
-            if method != "quantile" or bins < 1:
-                msg = f"{column}: numeric bins need method 'quantile' with bins >= 1, or explicit edges"
-                raise MonitorError(msg)
-            edges = _quantile_edges(_without_zeros(counts) if zero else counts, bins, allow_empty=zero)
-        spec = BinSpec(column, "numeric", edges=edges, outliers=outliers, method=method, zero=zero)
     else:
-        msg = f"{column}: bin type must be 'numeric' or 'categorical', got {kind!r}"
-        raise MonitorError(msg)
+        edges = options.edges
+        if edges is None:
+            source = _without_zeros(counts) if options.zero else counts
+            edges = _quantile_edges(source, options.bins, allow_empty=options.zero)
+        spec = BinSpec(
+            column, "numeric", edges=edges, outliers=options.outliers, method=options.method, zero=options.zero
+        )
     return BinSpec(
         spec.column,
         spec.kind,
@@ -187,6 +169,61 @@ def fit_bins(column: str, counts: Mapping[Hashable, int], config: Mapping[str, A
         spec.method,
         spec.zero,
     )
+
+
+@dataclass(frozen=True)
+class BinOptions:
+    """A validated bin configuration: the kind and its numeric or categorical options."""
+
+    kind: str
+    outliers: str = "separate"
+    zero: bool = False
+    edges: tuple[float, ...] | None = None
+    bins: int = 10
+    method: str = "categories"
+    min_count: int = 1
+    max_categories: int = 20
+
+
+def bin_options(column: str, config: Mapping[str, Any]) -> BinOptions:
+    """Validate one column's bin configuration (shared by the pure and the Spark fit)."""
+    kind = str(config.get("type", "numeric"))
+    if kind == "categorical":
+        return BinOptions(
+            "categorical",
+            min_count=int(config.get("min_count", 1)),
+            max_categories=int(config.get("max_categories", 20)),
+        )
+    if kind != "numeric":
+        msg = f"{column}: bin type must be 'numeric' or 'categorical', got {kind!r}"
+        raise MonitorError(msg)
+    outliers = str(config.get("outliers", "separate"))
+    if outliers not in OUTLIERS:
+        msg = f"outliers must be one of {', '.join(OUTLIERS)}, got {outliers!r}"
+        raise MonitorError(msg)
+    zero = _zero_option(column, config.get("zero", False))
+    if "edges" in config:
+        edges = tuple(float(e) for e in config["edges"])
+        if len(edges) < MIN_EDGES or any(b <= a for a, b in itertools.pairwise(edges)):
+            msg = f"{column}: fixed edges must be at least two strictly increasing numbers"
+            raise MonitorError(msg)
+        return BinOptions("numeric", outliers, zero, edges, method="fixed")
+    method = str(config.get("method", "quantile"))
+    bins = int(config.get("bins", 10))
+    if method != "quantile" or bins < 1:
+        msg = f"{column}: numeric bins need method 'quantile' with bins >= 1, or explicit edges"
+        raise MonitorError(msg)
+    return BinOptions("numeric", outliers, zero, None, bins, "quantile")
+
+
+def cut_ranks(total: int, bins: int) -> tuple[int, ...]:
+    """Return the nearest ranks ``ceil(j * total / bins)`` of the quantile cuts ``j = 1..bins-1``."""
+    return tuple(-(-j * total // bins) for j in range(1, bins))
+
+
+def edges_from_cuts(low: float, cuts: set[float], high: float) -> tuple[float, ...]:
+    """Return ``[low, distinct cuts below high, high]``: equal values never create empty bins."""
+    return (low, *sorted(c for c in cuts if c < high), high)
 
 
 def _zero_option(column: str, value: object) -> bool:
