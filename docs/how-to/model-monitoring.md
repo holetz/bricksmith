@@ -3,7 +3,7 @@ type: how-to
 title: "Model monitoring on tasks"
 description: "How to declare model monitoring on the task that writes predictions and read its dashboard-ready results."
 resource: "src/bricksmith/monitor/model/**"
-timestamp: "2026-11-23T18:00:00-03:00"
+timestamp: "2026-11-23T20:00:00-03:00"
 audience: both
 authority: current
 ---
@@ -14,7 +14,7 @@ Model monitoring tells you, on every run, whether a model still behaves the way 
 declare it on the task that writes the model's predictions. After the write, the shared runner measures the
 predictions period by period against the development reference (and, when declared, the out-of-time reference),
 colors every metric with a traffic light (fixed bands, a deterioration relative to a reference, or a control chart),
-checks its trend, opens alerts for lights that persist, stores the results in five dashboard-ready tables, and
+checks its trend, opens alerts for lights that persist, stores the results in dashboard-ready tables, lets people record what they did about an alert, and
 applies the gate you declared: warn (the default) or fail the task and block its dependents.
 
 It reads tables only; it never calls the model. It shares its statistical core with
@@ -168,14 +168,14 @@ format (`YYYY-MM`, `YYYY-MM-DD`, `YYYYMM` or `YYYYMMDD`; the day clamps to the m
 loaded, the result has no value and the reason `data_period_unavailable`: it never falls back to a neighbouring
 period, so immature data is not shown as mature. Each result carries `lag` and `lag_unit` (`periods` or `months`)
 beside `data_period`, and series, alerts and reprocessing stay keyed on the monitoring period. See
-[decision 0017](../decisions/0017-model-monitoring-maturation-lags.md).
+[decision 0018](../decisions/0018-model-monitoring-maturation-lags.md).
 
 Each result also carries `development_value` and `out_of_time_value`: the same metric measured on the reference
 samples, so a dashboard can show how far production moved from development and out-of-time.
 
 ## Tables and dashboards
 
-The plan lists five tables as declared `merge` targets of the task (an empty write still creates them):
+The plan lists six tables as declared `merge` targets of the task (an empty write still creates them):
 
 | Table | One row per |
 | --- | --- |
@@ -183,6 +183,7 @@ The plan lists five tables as declared `merge` targets of the task (an empty wri
 | `<prefix>results` | model, model version, run, monitoring period, segment, column and metric: value, light, limits and their kind, compared value, control baseline, trend, data period, reference values, rows |
 | `<prefix>details` | bin of a PSI/CSI result (shares and contributions) or of the calibration table (mean score, observed rate) |
 | `<prefix>alerts` | `light` alert of a red (`critical`) or yellow (`warning`) result, or a `persistence` or `trend` alert span (state, opened, escalated, closed and last periods, flagged periods, recurrence) |
+| `<prefix>actions` | human action on an alert: analysis, closure or risk acceptance with reason, author and valid-until date (written by people, see [Alert actions](#alert-actions-and-governance-views)) |
 | `<prefix>runs` | run: model version, task, physical input and its Delta version, bricksmith version, binning, references, status, counts, open and critical alerts |
 
 Results, details and alerts are keyed with the run id, and the run row is written **last**. A run that died before
@@ -197,7 +198,9 @@ bricksmith model-monitoring views --scope main.monitoring
 - `<prefix>latest_details`: the bins of those results;
 - `<prefix>model_status`: one row per model, version and period with the worst light and red/yellow counts;
 - `<prefix>open_alerts`: the open alerts of those latest finished runs (light alerts, and persistence and trend spans
-  still open).
+  still open; alerts a person closed or accepted are not open);
+- the [governance views](#alert-actions-and-governance-views): `<prefix>actions_latest`, `<prefix>acceptances`,
+  `<prefix>coverage`, `<prefix>alert_response` and `<prefix>response_summary`.
 
 Tables created before a column existed gain it on the next write: the tables are written with the `evolution`
 option, which admits compatible additions only (see [schema evolution](schema-evolution.md)).
@@ -223,6 +226,48 @@ control limit declared after a result was measured has no stored baseline: that 
 
 `exported.json` holds `{"results": [...], "runs": [...]}`. In Python, `bricksmith.monitor.model.alerts.replay_alerts`
 does the same.
+
+## Alert actions and governance views
+
+Alerts are rebuilt on every run, so what people decide about them is kept apart, in the append-only
+`<prefix>actions` table. There are three actions:
+
+| Action | Effect on the alert |
+| --- | --- |
+| `analysis` | stays `open`; the action, reason and author are shown on it |
+| `closed` | state `closed`: a persistence or trend span stops counting as open |
+| `risk_accepted` | state `accepted` through its `valid_until` date (inclusive): the alert stops gating; after the date it returns to its automatic state and the acceptance shows as expired |
+
+Every action needs a reason and an author, and `risk_accepted` needs `valid_until` (no other action takes one). The
+latest action of an alert (by `created_at`) decides, so a later `analysis` re-opens an accepted alert. Actions of
+other models, or for ids no alert carries, change nothing. `closed` on a `light` alert is bookkeeping only: the
+red result still counts for a `red` gate, while an active acceptance removes it from the count and the run
+message reports how many alerts are accepted.
+
+Find the alert id in the alerts table, the `open_alerts` view or the replay output, then write the action with the
+`act` verb, which validates it and prints the `INSERT` statement for any SQL client:
+
+```bash
+bricksmith model-monitoring act --model churn --alert-id 3f9a1c0b2d4e5f60 --action risk_accepted \
+  --reason "known seasonal shift, owner signed" --author ana --valid-until 2026-12-31 \
+  --scope main.monitoring
+```
+
+Runs read the model's actions and fold them into the alerts at the run date. To replay a stored state on another
+date, add `"actions": [...]` to the state file (`act --state exported.json` appends one) and pass
+`alerts --as-of 2026-12-15`.
+
+The governance views answer the questions a review asks:
+
+- `<prefix>acceptances`: every risk acceptance as `active`, `expired` or `superseded` (a later action replaced
+  it), with the days left;
+- `<prefix>coverage`: per model and version, the periods monitored, first and latest period, the last finished run
+  and the days since it ran;
+- `<prefix>alert_response`: per alert, when it was first seen, when it was first acted on and when it was
+  closed, with the days between;
+- `<prefix>response_summary`: per model, the alerts, how many were acted on and resolved, and the mean days to the
+  first action and to resolution;
+- `<prefix>actions_latest`: the latest action of each alert.
 
 ## The gate and the run report
 

@@ -3,7 +3,8 @@
 Stored result rows already carry each value and its light. :func:`replay_alerts` keeps the rows of the latest
 finished run per model, model version and monitoring period (the rule the dashboard views apply), optionally
 recolors the stored values with a declaration's current limits (relative and control limits read the stored
-reference values and baselines), re-checks their trend, and rebuilds the light, persistence and trend alerts.
+reference values and baselines), re-checks their trend, and rebuilds the light, persistence and trend alerts. The
+human actions given (analysis, closure, risk acceptance) are folded into the rebuilt alerts at an evaluation date.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import math
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.limits import CONTROL, RELATIVE, judge, rank
+from bricksmith.monitor.model.actions import apply_actions
 from bricksmith.monitor.model.config import OUT_OF_TIME
 from bricksmith.monitor.model.engine import VOLUME_METRICS, alert_rows, apply_trend
 from bricksmith.monitor.model.tables import FINISHED
@@ -87,25 +89,30 @@ def relight(row: Mapping[str, Any], config: ModelMonitorConfig) -> dict[str, Any
     }
 
 
-def replay_alerts(
+def replay_alerts(  # noqa: PLR0913 - one keyword per documented input
     results: Iterable[Mapping[str, Any]],
     runs: Iterable[Mapping[str, Any]],
     *,
     config: ModelMonitorConfig | None = None,
     created_at: str = "",
+    actions: Iterable[Mapping[str, Any]] = (),
+    as_of: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return ``(results, alerts)`` rebuilt from stored rows of finished runs.
 
     ``config`` recolors the rows of its model with its limits, re-checks their trend and replays them with its
     persistence policy; without it the stored lights and trend statuses are replayed with the default policy.
+    ``actions`` are the stored human actions; each alert takes the state its latest action gives on the date
+    ``as_of`` (default: the date of ``created_at``).
     """
     rows = trusted(results, runs)
     if config is None:
-        return rows, alert_rows(rows, created_at)
+        return rows, apply_actions(alert_rows(rows, created_at), actions, as_of or created_at[:10])
     mine = [relight(r, config) for r in rows if r["model"] == config.model]
     apply_trend(mine, config)
     others = [r for r in rows if r["model"] != config.model]
-    return mine + others, alert_rows(mine, created_at, config.persistence) + alert_rows(others, created_at)
+    alerts = alert_rows(mine, created_at, config.persistence) + alert_rows(others, created_at)
+    return mine + others, apply_actions(alerts, actions, as_of or created_at[:10])
 
 
 __all__ = ["relight", "replay_alerts", "trusted"]

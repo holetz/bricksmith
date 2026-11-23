@@ -1,6 +1,6 @@
 ---
 type: decision
-title: "0017. Model monitoring separates the monitoring period from the data period with declared lags"
+title: "0018. Model monitoring separates the monitoring period from the data period with declared lags"
 description: "Why a metric may read a data period earlier than the monitoring period it is shown under, in observed periods or calendar months, and how that is stored."
 resource: "src/bricksmith/monitor/model/**"
 timestamp: "2026-11-23T20:00:00-03:00"
@@ -8,7 +8,7 @@ audience: both
 authority: current
 ---
 
-# 0017. Model monitoring separates the monitoring period from the data period with declared lags
+# 0018. Model monitoring separates the monitoring period from the data period with declared lags
 
 - Status: accepted
 - Date: 2026-11-23

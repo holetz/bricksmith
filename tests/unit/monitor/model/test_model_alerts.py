@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from bricksmith.monitor.model.actions import action_row
 from bricksmith.monitor.model.alerts import replay_alerts, trusted
 from bricksmith.monitor.model.config import parse_config
 
@@ -105,3 +106,32 @@ def test_replay_rebuilds_persistence_and_trend_spans() -> None:
     plain_rows, plain = replay_alerts(rows, runs)  # stored lights and trends replay with the default policy
     assert [a["alert_id"] for a in plain] == [a["alert_id"] for a in alerts]
     assert plain_rows == rows
+
+
+def test_replay_applies_the_latest_action_at_the_evaluation_date() -> None:
+    _, alerts = replay_alerts(RESULTS, RUNS, created_at="2026-03-05T00:00:00")
+    red = next(a for a in alerts if a["light"] == "red")
+    accept = action_row(model="m", alert_id=red["alert_id"], action="risk_accepted", reason="owner signed",
+                        author="ana", created_at="2026-03-04T00:00:00", valid_until="2026-03-31")  # fmt: skip
+    _, held = replay_alerts(RESULTS, RUNS, created_at="2026-03-05T00:00:00", actions=[accept])
+    assert next(a for a in held if a["alert_id"] == red["alert_id"])["state"] == "accepted"
+    assert [a["state"] for a in held if a["alert_id"] != red["alert_id"]] == ["open"]
+    _, lapsed = replay_alerts(RESULTS, RUNS, created_at="2026-03-05T00:00:00", actions=[accept], as_of="2026-04-01")
+    assert next(a for a in lapsed if a["alert_id"] == red["alert_id"])["state"] == "open"
+    close = action_row(model="m", alert_id=red["alert_id"], action="closed", reason="fixed upstream", author="bo",
+                       created_at="2026-03-06T00:00:00")  # fmt: skip
+    _, closed = replay_alerts(RESULTS, RUNS, created_at="2026-03-05T00:00:00", actions=[accept, close])
+    found = next(a for a in closed if a["alert_id"] == red["alert_id"])
+    assert found["state"] == "closed" and found["action_author"] == "bo"
+
+
+def test_replay_with_a_declaration_applies_actions_too() -> None:
+    config = parse_config({"model": "m", "period": "month", "score": "score",
+                           "references": {"development": {"start": "a", "end": "b"}},
+                           "limits": {"psi": {"green": 0.05, "red": 0.1}}})  # fmt: skip
+    _, alerts = replay_alerts(RESULTS, RUNS, config=config, created_at="2026-03-05T00:00:00")
+    target = alerts[0]
+    close = action_row(model="m", alert_id=target["alert_id"], action="closed", reason="r", author="a",
+                       created_at="2026-03-06T00:00:00")  # fmt: skip
+    _, after = replay_alerts(RESULTS, RUNS, config=config, created_at="2026-03-05T00:00:00", actions=[close])
+    assert {a["alert_id"]: a["state"] for a in after}[target["alert_id"]] == "closed"
