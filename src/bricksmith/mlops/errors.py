@@ -1,4 +1,4 @@
-"""Errors raised by the model dataset helpers."""
+"""Errors raised by the model dataset, feature store and model helpers."""
 
 from __future__ import annotations
 
@@ -15,6 +15,12 @@ class DatasetValidationError(DatasetError):
     """A built dataset violates its contract (leakage, immature labels, overlap, wrong features)."""
 
     code = "dataset_validation_failed"
+
+
+class FeatureStoreError(DatasetError):
+    """A feature table declaration, its rows or a feature lookup violate the closing-based contract."""
+
+    code = "feature_store_invalid"
 
 
 class ModelError(ValidationError):

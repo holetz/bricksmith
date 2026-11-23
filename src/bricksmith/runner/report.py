@@ -31,13 +31,14 @@ class TaskResult:
     writes: tuple[tuple[str, str], ...] = ()
     seconds: float = 0.0
     stability: tuple[Mapping[str, Any], ...] = ()
+    model_monitoring: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         """Round the duration so reports compare equal after a JSON round trip."""
         object.__setattr__(self, "seconds", round(self.seconds, 3))
 
     def to_dict(self) -> dict[str, object]:
-        """Return the serializable form; ``stability`` appears only when the task declared checks."""
+        """Return the serializable form; ``stability`` and ``model_monitoring`` appear only when declared."""
         data: dict[str, object] = {
             "attempts": self.attempts,
             "blocked_by": list(self.blocked_by),
@@ -50,6 +51,8 @@ class TaskResult:
         }
         if self.stability:
             data["stability"] = [dict(s) for s in self.stability]
+        if self.model_monitoring:
+            data["model_monitoring"] = [dict(m) for m in self.model_monitoring]
         return data
 
     @classmethod
@@ -65,6 +68,7 @@ class TaskResult:
             writes=tuple((w["object"], w["operation"]) for w in data["writes"]),
             seconds=float(data["seconds"]),
             stability=tuple(dict(s) for s in data.get("stability", ())),
+            model_monitoring=tuple(dict(m) for m in data.get("model_monitoring", ())),
         )
 
 
