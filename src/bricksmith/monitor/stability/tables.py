@@ -71,8 +71,8 @@ _PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
 
 
 def write_options(kind: str) -> dict[str, object]:
-    """Return the write metadata of a stability table: ``merge`` on its key."""
-    return {"write": "merge", "keys": list(KEYS[kind]), "stability_table": kind}
+    """Return the write metadata of a stability table: ``merge`` on its key; an empty write creates the table."""
+    return {"write": "merge", "keys": list(KEYS[kind]), "on_empty": "allow_empty", "stability_table": kind}
 
 
 def key_of(kind: str, row: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -95,10 +95,23 @@ def typed_row(kind: str, row: Mapping[str, Any]) -> tuple[Any, ...]:
     values = []
     for column, kind_name in SCHEMAS[kind].items():
         value = row.get(column)
-        if kind_name == "DATE" and isinstance(value, str):
-            value = date.fromisoformat(value)
+        if value is not None:
+            value = _cast(kind_name, value, date)
         values.append(value)
     return tuple(values)
+
+
+def _cast(kind_name: str, value: object, date_type: type) -> object:
+    """Return ``value`` as the Python type of the column (Spark rejects an int in a DOUBLE column)."""
+    if kind_name == "DATE":
+        return date_type.fromisoformat(value) if isinstance(value, str) else value  # type: ignore[attr-defined]
+    if kind_name == "DOUBLE":
+        return float(value)  # type: ignore[arg-type]
+    if kind_name in ("INT", "BIGINT"):
+        return int(value)  # type: ignore[arg-type]
+    if kind_name == "BOOLEAN":
+        return bool(value)
+    return value
 
 
 def to_frame(spark: SparkSession, kind: str, rows: Sequence[Mapping[str, Any]]) -> DataFrame:

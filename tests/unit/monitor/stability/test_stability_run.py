@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import textwrap
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bricksmith.cli.main import main
@@ -15,8 +16,6 @@ from bricksmith.runner import InMemoryTableIO, RunReport, apply_plan
 from bricksmith.runner.service import run_summary
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
 
 TASKS = """
@@ -172,3 +171,13 @@ def test_views_command_prints_sql(capsys: pytest.CaptureFixture[str]) -> None:
     assert "CREATE OR REPLACE VIEW main.monitoring.stability_latest" in text
     assert "main.monitoring.stability_open_alerts" in text
     assert main(["stability", "views", "--scope", "bad scope"]) != 0
+
+
+def test_example_declares_stability_offline() -> None:
+    root = Path(__file__).resolve().parents[4] / "examples" / "shared_schema"
+    graph = load_graph(root)
+    assert graph.ok
+    plan = build_plan(graph, roots=["demo.ml.sales_report"])
+    assert not plan.errors
+    entry = plan.entry("demo.ml.sales_monthly")
+    assert {t.name for t in entry.targets} >= {"demo.ml.sales_monthly", "demo.ml.stability_results"}

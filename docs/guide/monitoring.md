@@ -3,6 +3,9 @@
 Monitoring reads **tables** (features, or predictions with score, label, segment and time columns); it never calls a
 model. Definitions, formulas and edge cases are in the [BS-13 specification](https://github.com/holetz/bricksmith/blob/quenching/specs/archive/20.md).
 
+To watch an ordinary table period by period, declared on the task that writes it and gated in the run, see
+[data stability](stability.md); it shares bins, PSI and references with this page.
+
 ## Fit a reference, compare a window
 
 ```python

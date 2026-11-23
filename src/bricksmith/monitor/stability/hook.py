@@ -125,6 +125,16 @@ class _IOStore:
             return [r.asDict() for r in frame.collect()]
         return [dict(r) for r in self.memory(physical) if r.get("dataset") == dataset]
 
+    def exists(self, kind: str) -> bool:
+        physical = self.tables[kind]
+        if self.spark is not None:
+            return bool(self.spark.catalog.tableExists(physical))
+        try:
+            self.ctx.io.read(physical)
+        except Exception:  # noqa: BLE001 - any failure means the table is not there
+            return False
+        return True
+
     def memory(self, physical: str) -> list[dict[str, Any]]:
         try:
             stored = self.ctx.io.read(physical)
@@ -161,8 +171,8 @@ def _check_one(ctx: TaskContext, declaration: Declaration, run_id: str) -> Outco
         physical=declaration.physical,
     )  # fmt: skip
     for kind in KINDS:
-        if result.tables[kind]:
-            _write(ctx, store, kind, result.tables[kind])
+        if result.tables[kind] or not store.exists(kind):
+            _write(ctx, store, kind, result.tables[kind])  # an empty write creates the table for dashboards
     outcome = result.outcome
     return Outcome(**{**outcome.to_dict(), "output": declaration.output})
 
