@@ -1,6 +1,6 @@
 ---
 type: decision
-title: "0013. Model monitoring judges with relative and control-chart limits, trend and persistence"
+title: "0016. Model monitoring judges with relative and control-chart limits, trend and persistence"
 description: "Why model metrics are colored through limit kinds of the shared core and replayed into persistence and trend alerts stored as additive columns."
 resource: "src/bricksmith/monitor/limits.py, src/bricksmith/monitor/model/**"
 timestamp: "2026-11-23T18:00:00-03:00"
@@ -8,7 +8,7 @@ audience: both
 authority: current
 ---
 
-# 0013. Model monitoring judges with relative and control-chart limits, trend and persistence
+# 0016. Model monitoring judges with relative and control-chart limits, trend and persistence
 
 - Status: accepted
 - Date: 2026-11-23

@@ -113,6 +113,18 @@ def test_replace_partitions_names_only_the_replaced_rows() -> None:
     assert sqls(plan, "mutate") == [
         "INSERT INTO `main`.`s`.`t` REPLACE WHERE (`d` = '2024-01-01') OR (`d` = '2024-01-02') SELECT `d`, `v` FROM {input}"
     ]
+    assert not [step for step in plan.steps if "keys" in step.description]
+    keyed = plan_write(
+        T,
+        spec(write="replace_partitions", partition_by=["d"], keys=["id", "d"]),
+        operation="replace_partitions",
+        input_columns=["id", "d", "v"],
+        partition_values=[{"d": "2024-01-01"}],
+    )
+    assert [s.description for s in keyed.steps if "keys" in s.description] == [
+        "no null keys in the input",
+        "keys are unique in the input",
+    ]
     named = spec(write="replace_partitions", partition_by=["d"], partitions=[{"d": "x"}])
     guarded = plan_write(T, named, operation="replace_partitions", input_columns=["d", "v"], target_columns=["d", "v"])
     assert any("every input row lies in the named partitions" in s.description for s in guarded.steps)

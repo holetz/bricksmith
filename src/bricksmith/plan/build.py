@@ -96,6 +96,27 @@ def _stability_targets(node: TaskNode, physical: dict[str, str], issues: list[Is
         return ()
 
 
+def _feature_options(
+    node: TaskNode, options: dict[str, object], issues: list[Issue]
+) -> tuple[str, dict[str, object]] | None:
+    """Return the output a ``feature_table`` declares and its derived write options; errors become plan issues."""
+    if "feature_table" not in node.metadata:
+        return None
+    from bricksmith.errors import ValidationError  # noqa: PLC0415 - keep the import order light
+    from bricksmith.mlops.featurestore.config import (  # noqa: PLC0415 - only for declaring tasks
+        declared_output,
+        parse_feature_table,
+        write_options,
+    )
+
+    try:
+        output = declared_output(parse_feature_table(node.metadata["feature_table"]), node.outputs)
+        return output, write_options(options)
+    except ValidationError as error:
+        issues.append(Issue("invalid_feature_table", ERROR, f"{node.id}: {error}", node.id))
+        return None
+
+
 def _model_monitoring_targets(node: TaskNode, physical: dict[str, str], issues: list[Issue]) -> tuple[Target, ...]:
     """Return the declared model monitoring targets of a task; an invalid declaration becomes an error issue."""
     if "model_monitoring" not in node.metadata:
@@ -122,6 +143,7 @@ def _entry(  # noqa: PLR0913 - the entry and where its issues go
     operations = declared_operations(node)
     protected = node.metadata.get("protected") is True
     options = {k: v for k, v in node.metadata.items() if k not in _PLAN_KEYS}
+    feature = _feature_options(node, options, issues)
     return PlanEntry(
         task_id=node.id,
         action=action,
@@ -134,7 +156,16 @@ def _entry(  # noqa: PLR0913 - the entry and where its issues go
         depends_on=graph.dependencies(node.id, kind=DATA),
         reads=tuple(sorted(reads, key=lambda r: (r.kind, r.reference, r.physical))),
         targets=(
-            *(Target(name, physical[name], operations, protected, options) for name in node.outputs),
+            *(
+                Target(
+                    name,
+                    physical[name],
+                    operations,
+                    protected,
+                    feature[1] if feature and feature[0] == name else options,
+                )
+                for name in node.outputs
+            ),
             *_stability_targets(node, physical, issues),
             *_model_monitoring_targets(node, physical, issues),
         ),

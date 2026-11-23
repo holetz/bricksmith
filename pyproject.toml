@@ -21,6 +21,8 @@ spark = ["databricks-connect"]
 sdk = ["databricks-sdk"]
 bundle = ["databricks-bundles"]
 mlops = ["mlflow", "scikit-learn"]
+features = ["databricks-feature-engineering"]
+feature-engines = ["numpy", "pyarrow"]
 postgres = [
     "psycopg[binary]>=3.3.6",
 ]
@@ -38,6 +40,9 @@ packages = ["src/bricksmith"]
 
 [dependency-groups]
 dev = [
+  "numpy",
+  "pandas",
+  "pyarrow",
   "pyright",
   "pytest",
   "ruff",
