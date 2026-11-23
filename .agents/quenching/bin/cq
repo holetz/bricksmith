@@ -4,8 +4,10 @@
 It re-executes `../assets/bin/cq` instead of importing it: that entry point reaches its `quenching`
 package through the `sys.path[0]` Python builds from the script's own directory, which an in-process
 form would point at `bin/`. `os.execv` also hands the shell cq's own exit code (0 ok / 1 findings /
-2 refusal), which every command body branches on. The root comes from `__file__`, never from a
-variable the harness expands.
+2 refusal), which every command body branches on. On Windows `os.execv` joins the arguments
+unquoted, so one with a space arrives split; there the launcher waits on a `subprocess` instead,
+which quotes each argument and hands back the same exit code. The root comes from `__file__`, never
+from a variable the harness expands.
 """
 
 import os
@@ -14,4 +16,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 REAL = os.path.join(ROOT, "assets", "bin", "cq")
 
+if os.name == "nt":
+    import subprocess
+    sys.exit(subprocess.call([sys.executable, REAL, *sys.argv[1:]]))
 os.execv(sys.executable, [sys.executable, REAL, *sys.argv[1:]])

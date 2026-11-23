@@ -225,7 +225,7 @@ def guard_store_write(text: str, root: str | None, previous: str | None,
 
 def _git(root: str, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True,
-                          text=True).stdout
+                          text=True, encoding="utf-8", errors="replace").stdout
 
 
 def _is_binary(blob: bytes) -> bool:
@@ -235,7 +235,7 @@ def _is_binary(blob: bytes) -> bool:
 def scan_staged(root: str, pats: dict[str, re.Pattern[str]]) -> list[Finding]:
     """The index version of every staged file and the email that will sign the commit."""
     email = subprocess.run(["git", "config", "user.email"], cwd=root, capture_output=True,
-                           text=True).stdout
+                           text=True, encoding="utf-8", errors="replace").stdout
     findings = scan_text("git config user.email", email, pats)
     for path in _git(root, "diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z").split("\0"):
         if not path:

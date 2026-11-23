@@ -27,7 +27,7 @@ def clean_env(env: dict) -> dict:
 
 
 def git(worktree: str, *args: str) -> str:
-    result = subprocess.run(["git", "-C", worktree, *args], capture_output=True, text=True,
+    result = subprocess.run(["git", "-C", worktree, *args], capture_output=True, text=True, encoding="utf-8",
                             errors="replace")
     return result.stdout if result.returncode == 0 else ""
 
@@ -37,7 +37,7 @@ class GuardError(Exception):
 
 
 def git_strict(worktree: str, *args: str) -> str:
-    result = subprocess.run(["git", "-C", worktree, *args], capture_output=True, text=True,
+    result = subprocess.run(["git", "-C", worktree, *args], capture_output=True, text=True, encoding="utf-8",
                             errors="replace")
     if result.returncode != 0:
         raise GuardError(f"git {' '.join(args)} failed ({result.returncode}): "
@@ -69,7 +69,7 @@ def touched(worktree: str) -> set[str]:
 def _state(worktree: str, *args: str) -> str:
     """Strict read of a query whose exit 1 with no message means "absent" (a detached HEAD has no
     symbolic ref, a repository without a stash has no `refs/stash`): that is state, not failure."""
-    result = subprocess.run(["git", "-C", worktree, *args], capture_output=True, text=True,
+    result = subprocess.run(["git", "-C", worktree, *args], capture_output=True, text=True, encoding="utf-8",
                             errors="replace")
     if result.returncode == 1 and not result.stderr.strip():
         return ""
@@ -91,7 +91,7 @@ def refs(worktree: str) -> dict:
 def _ancestor(worktree: str, old: str, new: str) -> bool:
     """Whether `new` descends from (or equals) `old`; any git failure other than "no" is fatal."""
     result = subprocess.run(["git", "-C", worktree, "merge-base", "--is-ancestor", old, new],
-                            capture_output=True, text=True, errors="replace")
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode not in (0, 1):
         raise GuardError(f"git merge-base --is-ancestor failed ({result.returncode}): "
                          f"{result.stderr.strip()}")

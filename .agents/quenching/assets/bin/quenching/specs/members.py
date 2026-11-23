@@ -26,7 +26,7 @@ _FOREIGN: dict[str, GitBackend] = {}
 def origin_url(root: str | None) -> str | None:
     repo = find_repo_root(root or os.getcwd())
     run = subprocess.run(["git", "-C", repo, "remote", "get-url", DEFAULT_REMOTE],
-                         capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=False) \
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S, check=False) \
         if os.path.isdir(repo) else None
     return (run.stdout.strip() or None) if run is not None and run.returncode == 0 else None
 

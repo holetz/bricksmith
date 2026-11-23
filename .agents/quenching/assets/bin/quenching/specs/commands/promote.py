@@ -44,7 +44,7 @@ def merge_evidence(info: dict, root: str, remote: str = "origin", *, fetch: bool
     def git(*args):
         try:
             return subprocess.run(["git", *args], cwd=root, capture_output=True,
-                                  text=True, timeout=30)
+                                  text=True, encoding="utf-8", errors="replace", timeout=30)
         except (OSError, subprocess.SubprocessError):
             return None
 

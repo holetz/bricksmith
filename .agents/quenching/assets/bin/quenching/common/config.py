@@ -303,6 +303,9 @@ def _has_path(document: dict, parts: list[str]) -> bool:
 def _apply_local_layer(out: dict, layer: dict, repo: dict) -> None:
     """Set each local leaf the key's scope lets through: `machine` over everything, `either` only
     where the repository is silent, `project` never (listed in `localConfig.ignored`)."""
+    if not layer:      # the common case: skip the registry, whose import chain is the pillar's heaviest
+        out["localConfig"].update(applied=[], ignored=[])
+        return
     from quenching.config.schema import local_decision, registry_leaves   # registry imports this
 
     applied, ignored = [], []

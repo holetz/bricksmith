@@ -16,7 +16,7 @@ from quenching.common.output import FINDINGS, OK, REFUSAL, emit, emit_err
 
 
 def _git(*argv: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *argv], capture_output=True, text=True)
+    return subprocess.run(["git", *argv], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def cmd_commit(args) -> int:

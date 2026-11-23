@@ -261,7 +261,7 @@ class GitBackend(SpecBackend):
             return self.remote
         if not self.remote_url:
             run = subprocess.run(["git", "-C", self.repo_root, "remote", "get-url", self.remote],
-                                 capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S)
             self.remote_url = run.stdout.strip() if run.returncode == 0 else ""
             if not self.remote_url:
                 raise _refusal("sp-git-no-remote",
@@ -1277,7 +1277,7 @@ def open_git_backend(root: str, mirror_dir: str | None = None) -> tuple[SpecBack
     if key in _STORES:
         return _STORES[key], {}
     run = subprocess.run(["git", "-C", repo, "remote", "get-url", DEFAULT_REMOTE],
-                         capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=False) \
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S, check=False) \
         if os.path.isdir(repo) else None
     if run is None or run.returncode != 0 or not run.stdout.strip():
         return None, {"code": "sp-git-no-remote", "exit": 2,

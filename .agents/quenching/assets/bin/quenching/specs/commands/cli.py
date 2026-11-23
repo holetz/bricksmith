@@ -14,6 +14,7 @@ survives is task 6.3's to decide, and re-adding it is one subparser and one `DIS
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
 import sys
 
@@ -21,32 +22,9 @@ from quenching.common.output import CQArgumentParser, OK, refuse
 from quenching.common.version import VERSION
 from quenching.specs.backends.base import BackendRefusal
 from quenching.specs.parse.fields import UnclosedFence
-from quenching.specs.commands.artifacts import cmd_artifact
-from quenching.specs.commands.handoff import add_parser as add_handoff_parser, cmd_handoff
-from quenching.specs.commands.create import cmd_new
-from quenching.specs.commands.deps import cmd_depends, cmd_schedule
-from quenching.specs.commands.doctor import cmd_config, cmd_doctor
-from quenching.specs.commands.epic import cmd_epic
-from quenching.specs.commands.estimate import cmd_estimate
-from quenching.specs.commands.fields import cmd_field, cmd_record, cmd_title, cmd_verification
-from quenching.specs.commands.find import cmd_find
-from quenching.specs.commands.granular import cmd_section, cmd_show
-from quenching.specs.commands.migrate import cmd_migrate
-from quenching.specs.commands.next import cmd_next
+from quenching.specs.commands.handoff import add_parser as add_handoff_parser
 from quenching.specs.commands.output import Emitter
-from quenching.specs.commands.parallel import cmd_parallel
-from quenching.specs.commands.promote import cmd_promote
-from quenching.specs.commands.reconcile import cmd_reconcile
-from quenching.specs.commands.push import cmd_push
-from quenching.specs.commands.read import cmd_export, cmd_list, cmd_status
-from quenching.specs.commands.release import cmd_release
-from quenching.specs.commands.scrub import cmd_scrub
-from quenching.specs.commands.sync import cmd_sync
-from quenching.specs.commands.task import cmd_discover, cmd_task
-from quenching.specs.commands.validate import cmd_validate
 from quenching.specs.config import find_repo_root
-from quenching.specs.mcp import cmd_mcp
-from quenching.specs.portal import cmd_serve
 from quenching.specs.parse import PHASES
 from quenching.specs.schema import DEFAULT_VERIFICATION, OUTCOMES, VERIFICATION_POLICIES
 
@@ -436,46 +414,71 @@ def build_parser() -> tuple[argparse.ArgumentParser, argparse._SubParsersAction]
     return p, sub
 
 
-DISPATCH: dict = {
-    "depends": cmd_depends,
-    "schedule": cmd_schedule,
-    "estimate": cmd_estimate,
-    "scrub": cmd_scrub,
-    "new": cmd_new,
-    "list": cmd_list,
-    "status": cmd_status,
-    "show": cmd_show,
-    "section": cmd_section,
-    "verification": cmd_verification,
-    "title": cmd_title,
-    "tags": cmd_field,
-    "assignee": cmd_field,
-    "start": cmd_field,
-    "target": cmd_field,
-    "end": cmd_field,
-    "record": cmd_record,
-    "promote": cmd_promote,
-    "reconcile": cmd_reconcile,
-    "task": cmd_task,
-    "next": cmd_next,
-    "parallel": cmd_parallel,
-    "find": cmd_find,
-    "discover": cmd_discover,
-    "push": cmd_push,
-    "artifact": cmd_artifact,
-    "handoff": cmd_handoff,
-    "epic": cmd_epic,
-    "link": cmd_epic,
-    "validate": cmd_validate,
-    "config": cmd_config,
-    "release": cmd_release,
-    "doctor": cmd_doctor,
-    "migrate": cmd_migrate,
-    "export": cmd_export,
-    "serve": cmd_serve,
-    "mcp": cmd_mcp,
-    "sync": cmd_sync,
-}
+class _LazyDispatch(dict):
+    """`DISPATCH`, with each value a `"module:function"` string resolved on first use.
+
+    A pillar that imports every subcommand at the top pays for all of them on every call (the
+    portal's `http.server` stack, the migrate and sync backends). Keys, `in`, `len` and iteration
+    cost nothing; a lookup, `items()` or `values()` imports only the module asked for."""
+
+    def __getitem__(self, verb):
+        target = dict.__getitem__(self, verb)
+        if isinstance(target, str):
+            module, _, name = target.partition(":")
+            target = getattr(importlib.import_module(module), name)
+            dict.__setitem__(self, verb, target)
+        return target
+
+    def get(self, verb, default=None):
+        return self[verb] if verb in self else default
+
+    def items(self):
+        return [(verb, self[verb]) for verb in self]
+
+    def values(self):
+        return [self[verb] for verb in self]
+
+
+DISPATCH: dict = _LazyDispatch({
+    "depends": "quenching.specs.commands.deps:cmd_depends",
+    "schedule": "quenching.specs.commands.deps:cmd_schedule",
+    "estimate": "quenching.specs.commands.estimate:cmd_estimate",
+    "scrub": "quenching.specs.commands.scrub:cmd_scrub",
+    "new": "quenching.specs.commands.create:cmd_new",
+    "list": "quenching.specs.commands.read:cmd_list",
+    "status": "quenching.specs.commands.read:cmd_status",
+    "show": "quenching.specs.commands.granular:cmd_show",
+    "section": "quenching.specs.commands.granular:cmd_section",
+    "verification": "quenching.specs.commands.fields:cmd_verification",
+    "title": "quenching.specs.commands.fields:cmd_title",
+    "tags": "quenching.specs.commands.fields:cmd_field",
+    "assignee": "quenching.specs.commands.fields:cmd_field",
+    "start": "quenching.specs.commands.fields:cmd_field",
+    "target": "quenching.specs.commands.fields:cmd_field",
+    "end": "quenching.specs.commands.fields:cmd_field",
+    "record": "quenching.specs.commands.fields:cmd_record",
+    "promote": "quenching.specs.commands.promote:cmd_promote",
+    "reconcile": "quenching.specs.commands.reconcile:cmd_reconcile",
+    "task": "quenching.specs.commands.task:cmd_task",
+    "next": "quenching.specs.commands.next:cmd_next",
+    "parallel": "quenching.specs.commands.parallel:cmd_parallel",
+    "find": "quenching.specs.commands.find:cmd_find",
+    "discover": "quenching.specs.commands.task:cmd_discover",
+    "push": "quenching.specs.commands.push:cmd_push",
+    "artifact": "quenching.specs.commands.artifacts:cmd_artifact",
+    "handoff": "quenching.specs.commands.handoff:cmd_handoff",
+    "epic": "quenching.specs.commands.epic:cmd_epic",
+    "link": "quenching.specs.commands.epic:cmd_epic",
+    "validate": "quenching.specs.commands.validate:cmd_validate",
+    "config": "quenching.specs.commands.doctor:cmd_config",
+    "release": "quenching.specs.commands.release:cmd_release",
+    "doctor": "quenching.specs.commands.doctor:cmd_doctor",
+    "migrate": "quenching.specs.commands.migrate:cmd_migrate",
+    "export": "quenching.specs.commands.read:cmd_export",
+    "serve": "quenching.specs.portal:cmd_serve",
+    "mcp": "quenching.specs.mcp:cmd_mcp",
+    "sync": "quenching.specs.commands.sync:cmd_sync",
+})
 
 
 def _force_utf8_output() -> None:

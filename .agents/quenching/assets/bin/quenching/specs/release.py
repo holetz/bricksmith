@@ -135,7 +135,7 @@ def regenerate_copies(repo: str) -> str | None:
     for name, argv, *guard in _REGENERATE_STEPS:
         if not all(os.path.isfile(os.path.join(repo, p)) for p in (guard[0] if guard else argv[:1])):
             continue
-        proc = subprocess.run([sys.executable, *argv], cwd=repo, capture_output=True, text=True)
+        proc = subprocess.run([sys.executable, *argv], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if proc.returncode != 0:
             return f"{name}: {(proc.stderr or proc.stdout).strip()}"
     return None

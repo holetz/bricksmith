@@ -11,7 +11,7 @@ repo's OKF `knowledge/` bundle: this file decides **what crosses**; the insert m
 | a rule a task **explicitly named** under `## Impact` | **no** | `/quenching-specs execute` **already wrote it into `docs/standards/`** as part of that task — nothing to do here. There is no separate spec store to sync |
 | a **decision** (rationale + considered alternatives, usually in `## Design`) not yet captured as a standard | yes | `standards/<subject>/<concept>.md` (`type: standard`; `authority: current` if the spec proved it, else `background`) — there is no separate ADR home |
 | **generic understanding** gained (domain insight, mental model, a learning from implementation) | yes | `concepts/<subject>/<slug>.md` (`type: concept`) |
-| a **repo-specific term** the spec coined or clarified | yes | an entry in `glossary.md` (§Enriching the glossary in homes.md) |
+| a **repo-specific term** the spec coined or clarified | yes | an entry in `glossary.md` (`homes.md` §Enriching the glossary) |
 | a **follow-up** the spec surfaced but did not pursue | yes | a fresh spec in `specs/plans/` via `/quenching-specs create` — outside the `knowledge/` bundle, and never stamped with an OKF `type:` |
 | `## Proposal` / `## Design` / `## Tasks` as documents | no | they are the archive's history; copying them into `knowledge/` duplicates a source of truth |
 | task checklists, progress notes, transient debugging chatter | no | transient by nature |

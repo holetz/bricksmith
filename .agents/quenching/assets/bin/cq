@@ -351,5 +351,19 @@ def main(argv: list[str]) -> int:
         raise
 
 
+def force_utf8_streams() -> None:
+    """Read stdin and write stdout/stderr as UTF-8 for every pillar, once.
+
+    A Windows agent pipes UTF-8 while the locale decodes cp1252, so an accented spec body reached
+    the store as mojibake and `--json` output carried invalid bytes. `utf-8-sig` also drops the BOM
+    PowerShell 5 prepends; `replace` keeps a stray byte from turning into a traceback."""
+    for stream, encoding in ((sys.stdin, "utf-8-sig"), (sys.stdout, "utf-8"), (sys.stderr, "utf-8")):
+        try:
+            stream.reconfigure(encoding=encoding, errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 if __name__ == "__main__":
+    force_utf8_streams()
     sys.exit(main(sys.argv[1:]))

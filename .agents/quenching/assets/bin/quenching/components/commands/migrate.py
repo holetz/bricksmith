@@ -61,7 +61,7 @@ def _tracked(repo: Path, *paths: Path) -> list[str]:
     """Repo-relative tracked files under `paths`: only what git holds can move with history."""
     done = subprocess.run(["git", "-C", str(repo), "ls-files", "-z", "--",
                            *(p.as_posix() for p in paths)],
-                          check=True, capture_output=True, text=True)
+                          check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return sorted(name for name in done.stdout.split("\0") if name)
 
 
@@ -334,7 +334,7 @@ def with_name(text: str, name: str) -> str:
 
 
 def _git(repo: Path, *argv: str) -> None:
-    subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def apply(plan: Plan) -> None:
@@ -430,7 +430,7 @@ def _rewrite_citations(repo: Path, family: str, members: list[str], flows: list[
     deployed_files, deployed_skills = _deployed(repo)
     listed = subprocess.run(["git", "-C", str(repo), "ls-files", "-z", "--",
                              SKILLS.as_posix(), (AGENTS / "references").as_posix(), "AGENTS.md"],
-                            check=True, capture_output=True, text=True).stdout.split("\0")
+                            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.split("\0")
     ordered = sorted(zip(members, flows), key=lambda pair: -len(pair[0]))
     for rel in sorted(name for name in listed if name.endswith(".md")):
         if _owned_by_deploy(rel, deployed_files, deployed_skills):
@@ -501,7 +501,7 @@ def add_arguments(sp) -> None:
 def cmd_migrate(args, _root: str) -> int:
     repo = Path(os.path.abspath(args.target))
     if subprocess.run(["git", "-C", str(repo), "rev-parse", "--is-inside-work-tree"],
-                      capture_output=True, text=True).stdout.strip() != "true":
+                      capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip() != "true":
         return refuse({"code": "ct-migrate-not-git", "target": str(repo),
                        "message": f"{repo} is not a git checkout; the migration moves files "
                                   "with git mv to keep their history"}, args.json)

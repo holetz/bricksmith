@@ -79,7 +79,7 @@ def slug(text: str) -> str:
 
 def _branch(root: str) -> str | None:
     run = subprocess.run(["git", "branch", "--show-current"], cwd=root, capture_output=True,
-                         text=True, check=False)
+                         text=True, encoding="utf-8", errors="replace", check=False)
     return (run.stdout.strip() or None) if run.returncode == 0 else None
 
 

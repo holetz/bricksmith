@@ -192,7 +192,7 @@ def _gh_run(cwd: str, *argv: str, stdin: str | None = None) -> tuple[int, str, s
     env = store.subprocess_env("github")
     for attempt in range(1, max_attempts + 1):
         try:
-            out = subprocess.run(["gh", *argv], capture_output=True, text=True,
+            out = subprocess.run(["gh", *argv], capture_output=True, text=True, encoding="utf-8", errors="replace",
                                  timeout=COMMAND_TIMEOUT_S,
                                  cwd=cwd, input=stdin, env=env)
             code, stdout, stderr = out.returncode, out.stdout, out.stderr

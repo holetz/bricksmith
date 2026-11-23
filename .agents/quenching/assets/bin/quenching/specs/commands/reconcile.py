@@ -56,7 +56,7 @@ def cmd_reconcile(args, root: str, out: Emitter) -> int:
     remote = args.remote
     try:
         subprocess.run(["git", "fetch", "--quiet", remote], cwd=root,
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         pass
     rows = []

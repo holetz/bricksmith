@@ -297,8 +297,8 @@ _k("ops.registry", "string", None, "ops", "project", "cq ops registry",
    ("Registro de operações", "O registro dos comandos operacionais."))
 
 _k("shared.mcp", "object", None, "ops", "project", "cq deploy",
-   ("MCP registration", "Whether deploy registers the quenching MCP server; edit in the file."),
-   ("Registro do MCP", "Se o deploy registra o servidor MCP do quenching; edite no arquivo."))
+   ("MCP registration", "Overrides the mount and the Python prefix of the MCP server deploy always registers; edit in the file."),
+   ("Registro do MCP", "Sobrescreve o mount e o prefixo de Python do servidor MCP que o deploy sempre registra; edite no arquivo."))
 
 # — Knowledge —
 _k("shared.okfValidate.warnAsError", "boolean", False, "knowledge", "either",

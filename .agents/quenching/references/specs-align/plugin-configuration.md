@@ -33,7 +33,7 @@ tree. Other namespaces are read by their owning front.
 | `shared.cache` | `{rebuildLimitUsd: number ≥ 0, warnMinutes: integer ≥ 1, ttlMinutes: auto \| 5 \| 60, costStyle: dollars \| times}` — a bad leaf falls back to its default and is named in `warnings` | `{rebuildLimitUsd: 0.5, warnMinutes: 15, ttlMinutes: auto, costStyle: dollars}`, leaf by leaf; a long chat is `shared.contextBudgets.main` | the `quenching-cache` plugin's bar above the prompt, through `.agents/quenching/bin/cq config show --effective` |
 | `shared.codex` | `{maxUsedPercent: {primary, secondary}, timeoutSeconds, executor}` — a bad leaf falls back to its default and is named in `warnings`, and so does a leftover `crossReview` or `model` of the removed cross review | `{{80, 90}, 900}` and `executor.enabled: false`, leaf by leaf — Codex is opt-in | `cq codex` |
 | `shared.gitIdentity` | `{allowedEmails: [address or fnmatch pattern, …]}` | none — nothing is judged | the identity gate (`cq git commit`), failing closed on a malformed value |
-| `shared.mcp` | `{mount: "specs", command: [strings]}` | none — no MCP file is generated | `cq deploy`, from the repository document only |
+| `shared.mcp` | `{mount: "specs", command: [strings]}` | none — the MCP is registered with the default mount and a resolved Python prefix | `cq deploy`, from the repository document only |
 | `delivery.provider` | a provider name, declared explicitly | none — absent declares no provider; it chooses no pipeline policy | the delivery front (`delivery/config.py`) |
 | `specs.artifactLanguage` | a non-empty string | none | `.agents/quenching/bin/cq specs`, on the branch or here |
 | `specs.cardAt` | the sibling spelling of `specs.card.at` | none | the card layer, on the branch or here |

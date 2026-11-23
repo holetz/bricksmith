@@ -15,9 +15,6 @@ import json
 import os
 
 from quenching.codex.config import load_settings
-from quenching.codex.eligible import run_eligible
-from quenching.codex.implement import run_implement
-from quenching.codex.probe import EXIT, probe
 from quenching.common.front import resolve_root
 from quenching.common.output import NoAbbrevParser, emit, refuse
 from quenching.common.version import VERSION
@@ -51,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _implement(root: str, args, as_json: bool) -> int:
+    from quenching.codex.implement import run_implement      # the config registry imports this package
     settings, warnings = load_settings(root)
     payload, code = run_implement(root, settings, args.spec, args.task, args.worktree,
                                   args.prompt, args.run)
@@ -67,6 +65,7 @@ def _implement(root: str, args, as_json: bool) -> int:
 
 
 def _eligible(root: str, args, as_json: bool) -> int:
+    from quenching.codex.eligible import run_eligible        # the config registry imports this package
     settings, warnings = load_settings(root)
     payload, code = run_eligible(root, settings, args.spec, args.task)
     if code == 2:
@@ -79,6 +78,7 @@ def _eligible(root: str, args, as_json: bool) -> int:
 
 
 def _probe(root: str, as_json: bool) -> int:
+    from quenching.codex.probe import EXIT, probe            # the config registry imports this package
     settings, warnings = load_settings(root)
     payload = probe(settings)
     payload = {"ok": payload["state"] == "available", **payload, "warnings": warnings}

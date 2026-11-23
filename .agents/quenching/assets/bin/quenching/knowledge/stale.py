@@ -48,7 +48,7 @@ def _is_git_checkout(project_root: str) -> bool:
     if key not in _GIT_CHECKOUT:
         try:
             proc = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
-                                  cwd=key, capture_output=True, text=True,
+                                  cwd=key, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=GIT_TIMEOUT_S)
             _GIT_CHECKOUT[key] = proc.returncode == 0 and proc.stdout.strip() == "true"
         except (OSError, subprocess.SubprocessError):
@@ -72,7 +72,7 @@ def _git_last_commit_date(entries: list[str], project_root: str) -> str | None:
     try:
         proc = subprocess.run(
             ["git", "log", "-1", "--format=%cI", "--"] + [f":(glob){e}" for e in entries],
-            cwd=project_root, capture_output=True, text=True, timeout=GIT_TIMEOUT_S,
+            cwd=project_root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S,
         )
     except (OSError, subprocess.SubprocessError):
         return None

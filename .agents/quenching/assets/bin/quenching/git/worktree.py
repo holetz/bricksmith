@@ -82,7 +82,7 @@ def _make_link(store: str, link: str) -> None:
         if os.name != "nt":
             raise
         result = subprocess.run(["cmd", "/c", "mklink", "/J", link, store],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
         if result.returncode != 0:
             raise
 

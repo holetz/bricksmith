@@ -435,7 +435,7 @@ the ordinary way to be behind, and a `needs-human` there is never relaunched. Ru
 `git merge --no-edit origin/<base>` — a merge, never a rebase, so the task shas stay ancestors and
 the spec-verifier's check 7 accepts them — and then the gate over the merged tree. A conflict only in
 the deployed surface (`.agents/quenching/**`, `.claude/skills/**`, `.agents/.quenching-deploy.json`)
-is mechanical: take the base's side (`git show :3:<path> > <path>`, `git add <path>`), then
+is mechanical: take the base's side (`git checkout-index --stage=3 -f -- <path>`, `git add <path>`), then
 **regenerate before concluding the merge** — `cq deploy --target . --write` — `git add` what it
 rewrote, and conclude the merge. A manifest taken from the base alone loses the branch's entries.
 Then `cq deploy --target . --check` exits 0. A conflict in any other path →

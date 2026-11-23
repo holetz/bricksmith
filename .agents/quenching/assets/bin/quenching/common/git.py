@@ -15,7 +15,7 @@ def _git(cwd: str, *argv: str) -> str:
     which is a real state and never an error."""
     import subprocess
     try:
-        out = subprocess.run(["git", *argv], capture_output=True, text=True, errors="replace",
+        out = subprocess.run(["git", *argv], capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=COMMAND_TIMEOUT_S,
                              cwd=cwd if os.path.isdir(cwd) else ".")
         return out.stdout if out.returncode == 0 else ""
@@ -59,7 +59,7 @@ def _git_run(cwd: str, *argv: str, stdin: str | None = None,
     if not os.path.isdir(cwd):
         return 127, "", f"not a directory: {cwd}"
     try:
-        out = subprocess.run(["git", *argv], capture_output=True, text=True, errors="replace",
+        out = subprocess.run(["git", *argv], capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=COMMAND_TIMEOUT_S,
                              cwd=cwd, input=stdin, env=env)
         return out.returncode, out.stdout, out.stderr

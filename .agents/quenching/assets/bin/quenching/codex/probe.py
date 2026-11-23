@@ -100,7 +100,7 @@ def read_app_server(binary: str, seconds: float,
     errors = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
     try:
         process = subprocess.Popen([binary, *APP_SERVER_ARGV], stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE, stderr=errors, text=True,
+                                   stdout=subprocess.PIPE, stderr=errors, text=True, encoding="utf-8", errors="replace",
                                    env=env, **group_kwargs())
     except OSError as exc:
         errors.close()

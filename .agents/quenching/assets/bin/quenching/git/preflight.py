@@ -33,7 +33,7 @@ BAD = {"fail", "unavailable"}
 
 def _tool(cwd: str, *argv: str) -> tuple[int, str, str]:
     try:
-        done = subprocess.run(spawn_argv(list(argv)), cwd=cwd, capture_output=True, text=True,
+        done = subprocess.run(spawn_argv(list(argv)), cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=TIMEOUT_S, env={**os.environ, "LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"})
     except subprocess.TimeoutExpired:
         return 124, "", "timed out"

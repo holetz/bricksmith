@@ -207,7 +207,7 @@ def _az_run(cwd: str, *argv: str, stdin: str | None = None) -> tuple[int, str, s
     for attempt in range(1, max_attempts + 1):
         try:
             out = subprocess.run(spawn_argv(["az", *argv, "--only-show-errors"]), capture_output=True,
-                                 text=True, timeout=COMMAND_TIMEOUT_S, cwd=cwd, input=stdin,
+                                 text=True, encoding="utf-8", errors="replace", timeout=COMMAND_TIMEOUT_S, cwd=cwd, input=stdin,
                                  env=env)
             code, stdout, stderr = out.returncode, out.stdout, out.stderr
         except FileNotFoundError as e:

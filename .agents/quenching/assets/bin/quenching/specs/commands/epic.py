@@ -66,7 +66,7 @@ def _pr_view(member: dict, provider: str | None, root: str | None,
     else:
         argv = ["gh", "pr", "view", _pr_target(member), "--json", "state,headRefName"]
     try:
-        r = subprocess.run(spawn_argv(argv), capture_output=True, text=True, timeout=timeout, cwd=root)
+        r = subprocess.run(spawn_argv(argv), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, cwd=root)
         got = json.loads(r.stdout) if r.returncode == 0 else {}
     except (OSError, subprocess.SubprocessError, ValueError):
         return None

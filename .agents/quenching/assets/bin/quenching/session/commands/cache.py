@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -195,6 +194,7 @@ def _listings(db: sqlite3.Connection, tables: set, sessions: dict, directory: Pa
 
 
 def _median(values: list) -> int | None:
+    import statistics        # the config registry reaches this module; keep it off the import path
     return int(statistics.median(values)) if values else None
 
 

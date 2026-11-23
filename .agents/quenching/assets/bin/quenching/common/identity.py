@@ -69,7 +69,7 @@ def staged_findings(root: str, patterns: list[str]) -> list[Finding]:
     """The author and committer the next commit will carry, as git reports them to the hook."""
     findings: list[Finding] = []
     for var in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
-        done = subprocess.run(["git", "var", var], cwd=root, capture_output=True, text=True)
+        done = subprocess.run(["git", "var", var], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
         email = ident_email(done.stdout) if done.returncode == 0 else ""
         if email and not allowed(email, patterns):
             findings.append(_finding(f"git var {var}", email))

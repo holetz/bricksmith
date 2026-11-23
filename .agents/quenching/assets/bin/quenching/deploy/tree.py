@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from quenching.common.deploy import read_manifest
 from quenching.common.version import VERSION
 from quenching.components.commands import bridge
+from quenching.deploy import mcpfiles
 from quenching.deploy import settings as claude_settings
 from quenching.deploy import translate
 
@@ -22,7 +23,6 @@ SKILLS = ".agents/skills"
 CLAUDE_SKILLS = ".claude/skills"
 CLAUDE_AGENTS = ".claude/agents"
 OPENCODE_AGENTS = ".opencode/agents"
-OPENCODE_CONFIG = "opencode.json"
 MODULE_SHORT = {
     "quenching-specs": "specs",
     "quenching-git": "git",
@@ -61,7 +61,6 @@ ASSETS_BY_MODULE = {
 MARKDOWN_DIRS = ("references", "assets/templates", "assets/knowledge", "assets/zensical",
                  "assets/design", "assets/opensource", "assets/specs")
 IGNORE = {"__pycache__", "tests", "evals", "checks"}
-MCP_NAME = "quenching"
 
 
 class DeployError(ValueError):
@@ -81,6 +80,26 @@ def _mode(path: Path) -> int:
     return 0o755 if path.stat().st_mode & 0o111 else 0o644
 
 
+def eol_canonical(data: bytes) -> bytes:
+    """Text with LF line ends — the bytes git keeps in the index.
+
+    A `core.autocrlf` checkout holds CRLF in the work tree for the same blob, in the source and in
+    the target alike. Binary data (a NUL byte, or not UTF-8) is returned untouched.
+    """
+    if b"\r\n" not in data or b"\0" in data:
+        return data
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    return data.replace(b"\r\n", b"\n")
+
+
+def _read(path: Path) -> bytes:
+    """A source file as the index holds it; `read_text` already gives LF on the translated paths."""
+    return eol_canonical(path.read_bytes())
+
+
 def _add(tree: dict[str, tuple[bytes, int]], rel: str, data: bytes, mode: int = 0o644) -> None:
     tree[PurePosixPath(rel).as_posix()] = (data, mode)
 
@@ -94,7 +113,7 @@ def _add_tree(tree: dict, source: Path, rel: str, transform=None, exclude=IGNORE
         if not path.is_file() or _is_build(path) or any(part in exclude for part in path.parts):
             continue
         relative = path.relative_to(source).as_posix()
-        data = path.read_bytes()
+        data = _read(path)
         if transform is not None and path.suffix == ".md":
             data = transform(data.decode("utf-8")).encode("utf-8")
         _add(tree, PAYLOAD + "/" + relative, data, _mode(path))
@@ -209,8 +228,10 @@ _VENDOR_SH = '''#!/usr/bin/env python3
 It re-executes `../assets/bin/cq` instead of importing it: that entry point reaches its `quenching`
 package through the `sys.path[0]` Python builds from the script's own directory, which an in-process
 form would point at `bin/`. `os.execv` also hands the shell cq's own exit code (0 ok / 1 findings /
-2 refusal), which every command body branches on. The root comes from `__file__`, never from a
-variable the harness expands.
+2 refusal), which every command body branches on. On Windows `os.execv` joins the arguments
+unquoted, so one with a space arrives split; there the launcher waits on a `subprocess` instead,
+which quotes each argument and hands back the same exit code. The root comes from `__file__`, never
+from a variable the harness expands.
 """
 
 import os
@@ -219,6 +240,9 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 REAL = os.path.join(ROOT, "assets", "bin", "cq")
 
+if os.name == "nt":
+    import subprocess
+    sys.exit(subprocess.call([sys.executable, REAL, *sys.argv[1:]]))
 os.execv(sys.executable, [sys.executable, REAL, *sys.argv[1:]])
 '''
 
@@ -265,7 +289,7 @@ def _bridge_tree(tree: dict, target: Path) -> None:
                 relative = path.relative_to(source).as_posix()
                 if f"{SKILLS}/{relative}" in leaving:
                     continue
-                data = path.read_bytes()
+                data = _read(path)
                 if path.name == bridge.SKILL_FILE and path.parent == folder:
                     data = bridge.with_marker(data.decode("utf-8"), folder.name).encode("utf-8")
                 _add(tree, CLAUDE_SKILLS + "/" + relative, data, _mode(path))
@@ -286,33 +310,9 @@ def _bridge_tree(tree: dict, target: Path) -> None:
              (json.dumps(document, indent=2) + "\n").encode(), 0o644)
 
 
-def _mcp_argv(mcp: dict) -> list[str]:
-    """The declared Python prefix, the vendored entry point and the mounted pillar's `mcp`."""
+def mcp_argv(mcp: dict) -> list[str]:
+    """The Python prefix, the vendored entry point and the mounted pillar's `mcp`."""
     return [*mcp["command"], PAYLOAD + "/assets/bin/cq", *mcp["mount"].split(), "mcp"]
-
-
-def _toml_string(value: str) -> str:
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _mcp_tree(tree: dict, mcp: dict, harnesses: list[str]) -> None:
-    """One whole file per harness that reads a project MCP server. The file belongs to the
-    target and to the deploy manifest: a hand edit is drift, not a second owner."""
-    argv = _mcp_argv(mcp)
-    if "claude" in harnesses:
-        document = {"mcpServers": {MCP_NAME: {"command": argv[0], "args": argv[1:]}}}
-        _add(tree, ".mcp.json",
-             (json.dumps(document, indent=2, ensure_ascii=False) + "\n").encode())
-    if "codex" in harnesses:
-        lines = [f"[mcp_servers.{MCP_NAME}]",
-                 f"command = {_toml_string(argv[0])}",
-                 "args = [" + ", ".join(_toml_string(part) for part in argv[1:]) + "]"]
-        _add(tree, ".codex/config.toml", ("\n".join(lines) + "\n").encode())
-    if "opencode" in harnesses:
-        document = {"$schema": "https://opencode.ai/config.json",
-                    "mcp": {MCP_NAME: {"type": "local", "command": argv, "enabled": True}}}
-        _add(tree, OPENCODE_CONFIG,
-             (json.dumps(document, indent=2, ensure_ascii=False) + "\n").encode())
 
 
 def _declared_hooks(selected: list[dict]) -> list[dict]:
@@ -321,7 +321,7 @@ def _declared_hooks(selected: list[dict]) -> list[dict]:
 
 def build_tree(source: Path, target: Path, modules: list[str], harnesses: list[str],
                runtime: str = "vendor", profiles: list[str] | None = None,
-               mcp: dict | None = None) -> dict:
+               mcp: dict | None = None, python: list[str] | None = None) -> dict:
     manifest = load_modules(source)
     selected = _selected_modules(manifest, modules)
     if not selected:
@@ -367,8 +367,6 @@ def build_tree(source: Path, target: Path, modules: list[str], harnesses: list[s
         sh, cmd = _uvx_shim(VERSION)
         _add(tree, PAYLOAD + "/bin/cq", sh, 0o755)
         _add(tree, PAYLOAD + "/bin/cq.cmd", cmd, 0o644)
-    if mcp:
-        _mcp_tree(tree, mcp, harnesses)
 
     # A skill is its whole folder: the `SKILL.md` and the `references/` beside it.
     skill_names: list[str] = []
@@ -390,13 +388,13 @@ def build_tree(source: Path, target: Path, modules: list[str], harnesses: list[s
                     continue
                 rel = path.relative_to(root).as_posix()
                 if installed:
-                    data = path.read_bytes()
+                    data = _read(path)
                 elif rel == "SKILL.md":
                     data = translate.skill_document(path.read_text(encoding="utf-8"), name).encode("utf-8")
                 elif path.suffix == ".md":
                     data = translate.reference_document(path.read_text(encoding="utf-8")).encode("utf-8")
                 else:
-                    data = path.read_bytes()
+                    data = _read(path)
                 _add(tree, f"{SKILLS}/{name}/{rel}", data, _mode(path))
 
     if "claude" in harnesses:
@@ -428,13 +426,15 @@ def build_tree(source: Path, target: Path, modules: list[str], harnesses: list[s
         "files": {rel: hashlib.sha256(data).hexdigest() for rel, (data, _mode_) in sorted(tree.items())},
     }
     if mcp:
+        # The harness files are the user's and merged by `cli`; the manifest names which ones.
         document["mcp"] = mcp
+        document["mcpFiles"] = mcpfiles.harness_files(harnesses)
     settings = None
     if "claude" in harnesses:
         # `.claude/settings.json` is the user's file: it is merged by `cli`, never listed in `files`.
         # `attribution` holds the keys this deploy wrote; `cli` replaces it once the merge ran.
         settings = {"hooks": claude_settings.desired_entries(
-                        hooks, mcp["command"] if mcp else claude_settings.PYTHON),
+                        hooks, python or claude_settings.PYTHON),
                     "attribution": dict(claude_settings.ATTRIBUTION)}
         document["claudeSettings"] = {"hooks": [hook["name"] for hook in hooks],
                                       "attribution": sorted(claude_settings.ATTRIBUTION)}

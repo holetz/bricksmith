@@ -54,7 +54,7 @@ def _is_host_default(cwd: str, backend: str, base: str) -> bool | None:
     else:
         return None
     try:
-        out = subprocess.run(argv, capture_output=True, text=True, timeout=COMMAND_TIMEOUT_S, cwd=cwd)
+        out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=COMMAND_TIMEOUT_S, cwd=cwd)
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:

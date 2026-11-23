@@ -56,7 +56,7 @@ AZURE_BODY_NOTE = "Corpo completo no primeiro comentário deste PR."
 
 def _tool(tool: str, *argv: str, stdin: str | None = None) -> tuple[int, str, str]:
     try:
-        done = subprocess.run(spawn_argv([tool, *argv]), capture_output=True, text=True, input=stdin or "",
+        done = subprocess.run(spawn_argv([tool, *argv]), capture_output=True, text=True, encoding="utf-8", errors="replace", input=stdin or "",
                               timeout=GH_TIMEOUT_S, env={**os.environ, "LC_ALL": "C", "LANG": "C"})
     except (OSError, subprocess.SubprocessError) as e:
         return 127, "", str(e)

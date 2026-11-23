@@ -188,7 +188,7 @@ def _open_pr_heads(cwd: str) -> set[str] | None:
         argv = ["gh", "pr", "list", "--state", "open", "--limit", "500", "--json", "headRefName"]
         key = "headRefName"
     try:
-        done = subprocess.run(spawn_argv(argv), cwd=cwd, capture_output=True, text=True, timeout=20)
+        done = subprocess.run(spawn_argv(argv), cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
         if done.returncode != 0:
             return None
         return {row[key].removeprefix("refs/heads/") for row in json.loads(done.stdout)}

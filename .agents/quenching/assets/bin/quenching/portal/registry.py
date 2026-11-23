@@ -56,7 +56,7 @@ def repo_root(folder: str) -> str:
     if not os.path.isdir(folder):
         raise PortalRefusal("portal-not-a-repo", f"not a directory: {folder}")
     run = subprocess.run(["git", "-C", folder, "rev-parse", "--path-format=absolute",
-                          "--git-common-dir"], capture_output=True, text=True)
+                          "--git-common-dir"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     common = run.stdout.strip()
     if run.returncode != 0 or not common:
         raise PortalRefusal("portal-not-a-repo", f"not inside a git repository: {folder}")
