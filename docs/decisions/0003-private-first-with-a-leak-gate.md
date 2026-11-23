@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0003. Private first, with a leak gate"
+description: "Why the repository started private and guards every commit and push with a leak gate."
+resource: "scripts/leak_check.py, scripts/setup.sh"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: current
+---
+
 # 0003. Private first, with a leak gate
 
 - Status: accepted

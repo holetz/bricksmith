@@ -1,0 +1,28 @@
+<!-- MOLD (quenching · reserved `index.md` listing). Copy the body BELOW the matching
+     fence into a folder's `index.md`. An `index.md` is an OKF reserved filename: a LISTING,
+     NOT a concept — it carries NO frontmatter, EXCEPT the bundle-root `/docs/index.md`, which
+     carries ONLY `okf_version`. Entries SHOULD include the linked concept's `description:`.
+     Links: RELATIVE within the same home, ABSOLUTE from the bundle root (`/docs/...`) across
+     homes. Do NOT copy this note or the fences into the real index.md. -->
+
+=== ROOT (/docs/index.md) — the ONLY index.md with frontmatter ===
+---
+okf_version: "0.2"
+---
+
+# `/docs/` — OKF knowledge bundle
+
+<one-line purpose of the bundle.>
+
+## Homes
+
+* [standards/](/docs/standards/index.md) — <description>
+* [<home>/](/docs/<home>/index.md) — <description>
+
+=== NON-ROOT (any other index.md) — NO frontmatter ===
+# `<home>/` — <short title>
+
+<one boundary sentence: what lives here vs. its neighbors.>
+
+* [<child>.md](<child>.md) — <the child's description:>
+* [<subfolder>/](<subfolder>/index.md) — <what the subfolder holds>

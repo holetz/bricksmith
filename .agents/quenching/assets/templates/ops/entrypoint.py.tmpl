@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""<one-line purpose of this entry point>."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+# Replace this import with the target repository's one shared bootstrap module.  The
+# bootstrap owns repository-root discovery, sys.path preparation, and common flags;
+# this entry point must not derive any of those locally.
+from <bootstrap_module> import add_common_arguments, repository_root
+
+
+LIFECYCLE = "<active|archived>"
+WRITES_OUTSIDE_REPOSITORY = <True|False>
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the entry point parser and its documented invocation."""
+    parser = argparse.ArgumentParser(
+        description="<one-line purpose of this entry point>",
+        epilog="Example: <canonical invocation> --json",
+    )
+    add_common_arguments(parser)
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit data as JSON; diagnostics continue to use stderr",
+    )
+
+    # When WRITES_OUTSIDE_REPOSITORY is True, replace this marker with the guarded
+    # --apply argument below and keep the preview path in run().  A write-capable
+    # entry point is never minted without this explicit arming flag.
+    <write_guard>
+    return parser
+
+
+def run(args: argparse.Namespace, root: Path) -> tuple[dict[str, Any], list[str], int]:
+    """Run the operation and return data, diagnostics, and a typed exit code."""
+    # Replace this body with domain logic.  Keep reads and preview output here; when
+    # the operation writes outside root, require args.apply before performing the write.
+    data: dict[str, Any] = {
+        "operation": "<normalized operation name>",
+        "root": str(root),
+        "lifecycle": LIFECYCLE,
+    }
+    diagnostics: list[str] = []
+    return data, diagnostics, 0
+
+
+def emit(data: dict[str, Any], diagnostics: list[str], *, as_json: bool) -> None:
+    """Keep machine-readable data on stdout and diagnostics on stderr."""
+    if as_json:
+        print(json.dumps(data, ensure_ascii=False, sort_keys=True))
+    else:
+        print(data)
+    for message in diagnostics:
+        print(message, file=sys.stderr)
+
+
+def main() -> int:
+    """Parse, bootstrap, run, and return the operation's contractual status."""
+    parser = build_parser()
+    args = parser.parse_args()
+    root = repository_root()
+    data, diagnostics, exit_code = run(args, root)
+    emit(data, diagnostics, as_json=args.json)
+    return int(exit_code)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+# WRITE-CAPABLE SHAPE (insert into build_parser when the operation writes outside root):
+#
+# parser.add_argument(
+#     "--apply",
+#     action="store_true",
+#     help="arm the external write; without it, show the planned change only",
+# )
+#
+# In run(), preview the intended write first and refuse the write unless args.apply is
+# true.  Never use source edits, environment state, or a default-enabled flag as the
+# arming mechanism.

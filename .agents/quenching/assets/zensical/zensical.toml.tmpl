@@ -1,0 +1,136 @@
+# zensical.toml — Zensical config for the editorially mapped OKF site.
+# `/quenching-knowledge align` stamps this at the repo ROOT (outside /docs/), and
+# `/quenching-knowledge documentation-build` owns it from there. Fill the <placeholders>.
+[project]
+  site_name        = "<YOUR PROJECT> — Documentation"
+  site_description = "<one-line description of the product docs>"
+  # Required before public delivery: derive from the selected publication destination; never invent it.
+  # site_url       = "https://<published-host>/<path>/"
+  # Derive from the Git remote when available; do not publish placeholder URLs.
+  # repo_url       = "https://<host>/<owner>/<repo>"
+  # Azure DevOps and other unmapped hosts require an explicit, tested template.
+  # edit_uri_template = "?path=/{path}&version=GB<branch>"
+
+  # Zensical 0.0.57 builds every Markdown file below docs_dir and does not support exclude_docs,
+  # draft_docs or not_in_nav. The bundle is therefore staged into a bounded sibling tree before
+  # each build; catalog/ and external/ never enter that tree. Do not point docs_dir at the bundle.
+  docs_dir = "site-source"
+  site_dir = "site"
+
+  # Zensical runs no MkDocs plugin, so order and titles live here rather than in `.pages` files.
+  # GENERATED from the bounded tree by `cq knowledge nav --write`, in reading order rather than
+  # alphabetical — but a title YOU write survives regeneration, so rename freely.
+  nav = [
+    "index.md",
+    { "Tutorials"   = [ "tutorials/index.md" ] },
+    { "How-to"      = [ "how-to/index.md" ] },
+    { "Documentation" = [ "documentation/index.md" ] },
+    { "Project"     = [ "project/index.md" ] },
+    { "Standards"   = [ "standards/index.md" ] },
+    { "Concepts"    = [ "concepts/index.md" ] },
+    { "Vision"      = [ "vision/index.md" ] },
+    "glossary.md",
+  ]
+
+  extra_css = [ "assets/stylesheets/quenching.css" ]
+
+[project.theme]
+  # Derive from the target's language contract; Zensical includes localized pt-BR UI.
+  # language = "pt-BR"
+  # logo = "assets/<logo>"       # only when supplied or derived from target-owned brand assets
+  # favicon = "assets/<favicon>" # only when supplied or derived from target-owned brand assets
+  features = [
+    "navigation.indexes",
+    "navigation.sections",
+    "navigation.footer",
+    "navigation.tracking",
+    "navigation.top",
+    "toc.follow",
+    "content.code.copy",
+    "content.code.annotate",
+    "content.tabs.link",
+    "search.highlight",
+  ]
+
+[[project.theme.palette]]
+  media       = "(prefers-color-scheme: light)"
+  scheme      = "default"
+  toggle.icon = "material/weather-night"
+  toggle.name = "Switch to dark mode"
+  # primary = "<brand-color>"    # set only from target-owned identity evidence
+  # accent = "<brand-accent>"
+
+[[project.theme.palette]]
+  media       = "(prefers-color-scheme: dark)"
+  scheme      = "slate"
+  toggle.icon = "material/weather-sunny"
+  toggle.name = "Switch to light mode"
+
+# Zensical uses the same Python-Markdown as MkDocs, so the extensions carry over;
+# in TOML the `!!python/name:` values are plain strings.
+[project.markdown_extensions]
+  abbr                               = {}
+  admonition                         = {}
+  attr_list                          = {}
+  def_list                           = {}
+  footnotes                          = {}
+  md_in_html                         = {}
+  meta                               = {}
+  tables                             = {}
+  toc.permalink                      = true
+  pymdownx.arithmatex.generic        = true
+  pymdownx.betterem                  = {}
+  pymdownx.caret                     = {}
+  pymdownx.details                   = {}
+  pymdownx.highlight.anchor_linenums = true
+  pymdownx.highlight.line_spans      = "__span"
+  pymdownx.highlight.pygments_lang_class = true
+  pymdownx.inlinehilite              = {}
+  pymdownx.keys                      = {}
+  pymdownx.magiclink                 = {}
+  pymdownx.mark                      = {}
+  pymdownx.smartsymbols              = {}
+  pymdownx.tabbed.alternate_style    = true
+  pymdownx.tabbed.combine_header_slug = true
+  pymdownx.tasklist.custom_checkbox  = true
+  pymdownx.tilde                     = {}
+  pymdownx.emoji.emoji_index         = "zensical.extensions.emoji.twemoji"
+  pymdownx.emoji.emoji_generator     = "zensical.extensions.emoji.to_svg"
+  pymdownx.superfences.custom_fences = [
+    { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+  ]
+
+[project.markdown_extensions.pymdownx.snippets]
+  base_path = [ "site-source" ]
+  check_paths = true
+  auto_append = [ "assets/glossary-abbreviations.txt" ]
+
+[project.validation]
+  # `unresolved_references` is OFF, measured: it reads any `[...]` in the source as a
+  # reference-style link, and this bundle's canonical content is full of square brackets that are
+  # not links — YAML flow sequences in frontmatter (`tags: [a, b]`, the form every shipped mould
+  # writes), the specs `[P]` parallel marker, and `- [ ]` task boxes. All 148 warnings it raised
+  # here were of those three kinds and none was a real dangling reference, so under `--strict` it
+  # only makes a green build unreachable. The link checks that matter stay on.
+  unresolved_references = false
+  unresolved_footnotes = true
+  unused_definitions = true
+  unused_footnotes = true
+  shadowed_definitions = true
+  shadowed_footnotes = true
+  invalid_links = true
+  invalid_link_anchors = true
+
+# The base dependency is `zensical>=0.0.57`. If the target uses uv (`uv.lock` or `[tool.uv]`), add
+# it to `pyproject.toml` with `uv add --dev` and keep `uv.lock` authoritative. Other project
+# managers keep their own lock/install command; without a project manifest, the payload's
+# requirements.txt is the single source. Never maintain both sources for the same target.
+#
+# Optional capabilities are not part of the base dependency set. Enable only after the plan's
+# capability register records a tested prerequisite and rendered fixture:
+# [project.plugins.mkdocstrings]
+# handler = "python"
+# [project.plugins.tags]
+# enabled = true
+# Keep the base requirements limited to `zensical`; add optional packages in a separate, pinned
+# requirements file owned by the capability decision.

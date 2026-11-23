@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Quenching specs</title>
+<link rel="icon" id="favicon" href="data:,">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="app">
+<a class="skip" href="#main">Ir para o conteúdo</a>
+<header class="top">
+  <h1 class="brand"><a href="#/board"><span class="mark" aria-hidden="true">Q</span> Quenching <span class="brand-sub">specs</span></a></h1>
+  <nav aria-label="Visões" id="nav">
+    <a href="#/board" data-view="board">Board</a>
+    <a href="#/list" data-view="list">Ranking</a>
+    <a href="#/human" data-view="human" id="nav-human">Decidir <span id="human-count" class="count" aria-label="esperando você">0</span></a>
+    <a href="#/epics" data-view="epics" id="nav-epics" hidden>Épicos</a>
+    <a href="#/gantt" data-view="gantt" id="nav-gantt">Gantt</a>
+    <a href="#/sessions" data-view="sessions" id="nav-sessions" hidden>Sessões <span id="sessions-count" class="count" aria-label="sessões esperando você">0</span></a>
+    <a href="#/chat" data-view="chat" id="nav-chat" hidden>Chat</a>
+  </nav>
+  <div class="top-actions">
+    <button id="palette-open" type="button" class="searchbtn" aria-haspopup="dialog">
+      <span class="searchbtn-label">Buscar ou executar</span> <kbd id="palette-key">Ctrl K</kbd>
+    </button>
+    <button id="theme" type="button" class="ghost" aria-label="Tema: automático" title="Tema (t)"></button>
+    <button id="help-open" type="button" class="ghost" aria-label="Ajuda e atalhos" title="Ajuda e atalhos (?)" aria-haspopup="dialog">?</button>
+    <button id="push" type="button" class="primary" hidden><span id="push-label">Enviar</span> <span id="push-count" class="count" aria-label="specs com escritas locais">0</span></button>
+    <button id="capture" type="button" class="primary">Capturar</button>
+  </div>
+</header>
+
+<section class="pulse" id="pulse" role="group" aria-label="Pulso do repositório"></section>
+<div class="banners">
+<p id="banner" class="banner" role="status" hidden></p>
+<p id="connbanner" class="banner conn" role="alert" hidden></p>
+</div>
+
+<div class="shell">
+  <nav id="projects" class="projects" aria-label="Projetos" hidden></nav>
+  <main id="main" tabindex="-1"></main>
+</div>
+
+<footer class="statusbar" id="statusbar">
+  <span id="conn" class="conn" role="status" aria-live="polite"><i class="dot"></i><span>conectando</span></span>
+  <span id="fresh" class="fresh" aria-live="off">carregando</span>
+  <button id="pause" type="button" class="ghost small" aria-pressed="false" title="Pausar ou retomar o auto-refresh">Pausar</button>
+  <button id="refresh" type="button" class="ghost small" title="Atualizar agora">Atualizar</button>
+  <span class="grow"></span>
+  <span class="hint">pressione <kbd>?</kbd> para atalhos</span>
+  <button id="events-open" type="button" class="ghost small" aria-controls="events" aria-expanded="false" aria-label="Notificações">
+    Notificações <span id="events-count" class="count" hidden>0</span>
+  </button>
+</footer>
+</div>
+
+<div id="events" class="events" role="region" aria-label="Notificações" hidden></div>
+<div id="toasts" role="alert" aria-live="assertive"></div>
+
+<dialog id="drawer" aria-label="Detalhe da spec" aria-labelledby="drawer-title" aria-describedby="drawer-sub"></dialog>
+<dialog id="dlg" aria-label="Formulário" aria-labelledby="dlg-title"></dialog>
+<dialog id="palette" aria-labelledby="palette-title">
+  <h2 id="palette-title" class="sr">Paleta de comandos</h2>
+  <input id="palette-input" role="combobox" aria-label="Buscar specs ou executar uma ação" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" aria-activedescendant="" autocomplete="off" spellcheck="false" placeholder="Buscar specs ou executar uma ação…">
+  <p id="palette-status" class="sr" role="status"></p>
+  <ul id="palette-list" role="listbox" aria-label="Resultados"></ul>
+  <div class="palette-foot"><kbd>↑</kbd> <kbd>↓</kbd> navegar · <kbd>Enter</kbd> abrir · <kbd>Esc</kbd> fechar</div>
+</dialog>
+<dialog id="help" aria-labelledby="help-title"></dialog>
+<script src="/app.js"></script>
+</body>
+</html>

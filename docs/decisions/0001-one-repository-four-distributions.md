@@ -1,3 +1,14 @@
+---
+type: decision
+title: "0001. One repository, four distributions, one namespace"
+description: "Superseded plan to ship the framework, registry, MLOps and monitoring as four distributions under one namespace."
+resource: "pyproject.toml"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: background
+status: deprecated
+---
+
 # 0001. One repository, four distributions, one namespace
 
 - Status: superseded by [0009](0009-one-library-shared-task-scopes.md) on 2026-10-13

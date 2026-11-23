@@ -1,0 +1,52 @@
+# Copy to .github/workflows/docs.yml to publish the site to GitHub Pages on push to main.
+# Prerequisite: the repository's Pages source must be set to "GitHub Actions" (Settings → Pages).
+# The built site/ is uploaded as a Pages artifact; there is no deploy subcommand.
+name: docs
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/configure-pages@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - uses: astral-sh/setup-uv@v6
+        if: hashFiles('pyproject.toml') != ''
+      - name: Install documentation toolchain
+        shell: bash
+        run: |
+          if [ -f pyproject.toml ] && { [ -f uv.lock ] || grep -q '^\[tool\.uv\]' pyproject.toml; }; then
+            if [ -f uv.lock ]; then uv sync --locked; else uv lock && uv sync; fi
+          elif [ -f pyproject.toml ]; then
+            echo "pyproject.toml uses a non-uv manager; configure its documented install command before enabling this workflow" >&2
+            exit 1
+          else
+            python -m pip install -r requirements.txt
+          fi
+      - name: Build documentation
+        shell: bash
+        run: |
+          if [ -f pyproject.toml ] && { [ -f uv.lock ] || grep -q '^\[tool\.uv\]' pyproject.toml; }; then
+            uv run zensical build --clean
+          elif [ -f pyproject.toml ]; then
+            echo "pyproject.toml uses a non-uv manager; configure its documented runner before enabling this workflow" >&2
+            exit 1
+          else
+            zensical build --clean
+          fi
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - uses: actions/deploy-pages@v5
+        id: deployment

@@ -1,0 +1,9 @@
+{
+  "azure_devops": [
+    "https://dev.azure.com/example/project/_git/docs",
+    "https://example.visualstudio.com/project/_git/docs"
+  ],
+  "non_azure": [
+    "https://github.com/example/docs.git"
+  ]
+}

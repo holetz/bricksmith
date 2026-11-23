@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "quenching": {
+      "type": "local",
+      "command": [
+        "python3",
+        ".agents/quenching/assets/bin/cq",
+        "specs",
+        "mcp"
+      ],
+      "enabled": true
+    }
+  }
+}

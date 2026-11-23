@@ -1,0 +1,27 @@
+"""Derive proof markers from test-layer paths during pytest collection."""
+from __future__ import annotations
+
+from pathlib import Path
+
+
+# QUENCHING PROOF COLLECTION HOOK: BEGIN
+PROOF_ROOT = Path(__file__).resolve().parent
+LAYER_MARKERS = {
+    "<layer-directory>": "<marker-name>",
+}
+
+
+def pytest_collection_modifyitems(session, config, items):
+    """Attach the declared marker to each collected test from its first path segment."""
+    del session, config
+    for item in items:
+        try:
+            relative = Path(str(item.fspath)).resolve().relative_to(PROOF_ROOT)
+        except ValueError:
+            continue
+        marker = LAYER_MARKERS.get(relative.parts[0]) if relative.parts else None
+        if marker:
+            item.add_marker(marker)
+
+
+# QUENCHING PROOF COLLECTION HOOK: END

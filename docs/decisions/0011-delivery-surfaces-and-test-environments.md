@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0011. Three delivery surfaces and explicit test environments"
+description: "Why the product ships as a library, a template and a plugin, tested against one explicit environment at a time."
+resource: "plugins/**, examples/**, tests/remote/**"
+timestamp: "2026-10-14T13:52:10-03:00"
+audience: both
+authority: current
+---
+
 # 0011. Three delivery surfaces and explicit test environments
 
 - Status: accepted
@@ -44,8 +54,8 @@ workspace without a way to validate capabilities unavailable there.
 
 - [Epic 0001](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md) includes explicit plugin slice BS-18 and expanded
   configuration, template and release tasks.
-- [Delivery contracts](../planning/delivery-contracts.md),
-  [test setup](../development/databricks-tests.md) and [.env.example](../../.env.example) specify
+- [Delivery contracts](../project/delivery-contracts.md),
+  [test setup](../project/databricks-tests.md) and [.env.example](../../.env.example) specify
   the implementation and setup expectations.
 - The current skeleton does not yet implement the test-context loader, remote harness, template
   or plugin. Creating configuration files is preparation, not proof of those capabilities.

@@ -1,0 +1,174 @@
+{
+  "schema": "spec-lifecycle",
+  "version": "3.0.0",
+
+  "filename": {
+    "pattern": "^([a-z0-9]+(?:-[a-z0-9]+)*)\\.md$",
+    "groups": [],
+    "example": "session-tokens.md",
+    "note": "The legacy local filename shape is retained only for stores that still expose paths; the basename is not the spec's identity. The provider-native ID owns identity, and the capture date is the frontmatter's date:, stamped once by new."
+  },
+
+  "frontmatter": {
+    "required": ["title", "date"],
+    "optional": ["verification", "priority", "refined", "approved", "branch", "pr", "reviewed", "merge", "buildCost", "run", "outcome", "workItemType", "epic", "dependsOn", "tags", "assignee", "start", "target", "end"],
+    "verification": ["per-task", "per-section", "end-of-plan"],
+    "outcome": ["done", "abandoned"],
+
+    "records": {
+      "priority": {
+        "fields": ["level", "criticality", "complexity", "date"],
+        "writtenBy": "triage",
+        "writeOnce": false,
+        "label": "spec:ranked",
+        "why": "a human's ranking of this spec against every other one — nothing in the file, the filesystem or git can compute it",
+        "complexity": {
+          "levels": ["low", "medium", "high", "xhigh"],
+          "writtenBy": ["triage", "create", "develop"],
+          "why": "the discrete level of human involvement in defining and building a spec: low composes and continues without interruption, medium keeps the stages in session with section boundaries, high adds an automatic refinement pass, and xhigh adds the premortem lens. The level must change the experience of both halves, or it is vocabulary without effect. Computed by create and re-evaluated by develop, and proposed by triage — no longer a value reserved to human judgment, so the field carries its own writtenBy list under a record whose writtenBy stays triage."
+        }
+      },
+      "refined": {
+        "fields": ["mode", "date"],
+        "writtenBy": "develop",
+        "writeOnce": false,
+        "label": "spec:interrogated",
+        "why": "that a real interrogation happened, and in which mode — an unrefined spec looks identical to a refined one from its sections alone"
+      },
+      "approved": {
+        "fields": ["date", "by"],
+        "by": { "levels": ["human", "session", "low-gear", "orchestrator-forced"] },
+        "writtenBy": "develop, or execute inline",
+        "writeOnce": true,
+        "label": "spec:approved",
+        "why": "that this spec may be built, and on whose authority. `by: human` is the fact no derivation reproduces \u2014 a person read what the spec commits to and said go; it is what the retired backlog/ -> ready/ git mv carried, and an agent can satisfy every section itself, so section completeness can never stand in for it. `by: low-gear` is a DIFFERENT fact, and the field exists to keep the two apart: under the `low` level of the scale the human authorised the MODE rather than this spec, and the pass stamps on that authority with the review relocated to the spec\u0027s own URL in the backend rather than removed. `by: session` is the simple path: the session itself stamps once the trust criterion closes from evidence alone, and `low-gear` stays valid as the historical value of the retired gear. `by: orchestrator-forced` is a THIRD fact: the human invoked an autonomous orchestration (`--autonomous`) and the conductor forced the `low` gear on a spec that was never read by a person; `develop` is the only command that stamps it, at the point it stamps `low-gear`, so the orchestrator itself still writes nothing. An absent `by:` reads as `human` \u2014 nothing else could write this record before the field existed, so no spec needs backfilling. Neither value is ever inferred from the sections, which is why the record outlived the folder it replaced. The `spec:approved` label is projected from the record\u0027s PRESENCE and does not branch on `by:`: the label says the spec carries the record, the field says whose word it is."
+      },
+      "branch": {
+        "fields": ["base", "work"],
+        "writtenBy": "execute, or git:branch",
+        "writeOnce": true,
+        "why": "after a merge, git cannot say what the base was"
+      },
+      "pr": {
+        "fields": ["number", "url", "date"],
+        "writtenBy": "git:pr:create",
+        "writeOnce": false,
+        "why": "a PR opened before it is merged — distinct from `merge.pr`, which is stamped only once the merge already happened. `git:pr:create` stamps this when the provider returns the PR; the review and merge remain separate actions, so this is the record of the open PR until a later run or a human merges it and `merge` is stamped. `specs:conclude` does not open a PR or write this record itself — it reviews and archives the work, then hands off to `git:pr:create`. Restamped if the PR is recreated — closed and reopened, or force-pushed to a fresh number — which is why it carries its own `date` rather than being writeOnce"
+      },
+      "reviewed": {
+        "fields": ["date"],
+        "writtenBy": "conclude",
+        "writeOnce": false,
+        "label": "spec:reviewed",
+        "why": "that a human read the whole branch diff — restamped if the diff changes and is read again"
+      },
+      "merge": {
+        "fields": ["strategy", "subject", "pr"],
+        "strategies": ["merge-commit", "squash", "rebase", "fast-forward"],
+        "anchorless": ["rebase", "fast-forward"],
+        "noPr": ["fast-forward"],
+        "writtenBy": "git:merge",
+        "writeOnce": true,
+        "label": "spec:merged",
+        "why": "the strategy was a choice and the subject names the merge it produced. The subject is known BEFORE the merge, so the record is stamped on the work branch and the merge is the last action of `git:merge`'s own run — nothing is written to the base after it. Under `rebase` and `fast-forward` no merge commit exists, so the subject is an explicit none. A spec archived before this change carries `{strategy, commit}` and is read as-is, never backfilled: a recorded sha describes a commit that exists. `pr:` is optional and absent on every local merge; `gh pr merge --merge|--squash|--rebase` maps onto three of the four strategies, so `pr:` under `fast-forward` — which has no `gh` equivalent — is refused. `specs:conclude` never stamps this record; it stops before the merge and names `git:merge` in its own handoff."
+      },
+      "buildCost": {
+        "fields": ["status", "date", "source", "measurements", "reason"],
+        "status": {"levels": ["measured", "unavailable"]},
+        "writtenBy": "conclude",
+        "writeOnce": false,
+        "why": "observed build usage cannot be reconstructed from task files or git after its explicitly scoped transcript is lost. source carries runtime, transcript/agent scope and measurement coverage; measurements is a compact JSON scalar of per-model observed request counts and input/cache/output totals, plus maxRequestExposureTokens (reported request exposure, never silently relabelled a context peak). Unknown or unavailable telemetry has status unavailable, an empty measurements scalar and a reason, never fabricated zeros or estimates. The declared-reading heuristic is derived output and never belongs in this record. Conclude may replace unavailable with new evidence, writing every field so stale reasons or measurements cannot survive a re-stamp."
+      },
+      "run": {
+        "fields": ["state", "verifier", "by", "date"],
+        "state": {"levels": ["done", "continue", "blocked", "failed"]},
+        "verifier": {"levels": ["pass", "fail", "not-run"]},
+        "by": {"levels": ["verifier"]},
+        "writtenBy": "spec-runner",
+        "writeOnce": false,
+        "why": "the board shows how the last orchestrated step of a spec ended without the orchestrator holding a write grant (spec 1774, decision A): the spec-runner stamps this one short record at the end of its step. NOTE and TOKENS of the return format stay out of the store. Each step rewrites every field, so the record always describes the latest step. `verifier=pass|fail` is refused unless the same call carries `by=verifier` (`sp-run-verdict-unattested`): the verdict is the `verifier` agent's, never the runner's own."
+      },
+      "outcome": {
+        "valuesFrom": "frontmatter.outcome",
+        "writtenBy": "conclude",
+        "writeOnce": true,
+        "why": "a human's verdict on whether the work was completed or dropped"
+      },
+      "note": "Every record here is a fact no derivation reproduces — that is the whole admission test, and it is why there is no `created`, no `phase`, no `ready` and no attempt counter. Most of them are a human's judgment; two are not, and both say so inside their own value rather than by being silent about it: `priority.complexity` is computed by `create` and re-evaluated by `develop` (its own `writtenBy` list is that declaration), and `approved` carries `by:`, which names whether a human said go or the `low` level of the scale authorised the mode and the pass stamped on that authority. The test did not bend — a level's authority is no more derivable from the sections than a person's word is, and a record that says who stamped it is strictly more information than one that left the question unasked. Read top to bottom in `optional` order, the records narrate the spec's history: ranked, interrogated, approved, isolated, PR opened, reviewed, merged, closed. `writeOnce: true` marks an irreversible transition, where rewriting the value would falsify a fact that already happened. `writeOnce: false` marks a standing judgment its OWNING command may restamp — a triage sweep re-ranks, a second interrogation records a new mode, a re-read diff is reviewed again, a recreated PR gets a fresh number — which is why those four carry their own `date`. In neither case may a command other than `writtenBy` touch the record. `label` names the `spec:` label a GitHub or Azure Boards backend mirrors onto the tracker's own issue/work item whenever this record is present — a derived projection recalculated from the document on every write, never read back (see `/docs/standards/architecture/spec-backend.md`). `branch`, `pr` and `outcome` carry none: `branch` narrates `isolated`, which the derived `executing` stage's own `spec:built` label already covers; `pr` narrates a fact the PR itself already shows on its own page, with nothing in the `spec:` vocabulary to say about it that `merge`'s label does not already say once it lands; and there is no closing label — the issue's own open/closed state is the phase."
+    },
+
+    "note": "Frontmatter records human judgments; the filesystem, git and section presence record everything else. `date` is the exception that proves it: it is a fact about the spec rather than a judgment, but no store carries an honest copy of it — the basename stopped holding it, and an issue's created_at is when the issue was made — so it is declared here. No `phase` field: the folder is that fact. No `ready` field: the ten gate sections are that fact (stages.derived.ready). `verification` is OPTIONAL, and absent means the default applied on read — never stamped into a document to make it explicit, because a one-sentence capture has nobody to decide it yet. See `records` for what each optional key holds. `epic` is DEPRECATED: it was the member's back-reference to an epic, and composition now lives only in the composite's `## Tasks` (`— spec:`). The key is ignored and reported once as `sp-epic-key-deprecated`; nothing writes it. `workItemType` is the abstract `workItemTypes` catalogue key a spec was born under (plugin-configuration.md) — resolved once at creation and FIXED thereafter, outside `FIELD_KEYS` because no backend has a faithful native counterpart for the abstract key itself: the concrete name is a write-only projection, never read back, the same argument that keeps `date:` in the document. `tags`, `assignee`, `start` and `target` are STATE, never records: each is written by its own deterministic verb (`cq specs tags|assignee|start|target`), and a backend with a faithful native counterpart stores it there — reassembled into these same keys on read, never reprojected on every write. See docs/standards/architecture/spec-backend.md §A native value is the same fact, or it is not a mapping at all for the test that decides which fields may be mapped this way."
+  },
+
+  "sections": [
+    { "heading": "Problem",                 "order": 1,  "group": "definition", "moment": "decision" },
+    { "heading": "Proposal",                "order": 2,  "group": "definition", "moment": "build" },
+    { "heading": "Out of Scope",            "order": 3,  "group": "definition", "moment": "build" },
+    { "heading": "Impact",                  "order": 4,  "group": "definition", "moment": "build", "parsed": true },
+    { "heading": "Validation",              "order": 5,  "group": "definition", "moment": "close" },
+    { "heading": "Design",                  "order": 6,  "group": "definition", "moment": "build" },
+    { "heading": "Alternatives Considered", "order": 7,  "group": "definition", "moment": "decision" },
+    { "heading": "Open Decisions",          "order": 8,  "group": "definition", "moment": "decision" },
+    { "heading": "Risks",                   "order": 9,  "group": "definition", "moment": "decision" },
+    { "heading": "Handoff",                 "order": 10, "group": "execution",  "moment": "build" },
+    { "heading": "Tasks",                   "order": 11, "group": "execution",  "moment": "build" },
+    { "heading": "Discoveries",             "order": 12, "group": "execution" },
+    { "heading": "Outcome",                 "order": 13, "group": "archive",    "moment": "close" }
+  ],
+
+  "impact": {
+    "parsedSubheading": "Standards this spec will write into /docs/standards/",
+    "acceptedAliases": [
+      "Standards this plan will write into /.docs/standards/",
+      "Standards this spec will write into /.docs/standards/"
+    ],
+    "pathPrefix": "/docs/standards/",
+    "note": "Only this sub-heading is parsed. The siblings name paths the spec never promised to write. acceptedAliases holds retired heading spellings so a spec already carrying one still anchors — including the pre-rename `/.docs/standards/` heading this repo used before `pathPrefix` moved to `/docs/standards/`; the alias is the heading text, not a path prefix, and never widens what `pathPrefix` itself matches."
+  },
+
+  "phases": [
+    {
+      "id": "plans",
+      "folder": "plans",
+      "role": "active",
+      "entryGate": ["Problem"],
+      "warnWhenEmpty": [],
+      "note": "ONE folder for a spec's whole pre-archive life. v3 folded backlog/ + ready/ into it: that split bought exactly one fact no derivation reproduces — that this spec may be built — and that fact is now `approved` in frontmatter, with `by:` naming whose authority it carries. Everything the split implied about completeness is derived (stages.derived.ready)."
+    },
+    {
+      "id": "archive",
+      "folder": "archive",
+      "role": "closed",
+      "entryGate": ["Outcome"],
+      "warnWhenEmpty": [],
+      "note": "Only `Outcome` is gated: an abandoned spec may be promoted straight from plans/, where the ready stage was never reached."
+    }
+  ],
+
+  "promote": {
+    "sequence": ["plans", "archive"],
+    "explicitNone": "- none — <reason>",
+    "filledRule": "An explicit none counts as FILLED. A heading present with an empty body is malformed and refuses. An absent heading before its own gate is legal.",
+    "openTasks": {
+      "done": "refuse",
+      "abandoned": "allow",
+      "forceFlag": "--force",
+      "note": "Promoting to archive with outcome `done` while `- [ ]` boxes remain exits 2 and lists them, overridable with --force. Outcome `abandoned` is always allowed — open tasks are expected when closing out a spec that will not be built."
+    },
+    "note": "One hop, plans/ -> archive/. The backlog/ -> ready/ hop is gone: with one folder there is nothing to move, and the human OK it recorded is now `approved` in frontmatter."
+  },
+
+  "stages": {
+    "resolution": "last-match-wins",
+    "derived": [
+      { "id": "captured",  "phase": "plans", "when": { "filled": ["Problem"] } },
+      { "id": "proposed",  "phase": "plans", "when": { "filled": ["Proposal"] } },
+      { "id": "designed",  "phase": "plans", "when": { "filled": ["Design"] } },
+      { "id": "refined",   "phase": "plans", "when": { "frontmatter": "refined" } },
+      { "id": "ready",     "phase": "plans", "when": { "filled": ["Problem", "Proposal", "Out of Scope", "Impact", "Validation", "Design", "Alternatives Considered", "Open Decisions", "Risks", "Tasks"] }, "warnWhenEmpty": ["Handoff"], "gate": true },
+      { "id": "approved",  "phase": "plans", "when": { "frontmatter": "approved" } },
+      { "id": "executing", "phase": "plans", "when": { "taskState": ["x", "!"] }, "label": "spec:built" }
+    ],
+    "note": "Stages are DERIVED from heading presence and frontmatter, never declared. Declared state is forgotten on edit; derived state regresses automatically when a section empties. `ready` is the v3 replacement for the ready/ folder — the SAME ten sections that were its entryGate, resolved by computation instead of a git mv. It carries `gate: true`, which marks it as the one stage rule that is also a gate: it is the single source of the ready set, so nothing may restate those ten sections elsewhere in this file. It no longer refuses anything — a gate that moves no file is a floor `execute` reports against. `approved` sorts after it because a human may say go before every section is filled (execute asks inline and stamps rather than refusing), and `executing` sorts last because it dominates all of them. `executing`'s own `label: spec:built` is the one stage-level label — anchored on the derived stage rather than the `branch` record so a spec built in place (no isolation, no `branch` record) still reads as built."
+  }
+}

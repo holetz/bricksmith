@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0002. Bundle resources are built natively in Python"
+description: "Why Databricks bundle resources are built natively in Python instead of generated YAML."
+resource: "src/bricksmith/dab/**"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: current
+---
+
 # 0002. Bundle resources are built natively in Python
 
 - Status: accepted
