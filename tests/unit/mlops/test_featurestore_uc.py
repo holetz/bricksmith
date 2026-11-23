@@ -143,8 +143,8 @@ def test_create_training_set_adds_and_excludes_helper_columns(
     with pytest.raises(FeatureStoreError, match="produced twice"):
         uc.create_training_set(
             client,
-            FakeFrame(["account_id", "closing_date", "segment"]),
+            FakeFrame(["account_id", "closing_date", "segment"]),  # type: ignore[arg-type]
             lookups[:1],
             {"fs.t": definition()},
             mode="exact",
-        )  # type: ignore[arg-type]
+        )
