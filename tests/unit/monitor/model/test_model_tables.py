@@ -124,3 +124,10 @@ def test_open_alerts_view_keeps_open_spans_only() -> None:
         db.execute(statement.replace("CREATE OR REPLACE VIEW", "CREATE VIEW"))
     found = db.execute("SELECT alert_id FROM main.model_monitoring_open_alerts ORDER BY 1").fetchall()
     assert found == [("a",), ("c",), ("d",)]
+
+
+def test_lag_columns_are_additive_result_columns() -> None:
+    assert {"lag", "lag_unit"} <= set(SCHEMAS[RESULTS])
+    assert "lag" not in KEYS[RESULTS]
+    row = {"model": "m", "lag": 2, "lag_unit": "months"}
+    assert merge_rows(RESULTS, [], [row])[0]["lag_unit"] == "months"

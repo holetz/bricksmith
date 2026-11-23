@@ -9,8 +9,8 @@ import pytest
 
 from bricksmith.monitor.bins import BinSpec
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.model.config import parse_config
-from bricksmith.monitor.model.engine import MemoryStore, check, data_period, jobs_of
+from bricksmith.monitor.model.config import Lag, parse_config
+from bricksmith.monitor.model.engine import MemoryStore, check, data_period, jobs_of, resolve_data_period, shift_months
 from bricksmith.monitor.reference import Reference
 
 DEV = ["2025-01", "2025-02", "2025-03"]
@@ -264,3 +264,54 @@ def test_trend_check_flags_a_departure_from_the_series() -> None:
     assert result.outcome.open_alerts >= len(trends) and result.outcome.status == "failed"
     untrended = run(predictions(drift=True), trend=None)
     assert {r["trend_status"] for r in untrended.tables["results"]} == {""}
+
+
+def test_default_rows_carry_lag_zero_and_label_lag_is_stamped() -> None:
+    plain = run(predictions()).tables["results"]
+    assert {(r["lag"], r["lag_unit"]) for r in plain} == {(0, "periods")}
+    lagged = run(predictions(), label_lag=1).tables["results"]
+    assert {r["lag"] for r in pick(lagged, family="discrimination")} == {1}
+    assert {r["lag"] for r in pick(lagged, family="score_psi")} == {0}
+
+
+def test_lags_are_per_metric_and_calendar_lags_never_shift_over_a_gap() -> None:
+    rows = [r for r in predictions() if r["month"] != "2025-07"]
+    results = run(rows, lags={"auc": {"months": 1}, "gini": 1, "calibration": {"months": 2}}).tables["results"]
+    ks = pick(results, metric="ks", segment="", monitoring_period="2025-08")[0]
+    assert ks["data_period"] == "2025-08" and ks["lag"] == 0 and ks["value"] is not None
+    gini = pick(results, metric="gini", segment="", monitoring_period="2025-08")[0]
+    assert gini["data_period"] == "2025-06" and gini["lag"] == 1 and gini["lag_unit"] == "periods"
+    auc = pick(results, metric="auc", segment="", monitoring_period="2025-08")[0]
+    assert auc["data_period"] == "" and auc["value"] is None and auc["reason"] == "data_period_unavailable"
+    assert (auc["lag"], auc["lag_unit"]) == (1, "months")
+    auc_next = pick(results, metric="auc", segment="", monitoring_period="2025-09")[0]
+    assert auc_next["data_period"] == "2025-08" and auc_next["value"] is not None
+    brier = pick(results, metric="brier", segment="", monitoring_period="2025-09")[0]
+    assert brier["data_period"] == "" and brier["value"] is None and brier["lag"] == 2
+
+
+def test_calendar_lag_equals_the_observed_lag_when_nothing_is_missing() -> None:
+    observed = run(predictions(), lags={"discrimination": 1}).tables["results"]
+    calendar = run(predictions(), lags={"discrimination": {"months": 1}}).tables["results"]
+    for metric in ("ks", "auc", "gini"):
+        for period in PROD:
+            a = pick(observed, metric=metric, segment="", monitoring_period=period)[0]
+            b = pick(calendar, metric=metric, segment="", monitoring_period=period)[0]
+            assert (a["data_period"], a["value"]) == (b["data_period"], b["value"])
+
+
+def test_shift_months_keeps_the_period_format() -> None:
+    assert shift_months("2025-03", 12) == "2024-03" and shift_months("2025-01", 1) == "2024-12"
+    assert shift_months("202503", 3) == "202412" and shift_months("2025-03", 0) == "2025-03"
+    assert shift_months("2025-03-31", 1) == "2025-02-28" and shift_months("20240331", 1) == "20240229"
+    assert shift_months("2025-02-30", 1) is None and shift_months("2025-13", 1) is None
+    assert shift_months("Q1-2025", 1) is None and shift_months("", 1) is None
+
+
+def test_resolve_data_period_by_unit() -> None:
+    periods = ["2025-01", "2025-03", "2025-04"]
+    assert resolve_data_period(periods, "2025-04", Lag(1, "periods")) == "2025-03"
+    assert resolve_data_period(periods, "2025-04", Lag(1, "months")) == "2025-03"
+    assert resolve_data_period(periods, "2025-03", Lag(1, "months")) is None
+    assert resolve_data_period(["a", "b"], "b", Lag(1, "months")) is None
+    assert resolve_data_period(periods, "2025-03", Lag(0, "months")) == "2025-03"

@@ -12,14 +12,16 @@ series of lights is replayed into persistence and trend alerts with the shared c
 
 from __future__ import annotations
 
+import calendar
 import contextlib
 import dataclasses
 import hashlib
 import math
+import re
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from bricksmith.monitor.adapter import is_rows, measure
@@ -35,6 +37,7 @@ from bricksmith.monitor.model.config import (
     FEATURE_CSI,
     GRADE_PSI,
     LABEL_FAMILIES,
+    MONTHS,
     OUT_OF_TIME,
     SCORE_PSI,
     VOLUMETRY,
@@ -49,7 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
     from bricksmith.monitor.measure import Measurement
-    from bricksmith.monitor.model.config import ModelMonitorConfig, Sample
+    from bricksmith.monitor.model.config import Lag, ModelMonitorConfig, Sample
 
 PASSED = "passed"
 WARNED = "warned"
@@ -355,6 +358,52 @@ def data_period(periods: Sequence[str], monitoring: str, lag: int) -> str | None
     return periods[index] if index >= 0 else None
 
 
+_PERIOD_FORMATS = (
+    (re.compile(r"(\d{4})-(\d{2})-(\d{2})"), "{:04d}-{:02d}-{:02d}"),
+    (re.compile(r"(\d{4})-(\d{2})"), "{:04d}-{:02d}"),
+    (re.compile(r"(\d{4})(\d{2})(\d{2})"), "{:04d}{:02d}{:02d}"),
+    (re.compile(r"(\d{4})(\d{2})"), "{:04d}{:02d}"),
+)
+
+
+def shift_months(text: str, months: int) -> str | None:
+    """Return the period text ``months`` calendar months before ``text``, in the same format.
+
+    Understands ``YYYY-MM-DD``, ``YYYY-MM``, ``YYYYMMDD`` and ``YYYYMM``; the day clamps to the month's last day.
+    Any other text (or an impossible date) is ``None``.
+    """
+    for pattern, template in _PERIOD_FORMATS:
+        found = pattern.fullmatch(text)
+        if not found:
+            continue
+        year, month, *rest = (int(g) for g in found.groups())
+        if not 1 <= month <= 12:  # noqa: PLR2004 - months of a year
+            return None
+        index = year * 12 + month - 1 - months
+        target_year, target_month = divmod(index, 12)
+        if not rest:
+            return template.format(target_year, target_month + 1)
+        try:
+            date(year, month, rest[0])
+        except ValueError:
+            return None
+        last = calendar.monthrange(target_year, target_month + 1)[1]
+        return template.format(target_year, target_month + 1, min(rest[0], last))
+    return None
+
+
+def resolve_data_period(periods: Sequence[str], monitoring: str, lag: Lag) -> str | None:
+    """Return the data period of ``monitoring`` under ``lag``, or ``None`` when it is not available.
+
+    Observed lags count the periods present in ``periods``; calendar lags move whole months and need that period to
+    be present, so a missing month is never replaced by a neighbour.
+    """
+    if lag.unit != MONTHS:
+        return data_period(periods, monitoring, lag.amount)
+    target = shift_months(monitoring, lag.amount)
+    return target if target is not None and target in set(periods) else None
+
+
 # --- binning --------------------------------------------------------------------------------------------------------
 
 
@@ -640,8 +689,8 @@ class _Context:
     control: Mapping[tuple[str, str, str], Baseline] = field(default_factory=dict)
 
 
-def _result(ctx: _Context, item: Item, family: str, version: str, periods: tuple[str, str]) -> dict[str, Any]:
-    monitoring, data = periods
+def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[str, str, Lag]) -> dict[str, Any]:
+    monitoring, data, lag = when
     config = ctx.config
     limits = config.limits_for(item.metric)
     minimum = 0 if item.metric in VOLUME_METRICS else config.min_rows
@@ -656,7 +705,8 @@ def _result(ctx: _Context, item: Item, family: str, version: str, periods: tuple
     )
     return {
         "model": config.model, "model_version": version, "run_id": ctx.run_id, "monitoring_period": monitoring,
-        "data_period": data, "period_date": period_date(monitoring), "segment": item.segment,
+        "data_period": data, "lag": lag.amount, "lag_unit": lag.unit, "period_date": period_date(monitoring),
+        "segment": item.segment,
         "column": item.column, "metric": item.metric, "family": family, "value": item.value,
         "light": light.status, "light_rank": rank(light.status), "reason": item.reason or light.reason,
         "green_limit": limits.green if limits else None, "red_limit": limits.red if limits else None,
@@ -813,6 +863,39 @@ class _Window:
     errors: int = 0
 
 
+def _measure_family(  # noqa: PLR0913, PLR0917 - one argument per thing the family needs
+    ctx: _Context,
+    measurer: _Measurer,
+    job: tuple[str, str],
+    current: tuple[str, str, Frame],
+    history: tuple[Sequence[str], Frame],
+    out: _Window,
+) -> None:
+    """Measure one family of one monitoring period; metrics sharing a data period are measured in one pass."""
+    family, column = job
+    period, version, frame = current
+    observed, monitored = history
+    by_data: dict[str | None, list[tuple[str, Lag]]] = {}
+    for metric in FAMILY_METRICS[family]:
+        lag = ctx.config.lag_for(family, metric)
+        by_data.setdefault(resolve_data_period(observed, period, lag), []).append((metric, lag))
+    for lagged, metrics in by_data.items():
+        names = {metric for metric, _ in metrics}
+        if lagged is None:
+            items = [Item("", column, m, None, 0, "data_period_unavailable") for m in sorted(names)]
+            failed = 0
+        else:
+            rows = frame if lagged == period else monitored.select(column=ctx.config.period, keep={lagged})
+            items, failed = measurer.run(family, column, rows, 1)
+            items = [i for i in items if i.metric in names]
+        out.errors += failed
+        lags = dict(metrics)
+        for item in items:
+            row = _result(ctx, item, family, version, (period, lagged or "", lags[item.metric]))
+            out.results.append(row)
+            out.details += _detail_rows(row, item)
+
+
 def _measure_window(ctx: _Context, measurer: _Measurer, jobs: Sequence[tuple[str, str]], monitored: Frame) -> _Window:
     """Measure every job in each monitoring period; label families read the lagged data period."""
     config = ctx.config
@@ -823,25 +906,10 @@ def _measure_window(ctx: _Context, measurer: _Measurer, jobs: Sequence[tuple[str
     out = _Window(observed[-config.max_periods :])
     for period in out.periods:
         current = monitored.select(column=config.period, keep={period})
-        lagged = data_period(observed, period, config.label_lag)
         version = _version(current, config)
         out.versions.add(version)
         for family, column in jobs:
-            periods = (period, period)
-            if family not in LABEL_FAMILIES:
-                items, failed = measurer.run(family, column, current, 1)
-            elif lagged is None:
-                periods = (period, "")
-                items = [Item("", column, m, None, 0, "data_period_unavailable") for m in FAMILY_METRICS[family]]
-                failed = 0
-            else:
-                periods = (period, lagged)
-                items, failed = measurer.run(family, column, monitored.select(column=config.period, keep={lagged}), 1)
-            out.errors += failed
-            for item in items:
-                row = _result(ctx, item, family, version, periods)
-                out.results.append(row)
-                out.details += _detail_rows(row, item)
+            _measure_family(ctx, measurer, (family, column), (period, version, current), (observed, monitored), out)
     return out
 
 
@@ -958,5 +1026,7 @@ __all__ = [
     "monitoring_frame",
     "open_counts",
     "reference_frame",
+    "resolve_data_period",
     "run_record",
+    "shift_months",
 ]
