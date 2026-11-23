@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from bricksmith.monitor.model.alerts import replay_alerts, trusted
 from bricksmith.monitor.model.config import parse_config
 
@@ -57,3 +59,49 @@ def test_new_limits_recolor_stored_values_without_measuring() -> None:
     small = [result("r1", "2026-01", 0.9, "red", rows=3)]
     relit, none = replay_alerts(small, RUNS, config=config)
     assert relit[0]["light"] == "insufficient_volume" and none == []
+
+
+def _config(**changes: Any) -> Any:  # noqa: ANN401
+    return parse_config({
+        "model": "m", "period": "month", "score": "score", "min_rows": 0,
+        "references": {"development": {"start": "a", "end": "b"}, "out_of_time": {"start": "c", "end": "d"}},
+        **changes,
+    })  # fmt: skip
+
+
+def test_relative_and_control_limits_recolor_from_stored_baselines() -> None:
+    stored = [
+        result("r1", "2026-01", 0.32, "no_rule", metric="ks", development_value=0.40, out_of_time_value=0.30,
+               baseline_mean=0.40, baseline_sd=0.02, baseline_points=5),
+        result("r1", "2026-02", 0.36, "no_rule", metric="ks", development_value=0.40, out_of_time_value=0.30),
+    ]  # fmt: skip
+    relative = {"kind": "relative", "green": -0.15, "red": -0.30, "direction": "lower"}
+    rows, _ = replay_alerts(stored, RUNS, config=_config(limits={"ks": relative}))
+    first = next(r for r in rows if r["monitoring_period"] == "2026-01")
+    assert first["light"] == "yellow" and first["compared_value"] == pytest.approx(-0.2)
+    assert first["limit_kind"] == "relative" and first["limit_reference"] == "development"
+    rows, _ = replay_alerts(stored, RUNS, config=_config(limits={"ks": {**relative, "reference": "out_of_time"}}))
+    assert {r["light"] for r in rows} == {"green"}
+    chart = {"kind": "control", "green": -2, "red": -3, "direction": "lower"}
+    rows, _ = replay_alerts(stored, RUNS, config=_config(limits={"ks": chart}))
+    by_period = {r["monitoring_period"]: r for r in rows}
+    assert by_period["2026-01"]["light"] == "red" and by_period["2026-01"]["compared_value"] == pytest.approx(-4.0)
+    assert by_period["2026-02"]["light"] == "no_baseline"  # measured before a control baseline was stored
+    rows, _ = replay_alerts(stored, RUNS, config=_config(limits={"ks": chart}, control_min_points=6))
+    assert next(r for r in rows if r["monitoring_period"] == "2026-01")["light"] == "no_baseline"
+
+
+def test_replay_rebuilds_persistence_and_trend_spans() -> None:
+    runs = [{"run_id": "r", "model": "m", "status": "success", "finished_at": "2026-09-01"}]
+    months = [f"2026-0{i}" for i in range(1, 8)]
+    values = [0.01, 0.01, 0.01, 0.01, 0.30, 0.30, 0.30]
+    stored = [result("r", p, v, "green", direction="higher") for p, v in zip(months, values, strict=True)]
+    rows, alerts = replay_alerts(stored, runs, config=_config(trend={"window": 4, "min_points": 3}), created_at="t")
+    assert {r["light"] for r in rows if r["value"] == 0.30} == {"red"}
+    spans = {a["kind"]: a for a in alerts if a["kind"] != "light"}
+    assert spans["persistence"]["severity"] == "critical" and spans["persistence"]["opened_period"] == "2026-06"
+    assert spans["trend"]["opened_period"] == "2026-05" and spans["trend"]["state"] == "open"
+    assert len({a["alert_id"] for a in alerts}) == len(alerts)
+    plain_rows, plain = replay_alerts(rows, runs)  # stored lights and trends replay with the default policy
+    assert [a["alert_id"] for a in plain] == [a["alert_id"] for a in alerts]
+    assert plain_rows == rows

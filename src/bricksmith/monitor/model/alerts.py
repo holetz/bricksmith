@@ -2,15 +2,18 @@
 
 Stored result rows already carry each value and its light. :func:`replay_alerts` keeps the rows of the latest
 finished run per model, model version and monitoring period (the rule the dashboard views apply), optionally
-recolors the stored values with a declaration's current limits, and rebuilds the alert rows.
+recolors the stored values with a declaration's current limits (relative and control limits read the stored
+reference values and baselines), re-checks their trend, and rebuilds the light, persistence and trend alerts.
 """
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
-from bricksmith.monitor.limits import classify, rank
-from bricksmith.monitor.model.engine import VOLUME_METRICS, alert_rows
+from bricksmith.monitor.limits import CONTROL, RELATIVE, judge, rank
+from bricksmith.monitor.model.config import OUT_OF_TIME
+from bricksmith.monitor.model.engine import VOLUME_METRICS, alert_rows, apply_trend
 from bricksmith.monitor.model.tables import FINISHED
 
 if TYPE_CHECKING:
@@ -34,15 +37,47 @@ def trusted(results: Iterable[Mapping[str, Any]], runs: Iterable[Mapping[str, An
     ]
 
 
+def _baseline(row: Mapping[str, Any], config: ModelMonitorConfig) -> tuple[float | None, float | None, int | None]:
+    """Return ``(baseline, spread, points)`` for the current limits of ``row`` from its stored columns."""
+    limits = config.limits_for(str(row["metric"]))
+    if limits is not None and limits.kind == RELATIVE:
+        column = "out_of_time_value" if limits.reference == OUT_OF_TIME else "development_value"
+        return row.get(column), None, None
+    if limits is not None and limits.kind == CONTROL:
+        points = row.get("baseline_points")
+        enough = points is not None and int(points) >= config.control_min_points
+        mean, sd = (row.get("baseline_mean"), row.get("baseline_sd")) if enough else (None, None)
+        return mean, sd, None if points is None else int(points)
+    return None, None, None
+
+
 def relight(row: Mapping[str, Any], config: ModelMonitorConfig) -> dict[str, Any]:
-    """Return ``row`` colored again with the declaration's current limits (the stored value is kept as is)."""
+    """Return ``row`` colored again with the declaration's current limits (the stored value is kept as is).
+
+    A control limit needs the baseline a run stored for that metric; a row measured before it was declared is
+    ``no_baseline``.
+    """
     limits = config.limits_for(str(row["metric"]))
     minimum = 0 if row["metric"] in VOLUME_METRICS else config.min_rows
     reason = str(row.get("reason") or "")
     value = row.get("value")
-    light = classify(value, limits, count=int(row.get("rows") or 0), min_count=minimum, reason=reason)
+    baseline, spread, points = _baseline(row, config)
+    control = limits is not None and limits.kind == CONTROL
+    light, compared = judge(
+        value, limits, baseline=baseline, spread=spread, count=int(row.get("rows") or 0), min_count=minimum,
+        reason=reason,
+    )  # fmt: skip
     return {
         **row,
+        "limit_kind": limits.kind if limits else "",
+        "limit_reference": limits.reference if limits else "",
+        "compared_value": compared if compared is None or math.isfinite(compared) else None,
+        "baseline_mean": baseline if control else None,
+        "baseline_sd": spread if control else None,
+        "baseline_points": points if control else None,
+        "trend_status": "",
+        "trend_expected": None,
+        "trend_deviation": None,
         "light": light.status,
         "light_rank": rank(light.status),
         "reason": reason or light.reason,
@@ -59,11 +94,18 @@ def replay_alerts(
     config: ModelMonitorConfig | None = None,
     created_at: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return ``(results, alerts)`` rebuilt from stored rows of finished runs; ``config`` recolors with new limits."""
+    """Return ``(results, alerts)`` rebuilt from stored rows of finished runs.
+
+    ``config`` recolors the rows of its model with its limits, re-checks their trend and replays them with its
+    persistence policy; without it the stored lights and trend statuses are replayed with the default policy.
+    """
     rows = trusted(results, runs)
-    if config is not None:
-        rows = [relight(r, config) if r["model"] == config.model else r for r in rows]
-    return rows, alert_rows(rows, created_at)
+    if config is None:
+        return rows, alert_rows(rows, created_at)
+    mine = [relight(r, config) for r in rows if r["model"] == config.model]
+    apply_trend(mine, config)
+    others = [r for r in rows if r["model"] != config.model]
+    return mine + others, alert_rows(mine, created_at, config.persistence) + alert_rows(others, created_at)
 
 
 __all__ = ["relight", "replay_alerts", "trusted"]

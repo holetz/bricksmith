@@ -4,6 +4,10 @@
 the rows to write per table, the run record included. Every metric family is measured in isolation, so a family
 that raises marks the run ``partial`` and leaves the others intact. Metrics come from the shared core
 (:func:`bricksmith.monitor.measure`), so rows and Spark DataFrames give identical results.
+
+Each value is judged through its limit kind (absolute, relative to a reference, or control-chart distance from
+the per-period values of the development and out-of-time references), checked against its trend, and every
+series of lights is replayed into persistence and trend alerts with the shared core.
 """
 
 from __future__ import annotations
@@ -11,6 +15,8 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import hashlib
+import math
+import statistics
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -19,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from bricksmith.monitor.adapter import is_rows, measure
 from bricksmith.monitor.bins import BinSpec, category_text, count_bins, fit_bins, is_null
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import RED, YELLOW, classify, rank
+from bricksmith.monitor.limits import COLORS, CONTROL, RED, RELATIVE, YELLOW, judge, rank
 from bricksmith.monitor.measure import OK, segment_name
 from bricksmith.monitor.model.config import (
     CALIBRATION,
@@ -34,8 +40,10 @@ from bricksmith.monitor.model.config import (
     VOLUMETRY,
 )
 from bricksmith.monitor.model.tables import ALERTS, BINNINGS, DETAILS, FAILED, PARTIAL, RESULTS, RUNS, SUCCESS
+from bricksmith.monitor.persistence import CRITICAL, OPEN, PersistencePolicy, alert_spans
 from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.stability.profile import period_date, period_text
+from bricksmith.monitor.trend import trend_check
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -48,6 +56,9 @@ WARNED = "warned"
 GATE_FAILED = "failed"
 ERROR = "error"
 VOLUME_METRICS = frozenset({"row_count", "volume_ratio"})
+LIGHT = "light"
+PERSISTENCE = "persistence"
+TREND = "trend"
 _REASON_LIMIT = 300
 
 
@@ -100,6 +111,8 @@ class Outcome:
     errors: int = 0
     message: str = ""
     output: str = ""
+    open_alerts: int = 0
+    critical_alerts: int = 0
 
     @property
     def failed(self) -> bool:
@@ -109,11 +122,13 @@ class Outcome:
     def to_dict(self) -> dict[str, Any]:
         """Return the serializable form."""
         return {
+            "critical_alerts": self.critical_alerts,
             "errors": self.errors,
             "latest_period": self.latest_period,
             "message": self.message,
             "model": self.model,
             "model_version": self.model_version,
+            "open_alerts": self.open_alerts,
             "output": self.output,
             "periods": self.periods,
             "red": self.red,
@@ -570,6 +585,44 @@ def _reference_values(
     return values, errors
 
 
+Key = tuple[str, str, str]
+Baseline = tuple[float | None, float | None, int]
+
+
+def control_baselines(
+    measurer: _Measurer, jobs: Sequence[tuple[str, str]], frames: Sequence[Frame | None]
+) -> tuple[dict[Key, Baseline], int]:
+    """Return ``(mean, sd, points)`` per control-judged result key from per-period values of the reference frames.
+
+    Every observed period of every reference (development, then out-of-time) is one point. Fewer than
+    ``control_min_points`` finite points leave the mean and standard deviation unset (the light is then
+    ``no_baseline``).
+    """
+    config = measurer.config
+    wanted = config.control_metrics()
+    if not wanted:
+        return {}, 0
+    points: dict[Key, list[float]] = {}
+    errors = 0
+    chosen = [(f, c) for f, c in jobs if set(FAMILY_METRICS[f]) & wanted]
+    for frame in (f for f in frames if f is not None):
+        for period in frame.periods(config.period):
+            current = frame.select(column=config.period, keep={period})
+            for family, column in chosen:
+                items, failed = measurer.run(family, column, current, 1)
+                errors += failed
+                for item in items:
+                    if item.metric in wanted and item.value is not None and math.isfinite(item.value):
+                        points.setdefault((item.segment, item.column, item.metric), []).append(item.value)
+    baselines: dict[Key, Baseline] = {}
+    for key, values in points.items():
+        if len(values) < config.control_min_points:
+            baselines[key] = (None, None, len(values))
+        else:
+            baselines[key] = (statistics.fmean(values), statistics.stdev(values), len(values))
+    return baselines, errors
+
+
 def _version(frame: Frame, config: ModelMonitorConfig) -> str:
     if config.model_version_column:
         return ",".join(frame.texts(config.model_version_column))
@@ -584,6 +637,7 @@ class _Context:
     now: str
     development: Mapping[tuple[str, str, str], float | None]
     out_of_time: Mapping[tuple[str, str, str], float | None]
+    control: Mapping[tuple[str, str, str], Baseline] = field(default_factory=dict)
 
 
 def _result(ctx: _Context, item: Item, family: str, version: str, periods: tuple[str, str]) -> dict[str, Any]:
@@ -591,8 +645,15 @@ def _result(ctx: _Context, item: Item, family: str, version: str, periods: tuple
     config = ctx.config
     limits = config.limits_for(item.metric)
     minimum = 0 if item.metric in VOLUME_METRICS else config.min_rows
-    light = classify(item.value, limits, count=item.rows, min_count=minimum, reason=item.reason)
     key = (item.segment, item.column, item.metric)
+    control = limits is not None and limits.kind == CONTROL
+    mean, sd, points = ctx.control.get(key, (None, None, 0)) if control else (None, None, None)
+    baseline = mean
+    if limits is not None and limits.kind == RELATIVE:
+        baseline = (ctx.out_of_time if limits.reference == OUT_OF_TIME else ctx.development).get(key)
+    light, compared = judge(
+        item.value, limits, baseline=baseline, spread=sd, count=item.rows, min_count=minimum, reason=item.reason
+    )
     return {
         "model": config.model, "model_version": version, "run_id": ctx.run_id, "monitoring_period": monitoring,
         "data_period": data, "period_date": period_date(monitoring), "segment": item.segment,
@@ -602,7 +663,38 @@ def _result(ctx: _Context, item: Item, family: str, version: str, periods: tuple
         "direction": limits.direction if limits else "", "rows": item.rows, "reference": DEVELOPMENT,
         "development_value": ctx.development.get(key), "out_of_time_value": ctx.out_of_time.get(key),
         "binning_version": ctx.binning.version, "computed_at": ctx.now,
+        "limit_kind": limits.kind if limits else "", "limit_reference": limits.reference if limits else "",
+        "compared_value": _finite(compared), "baseline_mean": mean, "baseline_sd": sd, "baseline_points": points,
+        "trend_status": "", "trend_expected": None, "trend_deviation": None,
     }  # fmt: skip
+
+
+def _finite(value: float | None) -> float | None:
+    return value if value is None or math.isfinite(value) else None
+
+
+def apply_trend(results: Sequence[dict[str, Any]], config: ModelMonitorConfig) -> None:
+    """Fill the trend columns of colored results of ``trend_metrics``, series by series in period order.
+
+    A series is one model version, segment, column and metric; the trend judges the compared value (the value
+    itself for absolute limits) in the direction its limits call worse.
+    """
+    policy = config.trend
+    if policy is None:
+        return
+    history: dict[tuple[str, ...], list[float]] = {}
+    for row in sorted(results, key=lambda r: str(r["monitoring_period"])):
+        current = row.get("compared_value")
+        if row["metric"] not in config.trend_metrics or not row.get("direction") or row["light"] not in COLORS:
+            continue
+        if current is None or not math.isfinite(current):
+            continue
+        key = _series(row)
+        found = trend_check(history.setdefault(key, []), current, policy, str(row["direction"]))
+        history[key].append(current)
+        row.update(
+            trend_status=found.status, trend_expected=_finite(found.expected), trend_deviation=_finite(found.deviation)
+        )
 
 
 def _detail_rows(result: Mapping[str, Any], item: Item) -> list[dict[str, Any]]:
@@ -611,10 +703,64 @@ def _detail_rows(result: Mapping[str, Any], item: Item) -> list[dict[str, Any]]:
     return [{**{k: result[k] for k in keys}, **d} for d in item.details]
 
 
-def alert_rows(results: Iterable[Mapping[str, Any]], created_at: str) -> list[dict[str, Any]]:
-    """Return one alert per red or yellow result (severity ``critical`` for red, ``warning`` for yellow)."""
+def _series(row: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(str(row.get(k) or "") for k in ("model", "model_version", "segment", "column", "metric"))
+
+
+def _span_alerts(
+    results: Sequence[Mapping[str, Any]], persistence: PersistencePolicy, created_at: str
+) -> list[dict[str, Any]]:
+    """Replay each series' lights (persistence) and trend statuses (trend) into alert spans."""
+    trend_policy = PersistencePolicy(
+        yellow=0, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
+    )
+    series: dict[tuple[str, ...], list[Mapping[str, Any]]] = {}
+    for row in results:
+        if row.get("direction"):
+            series.setdefault(_series(row), []).append(row)
     out: list[dict[str, Any]] = []
-    for r in results:
+    for key in sorted(series):
+        rows = {str(r["monitoring_period"]): r for r in series[key]}
+        for kind, field_name, policy in ((PERSISTENCE, "light", persistence), (TREND, "trend_status", trend_policy)):
+            pairs = [(p, str(r.get(field_name) or "skipped")) for p, r in rows.items()]
+            for span in alert_spans(pairs, policy):
+                last = rows[span.last_period]
+                model, version, segment, column, metric = key
+                identity = "|".join((*key, kind, span.opened))
+                verb = "departs from its trend" if kind == TREND else "is persistently off"
+                where = f" [{segment}]" if segment else ""
+                subject = f" {column}" if column else ""
+                value = last.get("value")
+                out.append({
+                    "model": model, "model_version": version, "run_id": last["run_id"],
+                    "alert_id": hashlib.sha256(identity.encode()).hexdigest()[:16],
+                    "monitoring_period": span.last_period, "data_period": last.get("data_period"),
+                    "segment": segment, "column": column, "metric": metric, "family": last.get("family") or "",
+                    "light": last.get("light"), "severity": span.severity,
+                    "severity_rank": 2 if span.severity == CRITICAL else 1, "value": value, "created_at": created_at,
+                    "message": f"{model} {metric}{subject}{where} {verb}: {span.severity} since {span.opened}, "
+                               f"last {span.last_status} in {span.last_period}"
+                               + (f" (value {value:.4g})" if value is not None else ""),
+                    "kind": kind, "state": span.state, "opened_period": span.opened,
+                    "escalated_period": span.escalated, "closed_period": span.closed,
+                    "last_period": span.last_period, "flagged_periods": len(span.flagged),
+                    "recurrence": span.recurrence,
+                })  # fmt: skip
+    return out
+
+
+def alert_rows(
+    results: Iterable[Mapping[str, Any]], created_at: str, persistence: PersistencePolicy | None = None
+) -> list[dict[str, Any]]:
+    """Return the alerts of ``results``: one ``light`` alert per red or yellow result, then the alert spans.
+
+    A light alert is ``critical`` for red and ``warning`` for yellow. Persistence spans replay each series' lights
+    with ``persistence`` (the default policy when ``None``); trend spans replay its trend statuses, one red trend
+    opening a critical alert.
+    """
+    rows = list(results)
+    out: list[dict[str, Any]] = []
+    for r in rows:
         if r.get("light") not in (RED, YELLOW):
             continue
         identity = "|".join(str(r.get(k) or "") for k in ("model", "model_version", "metric", "column", "segment",
@@ -631,16 +777,28 @@ def alert_rows(results: Iterable[Mapping[str, Any]], created_at: str) -> list[di
             "severity_rank": 2 if red else 1, "value": r.get("value"), "created_at": created_at,
             "message": f"{r['model']} {r['metric']}{subject}{where} {r['monitoring_period']}: "
                        f"{r.get('value'):.4g} is {r['light']}",
+            "kind": LIGHT, "state": OPEN, "opened_period": r["monitoring_period"], "escalated_period": "",
+            "closed_period": "", "last_period": r["monitoring_period"], "flagged_periods": 1, "recurrence": False,
         })  # fmt: skip
-    return out
+    return out + _span_alerts(rows, persistence or PersistencePolicy(), created_at)
 
 
-def _gate(config: ModelMonitorConfig, red: int, yellow: int) -> list[str]:
+def open_counts(alerts: Iterable[Mapping[str, Any]]) -> tuple[int, int]:
+    """Return ``(open, critical)`` counts of the open persistence and trend alerts."""
+    spans = [a for a in alerts if a.get("kind") in (PERSISTENCE, TREND) and a.get("state") == OPEN]
+    return len(spans), sum(1 for a in spans if a.get("severity") == CRITICAL)
+
+
+def _gate(config: ModelMonitorConfig, red: int, yellow: int, open_alerts: int, critical: int) -> list[str]:
     reasons = []
     if "red" in config.gate.fail_on and red:
         reasons.append(f"{red} red result(s)")
     if "yellow" in config.gate.fail_on and red + yellow:
         reasons.append(f"{red + yellow} yellow or red result(s)")
+    if "critical" in config.gate.fail_on and critical:
+        reasons.append(f"{critical} open critical alert(s)")
+    if "alert" in config.gate.fail_on and open_alerts:
+        reasons.append(f"{open_alerts} open alert(s)")
     return reasons
 
 
@@ -710,25 +868,28 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     oot = reference_frame(frame, config, config.out_of_time) if config.out_of_time else None
     dev_values, errors = _reference_values(measurer, jobs, development)
     oot_values, oot_errors = _reference_values(measurer, jobs, oot)
-    errors += oot_errors
-    ctx = _Context(config, binning, run_id, started, dev_values, oot_values)
+    control, control_errors = control_baselines(measurer, jobs, (development, oot))
+    errors += oot_errors + control_errors
+    ctx = _Context(config, binning, run_id, started, dev_values, oot_values, control)
     measured = _measure_window(ctx, measurer, jobs, monitoring_frame(frame, config))
     window, results, errors = measured.periods, measured.results, errors + measured.errors
+    apply_trend(results, config)
     latest = window[-1]
     in_latest = [r for r in results if r["monitoring_period"] == latest]
     red = sum(1 for r in in_latest if r["light"] == RED)
     yellow = sum(1 for r in in_latest if r["light"] == YELLOW)
-    alerts = alert_rows(results, started)
-    reasons = _gate(config, red, yellow)
-    status = GATE_FAILED if reasons else WARNED if red + yellow else PASSED
+    alerts = alert_rows(results, started, config.persistence)
+    open_alerts, critical = open_counts(alerts)
+    reasons = _gate(config, red, yellow, open_alerts, critical)
+    status = GATE_FAILED if reasons else WARNED if red + yellow + open_alerts else PASSED
     run_status = PARTIAL if errors else SUCCESS
-    message = f"{config.model} {latest}: {red} red, {yellow} yellow, {errors} error(s)" + (
+    message = f"{config.model} {latest}: {red} red, {yellow} yellow, {open_alerts} open alert(s), {errors} error(s)" + (
         f"; gate failed on {'; '.join(reasons)}" if reasons else ""
     )
     version_text = ",".join(sorted(v for v in measured.versions if v))
     outcome = Outcome(
         config.model, status, run_status, version_text, latest, len(window), red, yellow, errors, message,
-        config.output,
+        config.output, open_alerts, critical,
     )  # fmt: skip
     run_row = run_record(
         config, run_id=run_id, task_id=task_id, physical=physical, input_version=input_version, binning=binning,
@@ -760,7 +921,8 @@ def run_record(  # noqa: PLR0913 - one keyword per run record field
         "latest_period": outcome.latest_period, "periods": outcome.periods,
         "status": outcome.run_status or FAILED, "gate": ",".join(config.gate.fail_on), "red": outcome.red,
         "yellow": outcome.yellow, "errors": outcome.errors, "alerts": alerts, "message": outcome.message,
-        "started_at": started, "finished_at": _now(),
+        "started_at": started, "finished_at": _now(), "open_alerts": outcome.open_alerts,
+        "critical_alerts": outcome.critical_alerts,
     }  # fmt: skip
 
 
@@ -772,8 +934,11 @@ def error_outcome(model: str, error: BaseException, output: str = "") -> Outcome
 __all__ = [
     "ERROR",
     "GATE_FAILED",
+    "LIGHT",
     "OUT_OF_TIME",
     "PASSED",
+    "PERSISTENCE",
+    "TREND",
     "WARNED",
     "CheckResult",
     "Item",
@@ -783,12 +948,15 @@ __all__ = [
     "Store",
     "active_binning",
     "alert_rows",
+    "apply_trend",
     "check",
+    "control_baselines",
     "data_period",
     "error_outcome",
     "frame_of",
     "jobs_of",
     "monitoring_frame",
+    "open_counts",
     "reference_frame",
     "run_record",
 ]
