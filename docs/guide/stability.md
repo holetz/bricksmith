@@ -17,11 +17,11 @@ and the limits, trend and persistence modules in `bricksmith.monitor`.
     metadata={
         "write": "overwrite",
         "stability": {
-            "period": "month",                       # required: the column that splits the table into periods
-            "exclude": ["sale_id"],                  # never monitored (period, segments and weight never are)
+            "period": "month",  # required: the column that splits the table into periods
+            "exclude": ["sale_id"],  # never monitored (period, segments and weight never are)
             "segments": ["channel", ["channel", "region"]],
             "baseline": {"kind": "fixed", "start": "2026-01", "end": "2026-03"},
-            "gate": {"fail_on": ["red"]},            # default: warn only
+            "gate": {"fail_on": ["red"]},  # default: warn only
         },
     },
 )
