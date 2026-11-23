@@ -19,7 +19,7 @@ missing values, and so on. You declare what to compute once. Every engine comput
 - An Arrow engine (`engine="arrow"`) that runs the numpy reference per entity on the cluster. It is proven
   locally only; its Databricks proof is pending an on-demand corporate run (see below).
 
-Install the extra for the numpy and Arrow engines: `pip install 'bricksmith[features]'`. Importing
+Install the extra for the numpy and Arrow engines: `pip install 'bricksmith[feature-engines]'`. Importing
 `bricksmith.features` loads none of numpy, pyarrow or pyspark.
 
 ## Declare the features

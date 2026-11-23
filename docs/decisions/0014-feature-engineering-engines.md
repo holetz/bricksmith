@@ -42,8 +42,9 @@ The product needs named outputs, exact definitions, and an engine that runs on s
 - **An Arrow engine** (`applyInArrow`, else `applyInPandas`) runs the numpy reference per entity. Its cost is
   measured, not assumed. `DEFAULT_ENGINES` routes each family from the recorded benchmark; today every family
   is native, see the [evidence](../project/evidence/features-free.md).
-- numpy and pyarrow live in the `features` extra. Importing `bricksmith.features` loads neither, and an engine
-  call without them names the extra.
+- numpy and pyarrow live in the `feature-engines` extra. The `features` extra belongs to the Feature
+  Engineering adapter of [0013](0013-closing-based-feature-store.md). Importing `bricksmith.features` loads
+  neither numpy nor pyarrow, and an engine call without them names the extra.
 
 ## Consequences
 

@@ -26,7 +26,7 @@ else:
 def test_modules_import_without_numpy_and_name_the_extra() -> None:
     result = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
-    assert "bricksmith[features]" in result.stdout
+    assert "bricksmith[feature-engines]" in result.stdout
 
 
 def test_the_stand_in_pickles_as_numpy() -> None:
