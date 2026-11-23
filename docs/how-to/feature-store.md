@@ -37,8 +37,17 @@ from bricksmith.tasks import task
             "frequency": "monthly",  # default; quarterly, semiannual, annual, weekly, daily
             "availability_lag": 1,  # periods between the closing described and the closing available
             "features": {
-                "balance_avg_3": {"description": "Mean balance over three closings", "type": "double", "owner": "team-a"},
-                "segment": {"description": "Account segment", "type": "string", "owner": "team-a", "default": "unknown"},
+                "balance_avg_3": {
+                    "description": "Mean balance over three closings",
+                    "type": "double",
+                    "owner": "team-a",
+                },
+                "segment": {
+                    "description": "Account segment",
+                    "type": "string",
+                    "owner": "team-a",
+                    "default": "unknown",
+                },
                 "balance_hist": {
                     "description": "Balances of the last three closings",
                     "type": "array<double>",
