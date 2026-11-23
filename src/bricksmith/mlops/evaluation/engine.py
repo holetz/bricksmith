@@ -9,11 +9,12 @@ grade counts.
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.mlops.evaluation.config import INCREASING, EvaluationConfig, fail, parse_config
-from bricksmith.monitor.adapter import fit_reference, measure
+from bricksmith.monitor.adapter import fit_reference, is_rows, measure
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.measure import OK, UNAVAILABLE, segment_name
 
@@ -130,16 +131,26 @@ def rows_grade_counts(rows: Iterable[Mapping[str, Any]], config: EvaluationConfi
     return counts
 
 
+def _spark() -> Any:  # noqa: ANN401 - the evaluation Spark module, loaded where used
+    return importlib.import_module("bricksmith.mlops.evaluation.spark")
+
+
 def _samples(data: Any, config: EvaluationConfig) -> list[str]:  # noqa: ANN401 - rows or DataFrame
-    return _rows_samples(data, config.sample)
+    if is_rows(data):
+        return _rows_samples(data, config.sample)
+    return _spark().samples(data, config.sample)
 
 
 def _subset(data: Any, config: EvaluationConfig, name: str) -> Any:  # noqa: ANN401 - rows or DataFrame
-    return _rows_subset(data, config.sample, name)
+    if is_rows(data):
+        return _rows_subset(data, config.sample, name)
+    return _spark().subset(data, config.sample, name)
 
 
 def _grade_counts(data: Any, config: EvaluationConfig) -> Counts:  # noqa: ANN401 - rows or DataFrame
-    return rows_grade_counts(data, config)
+    if is_rows(data):
+        return rows_grade_counts(data, config)
+    return _spark().grade_counts(data, config)
 
 
 # -- shared derivation ---------------------------------------------------------------------------------------------
