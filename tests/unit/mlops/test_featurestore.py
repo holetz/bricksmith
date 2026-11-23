@@ -52,7 +52,7 @@ def declaration(**overrides: Any) -> dict[str, Any]:  # noqa: ANN401 - plain met
 
 def test_importing_the_package_loads_no_heavy_module() -> None:
     code = (
-        "import sys, bricksmith.mlops.featurestore, bricksmith.mlops.featurestore.config\n"
+        "import sys, bricksmith.mlops.featurestore, bricksmith.mlops.featurestore.spark\n"
         f"bad = [m for m in {HEAVY!r} if m in sys.modules]\n"
         "assert not bad, bad\n"
     )
