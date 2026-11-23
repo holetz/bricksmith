@@ -30,9 +30,7 @@ spec = FeatureSpec(
     keys=("customer_id",),
     closing="closing_date",
     period="month",  # month (default), quarter, week (Monday start) or day
-    features=(
-        WindowFeature(("balance", "payments"), (3, 6, 12), ("mean", "max", "slope", "null_run_max", "p90")),
-    ),
+    features=(WindowFeature(("balance", "payments"), (3, 6, 12), ("mean", "max", "slope", "null_run_max", "p90")),),
     ratios=(Ratio("payment_ratio_3p", "payments_mean_3p", "balance_mean_3p"),),
     differences=(Difference("balance_vs_mean_6p", "balance", "balance_mean_6p"),),
     categorical=(CategoricalCount("status", ("late", "paid"), (6,)),),
@@ -50,11 +48,13 @@ The same declaration as a plain dict, for configuration files, goes through `par
 ```python
 from bricksmith.features import parse_spec
 
-spec = parse_spec({
-    "keys": ["customer_id"],
-    "closing": "closing_date",
-    "features": [{"columns": ["balance"], "windows": [3, 6], "aggregates": ["mean", "slope"]}],
-})
+spec = parse_spec(
+    {
+        "keys": ["customer_id"],
+        "closing": "closing_date",
+        "features": [{"columns": ["balance"], "windows": [3, 6], "aggregates": ["mean", "slope"]}],
+    }
+)
 ```
 
 ## Input contract
@@ -71,11 +71,11 @@ spec = parse_spec({
 ```python
 from bricksmith.features import compute_features, compute_rows
 
-rows = compute_rows(records, spec)                          # numpy, a list of dicts
-frame = compute_features(df, spec)                          # Spark, the default engine per family
-frame = compute_features(df, spec, engine="arrow")          # every window output on the Arrow engine
+rows = compute_rows(records, spec)  # numpy, a list of dicts
+frame = compute_features(df, spec)  # Spark, the default engine per family
+frame = compute_features(df, spec, engine="arrow")  # every window output on the Arrow engine
 frame = compute_features(df, spec, engines={"trend": "arrow"})  # one family moved to Arrow
-frame = compute_features(df, spec, as_of="2026-06-30")      # one closing, point in time
+frame = compute_features(df, spec, as_of="2026-06-30")  # one closing, point in time
 ```
 
 The native engine builds Spark SQL expressions from the spec over one shared window per spec. It uses no Python
