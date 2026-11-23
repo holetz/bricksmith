@@ -6,6 +6,7 @@ access imports numpy, or raises :class:`~bricksmith.errors.MissingExtraError` na
 
 from __future__ import annotations
 
+import importlib
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,10 @@ class _LazyNumpy(ModuleType):
 
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - any numpy attribute
         return getattr(import_extra("numpy", "features"), name)
+
+    def __reduce__(self) -> tuple[Any, tuple[str]]:
+        """Pickle as "import numpy", so functions shipped by value to Spark workers use the real module."""
+        return importlib.import_module, ("numpy",)
 
 
 if TYPE_CHECKING:

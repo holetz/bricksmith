@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 import subprocess
 import sys
 
@@ -26,3 +27,11 @@ def test_modules_import_without_numpy_and_name_the_extra() -> None:
     result = subprocess.run([sys.executable, "-c", PROBE], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert "bricksmith[features]" in result.stdout
+
+
+def test_the_stand_in_pickles_as_numpy() -> None:
+    import numpy as real  # noqa: ICN001, PLC0415 - the dev group has it
+
+    from bricksmith.features._numpy import np  # noqa: PLC0415
+
+    assert pickle.loads(pickle.dumps(np)) is real  # noqa: S301 - our own bytes
