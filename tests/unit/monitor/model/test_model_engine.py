@@ -18,17 +18,25 @@ OOT = ["2025-04", "2025-05"]
 PROD = ["2025-06", "2025-07", "2025-08", "2025-09"]
 
 
-def predictions(*, drift: bool = False, per_month: int = 200) -> list[dict[str, Any]]:
-    """Return scored rows: score and label agree, grade buckets the score, the last month drifts on request."""
+def predictions(
+    *, drift: bool = False, per_month: int = 200, drifted: tuple[str, ...] = (), noisy: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
+    """Return scored rows: score and label agree, grade buckets the score, the last month drifts on request.
+
+    ``drifted`` months shift the score and age; ``noisy`` months draw labels unrelated to the score.
+    """
     rows: list[dict[str, Any]] = []
+    shifted_months = set(drifted) | ({PROD[-1]} if drift else set())
     for sample, months in (("dev", DEV), ("oot", OOT), ("prod", PROD)):
         for month in months:
-            shifted = drift and month == PROD[-1]
+            shifted = month in shifted_months
             for i in range(per_month):
                 score = ((i * 37) % per_month) / per_month
                 if shifted:
                     score = min(score + 0.4, 0.999)
                 label = 1 if ((i * 61) % 100) / 100 < score else 0
+                if month in noisy:
+                    label = (i * 7 // 3) % 2
                 rows.append({
                     "month": month, "sample": sample, "score": score, "label": label,
                     "grade": "A" if score < 0.3 else "B" if score < 0.7 else "C",
@@ -191,3 +199,68 @@ def test_jobs_follow_the_declared_roles() -> None:
     assert jobs_of(minimal) == [("score_psi", "score"), ("volumetry", "")]
     full = jobs_of(parse_config(DECLARATION))
     assert ("feature_csi", "age") in full and ("grade_psi", "grade") in full and ("completeness", "") in full
+
+
+def test_relative_limits_judge_the_change_against_a_reference() -> None:
+    ks = {"kind": "relative", "green": -0.15, "red": -0.30, "direction": "lower"}
+    result = run(predictions(noisy=(PROD[-1],)), limits={"ks": ks, "auc": {**ks, "reference": "out_of_time"}})
+    stable = pick(result.tables["results"], metric="ks", segment="", monitoring_period=PROD[0])[0]
+    assert stable["light"] == "green" and stable["compared_value"] == pytest.approx(0.0, abs=1e-9)
+    assert stable["limit_kind"] == "relative" and stable["limit_reference"] == "development"
+    noisy = pick(result.tables["results"], metric="ks", segment="", monitoring_period=PROD[-1])[0]
+    expected = (noisy["value"] - noisy["development_value"]) / abs(noisy["development_value"])
+    assert noisy["compared_value"] == pytest.approx(expected) and expected < -0.30 and noisy["light"] == "red"
+    assert noisy["green_limit"] == -0.15 and noisy["baseline_mean"] is None
+    auc = pick(result.tables["results"], metric="auc", segment="", monitoring_period=PROD[-1])[0]
+    assert auc["limit_reference"] == "out_of_time" and auc["light"] == "red"
+    assert auc["compared_value"] == pytest.approx((auc["value"] - auc["out_of_time_value"]) / auc["out_of_time_value"])
+
+
+def test_control_limits_use_development_and_out_of_time_periods() -> None:
+    chart = {"kind": "control", "green": -2, "red": -3, "direction": "lower"}
+    result = run(predictions(noisy=(PROD[-1],)), limits={"ks": chart})
+    stable = pick(result.tables["results"], metric="ks", segment="", monitoring_period=PROD[0])[0]
+    assert stable["baseline_points"] == len(DEV) + len(OOT) and stable["limit_kind"] == "control"
+    assert stable["baseline_mean"] == pytest.approx(stable["development_value"]) and stable["baseline_sd"] == 0.0
+    assert stable["light"] == "green" and stable["compared_value"] == 0.0
+    noisy = pick(result.tables["results"], metric="ks", segment="", monitoring_period=PROD[-1])[0]
+    assert noisy["light"] == "red" and noisy["compared_value"] is None  # an infinite distance is not stored
+    short = run(predictions(), limits={"ks": chart}, control_min_points=6)
+    row = pick(short.tables["results"], metric="ks", segment="", monitoring_period=PROD[0])[0]
+    assert row["light"] == "no_baseline" and row["baseline_points"] == 5 and row["baseline_mean"] is None
+
+
+def test_calibration_ratio_is_colored_by_default() -> None:
+    results = run(predictions()).tables["results"]
+    ratio = pick(results, metric="calibration_ratio", segment="", monitoring_period=PROD[0])[0]
+    assert ratio["light"] in ("green", "yellow", "red") and ratio["direction"] == "both"
+    assert ratio["green_limit"] == 0.3 and ratio["red_limit"] == 0.5
+
+
+def test_persistent_drift_opens_a_critical_alert_and_fails_the_gate() -> None:
+    result = run(predictions(drifted=tuple(PROD[-2:])), gate={"fail_on": ["critical"]}, trend=None)
+    spans = [a for a in result.tables["alerts"] if a["kind"] == "persistence"]
+    psi = next(a for a in spans if a["metric"] == "psi" and a["segment"] == "" and a["model_version"] == "2")
+    assert psi["severity"] == "critical" and psi["state"] == "open" and psi["opened_period"] == PROD[-1]
+    assert psi["monitoring_period"] == PROD[-1] and psi["flagged_periods"] == 1
+    lights = [a for a in result.tables["alerts"] if a["kind"] == "light"]
+    assert lights and all(a["state"] == "open" and a["opened_period"] == a["monitoring_period"] for a in lights)
+    assert result.outcome.critical_alerts > 0 and result.outcome.status == "failed"
+    assert "open critical alert(s)" in result.outcome.message
+    assert result.tables["runs"][0]["critical_alerts"] == result.outcome.critical_alerts
+    quiet = run(predictions(drifted=tuple(PROD[-2:])), persistence={"red": 3}, trend=None)
+    assert not [a for a in quiet.tables["alerts"] if a["kind"] == "persistence"]
+
+
+def test_trend_check_flags_a_departure_from_the_series() -> None:
+    result = run(predictions(drift=True), trend={"window": 3, "min_points": 3}, model_version_column=None,
+                 model_version="1", gate={"fail_on": "alert"})  # fmt: skip
+    psi = pick(result.tables["results"], metric="psi", segment="", monitoring_period=PROD[-1])[0]
+    assert psi["trend_status"] == "red" and psi["trend_expected"] is not None
+    early = pick(result.tables["results"], metric="psi", segment="", monitoring_period=PROD[0])[0]
+    assert early["trend_status"] == "insufficient_history"
+    trends = [a for a in result.tables["alerts"] if a["kind"] == "trend" and a["metric"] == "psi"]
+    assert trends and trends[0]["severity"] == "critical" and trends[0]["state"] == "open"
+    assert result.outcome.open_alerts >= len(trends) and result.outcome.status == "failed"
+    untrended = run(predictions(drift=True), trend=None)
+    assert {r["trend_status"] for r in untrended.tables["results"]} == {""}
