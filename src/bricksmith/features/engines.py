@@ -27,7 +27,8 @@ ARROW = "arrow"
 AUTO = "auto"
 ENGINES = (NATIVE, ARROW)
 
-#: The engine each aggregate family runs on under ``engine="auto"``.
+#: The engine each aggregate family runs on under ``engine="auto"``: native Spark for every family, from the
+#: recorded benchmark (docs/project/evidence/features-free.md).
 DEFAULT_ENGINES: dict[str, str] = dict.fromkeys(FAMILIES, NATIVE)
 
 

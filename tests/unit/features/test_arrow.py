@@ -107,6 +107,7 @@ def test_output_schema() -> None:
 def test_routing_by_family() -> None:
     assert set(DEFAULT_ENGINES) == set(FAMILIES)
     assert set(DEFAULT_ENGINES.values()) <= set(ENGINES)
+    assert set(DEFAULT_ENGINES.values()) == {NATIVE}  # the recorded benchmark's choice
     routed = route(SPEC, dict.fromkeys(FAMILIES, NATIVE) | {"trend": ARROW})
     assert routed[ARROW] == [
         f"x_{a}_{w}p" for w in (1, 3, 6) for a in ("slope", "intercept", "r2", "resid_std", "trend_distance")
