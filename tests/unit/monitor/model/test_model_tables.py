@@ -201,3 +201,10 @@ def test_governance_views_measure_coverage_and_response_times() -> None:
     summary = db.execute("SELECT model, alerts, acted, resolved, mean_days_to_resolve FROM "
                          "main.model_monitoring_response_summary").fetchall()  # fmt: skip
     assert summary == [("m", 2, 2, 1, 4.0)]
+
+
+def test_lag_columns_are_additive_result_columns() -> None:
+    assert {"lag", "lag_unit"} <= set(SCHEMAS[RESULTS])
+    assert "lag" not in KEYS[RESULTS]
+    row = {"model": "m", "lag": 2, "lag_unit": "months"}
+    assert merge_rows(RESULTS, [], [row])[0]["lag_unit"] == "months"
