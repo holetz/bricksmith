@@ -23,7 +23,7 @@ them one declaration and one code path:
 - **Predictions** follow one contract that [model monitoring](model-monitoring.md) reads as is.
 
 Closings, frequencies and lookups are the feature store's. See
-[decision 0014](../decisions/0014-model-development-stages.md) for the reasons.
+[decision 0015](../decisions/0015-model-development-stages.md) for the reasons.
 
 ## Declare the development
 
