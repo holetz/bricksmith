@@ -6,5 +6,24 @@ only the standard library; Spark, scikit-learn and MLflow load where they are us
 """
 
 from bricksmith.mlops.selection.config import STEPS, SelectionConfig, SelectionError, parse_config
+from bricksmith.mlops.selection.funnel import (
+    LedgerEntry,
+    SelectionResult,
+    VariableOutcome,
+    apply_woe,
+    select_features,
+)
+from bricksmith.mlops.selection.metrics import WoeTable
 
-__all__ = ["STEPS", "SelectionConfig", "SelectionError", "parse_config"]
+__all__ = [
+    "STEPS",
+    "LedgerEntry",
+    "SelectionConfig",
+    "SelectionError",
+    "SelectionResult",
+    "VariableOutcome",
+    "WoeTable",
+    "apply_woe",
+    "parse_config",
+    "select_features",
+]
