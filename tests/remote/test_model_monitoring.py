@@ -59,13 +59,13 @@ def scored(drift):
     return rows
 
 
-@task(kind="table", outputs="scores", metadata={{"model_monitoring": {declaration!r}}})
+@task(kind="table", outputs="scores", metadata={{"write": "overwrite", "model_monitoring": {declaration!r}}})
 def scores(ctx):
     drift = ctx.execution.parameters.get("model_drift") == "yes"
     ctx.write("scores", ctx.io.spark.createDataFrame(scored(drift), DDL))
 
 
-@task(kind="table", outputs="score_report")
+@task(kind="table", outputs="score_report", metadata={{"write": "overwrite"}})
 def report(ctx):
     ctx.write("score_report", ctx.read("scores").groupBy("month").count())
 """
