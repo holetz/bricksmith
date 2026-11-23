@@ -21,6 +21,7 @@ from bricksmith.mlops.documentation.artifacts import (
     read_directory,
     write_directory,
 )
+from bricksmith.mlops.documentation.render import Document, render_document
 from bricksmith.mlops.documentation.specification import Scaling, model_specification
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "DOCUMENT_MARKDOWN",
     "NARRATIVE_FIELDS",
     "PATHS",
+    "Document",
     "DocumentInputs",
     "DocumentationError",
     "Scaling",
@@ -38,5 +40,6 @@ __all__ = [
     "log_specification",
     "model_specification",
     "read_directory",
+    "render_document",
     "write_directory",
 ]
