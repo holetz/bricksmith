@@ -3,7 +3,7 @@ type: how-to
 title: "Feature store"
 description: "How to declare closing-based feature tables on tasks and build training and scoring sets by exact closing."
 resource: "src/bricksmith/mlops/featurestore/**"
-timestamp: "2026-11-23T08:46:31-03:00"
+timestamp: "2026-11-23T09:27:03-03:00"
 audience: both
 authority: current
 ---
@@ -120,6 +120,9 @@ scoring = build_training_set(current_spine, lookups, definitions, spark=spark)  
 
 The row engine and the Spark engine are equivalent; the Spark engine is proved equal on the free workspace
 ([evidence](../project/evidence/feature-store-free.md)).
+
+To build the spine from a population with named samples, labels and an exclusion cascade, see
+[model development stages](model-development.md).
 
 ## Optional: Unity Catalog Feature Engineering
 
