@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from bricksmith.graph import load_graph
 from bricksmith.monitor.model import parse_config
+from bricksmith.monitor.model.actions import action_row, insert_statement
 from bricksmith.monitor.model.engine import MemoryStore, check
 from bricksmith.monitor.model.tables import ALERTS, RESULTS, RUNS, SCHEMAS, view_statements
 from bricksmith.plan import build_plan
@@ -54,7 +55,7 @@ ADDED = {
     RESULTS: ("limit_kind", "limit_reference", "compared_value", "baseline_mean", "baseline_sd", "baseline_points",
               "trend_status", "trend_expected", "trend_deviation"),
     ALERTS: ("kind", "state", "opened_period", "escalated_period", "closed_period", "last_period", "flagged_periods",
-             "recurrence"),
+             "recurrence", "action", "action_reason", "action_author", "action_at", "valid_until"),
     RUNS: ("open_alerts", "critical_alerts"),
 }  # fmt: skip
 TASKS = """
@@ -210,3 +211,67 @@ def test_declared_task_writes_the_tables_and_the_views_read_them(
     assert "light" in kinds
     runs = spark.table(t("model_monitoring_runs")).orderBy("finished_at").collect()
     assert runs[-1]["open_alerts"] is not None and runs[-1]["critical_alerts"] is not None
+
+
+def test_an_inserted_acceptance_suppresses_the_gate_and_the_governance_views_answer(
+    remote_context: ExecutionContext, remote_clients: Clients, test_schema: str, tmp_path: Path
+) -> None:
+    spark = remote_clients.spark()
+    catalog = remote_context.catalog or ""
+    project = tmp_path / "project"
+    source = project / "catalogs/demo/ml/scores.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(textwrap.dedent(TASKS.format(ddl=DDL, months=MONTHS, declaration=DECLARATION)), encoding="utf-8")
+
+    def t(name: str) -> str:
+        return f"{catalog}.{test_schema}.{name}"
+
+    def run(drift: str) -> Any:  # noqa: ANN401
+        context = dataclasses.replace(
+            remote_context,
+            catalogs={"demo": catalog},
+            schemas={"ml": test_schema},
+            parameters={**remote_context.parameters, "model_drift": drift},
+        )
+        graph = load_graph(project, context=context)
+        return apply_plan(
+            build_plan(graph), graph, project_root=project, execution=context, table_io=SparkTableIO(spark)
+        )
+
+    failed = run("yes")
+    scores = next(r for r in failed.results if r.model_monitoring)
+    assert scores.state == "failed" and scores.error and scores.error["code"] == "model_monitoring_gate"
+    assert int(spark.table(t("model_monitoring_actions")).count()) == 0  # created empty by the run
+    reds = spark.table(t("model_monitoring_alerts")).where("kind = 'light' AND light = 'red'").collect()
+    assert reds
+    table = t("model_monitoring_actions")
+    for alert in reds:  # a person accepts every red alert through plain SQL
+        row = action_row(model="churn", alert_id=alert["alert_id"], action="risk_accepted", reason="known shift",
+                         author="ana", created_at="2026-01-01T00:00:00", valid_until="2999-12-31")  # fmt: skip
+        spark.sql(insert_statement(table, row))
+    assert int(spark.table(table).count()) == len({r["alert_id"] for r in reds})
+
+    accepted = run("yes")
+    outcome = next(r for r in accepted.results if r.model_monitoring).model_monitoring[0]
+    assert outcome["status"] != "failed" and outcome["red"] == 0 and "accepted" in outcome["message"]
+    states = {r["state"] for r in spark.table(t("model_monitoring_alerts")).where("run_id != ''").collect()}
+    assert "accepted" in states
+
+    first = reds[0]
+    close = action_row(model="churn", alert_id=first["alert_id"], action="closed", reason="fixed upstream",
+                       author="bo", created_at="2026-01-05T00:00:00")  # fmt: skip
+    spark.sql(insert_statement(table, close))
+    for statement in view_statements(f"{catalog}.{test_schema}"):
+        spark.sql(statement)
+    latest = {r["alert_id"]: r["action"] for r in spark.table(t("model_monitoring_actions_latest")).collect()}
+    assert latest[first["alert_id"]] == "closed" and set(latest.values()) == {"closed", "risk_accepted"}
+    superseded = spark.table(t("model_monitoring_acceptances")).where(f"alert_id = '{first['alert_id']}'").collect()
+    assert [r["status"] for r in superseded] == ["superseded"]
+    active = spark.table(t("model_monitoring_acceptances")).where("status = 'active'").count()
+    assert int(active) == len(reds) - 1
+    coverage = spark.table(t("model_monitoring_coverage")).collect()
+    assert [(r["model"], r["periods"]) for r in coverage] == [("churn", 2)] and coverage[0]["days_since_run"] >= 0
+    response = spark.table(t("model_monitoring_alert_response")).where(f"alert_id = '{first['alert_id']}'").collect()
+    assert response[0]["closed_at"] is not None and response[0]["days_to_resolve"] is not None
+    summary = spark.table(t("model_monitoring_response_summary")).collect()
+    assert summary[0]["acted"] >= 1 and summary[0]["resolved"] == 1

@@ -60,3 +60,36 @@ def test_alerts_replay_stored_lights(tmp_path: Path, capsys: pytest.CaptureFixtu
     bad = tmp_path / "bad.json"
     bad.write_text("[]")
     assert main(["model-monitoring", "alerts", "--state", str(bad)]) != 0
+
+
+def test_act_prints_the_row_and_the_insert_statement(capsys: pytest.CaptureFixture[str]) -> None:
+    args = ["model-monitoring", "act", "--model", "m", "--alert-id", "abc", "--action", "risk_accepted",
+            "--reason", "owner's call", "--author", "ana", "--valid-until", "2026-12-31",
+            "--created-at", "2026-03-01T00:00:00", "--scope", "main.monitoring", "--json"]  # fmt: skip
+    assert main(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"]["alert_id"] == "abc" and payload["action"]["valid_until"] == "2026-12-31"
+    assert payload["statement"].startswith("INSERT INTO main.monitoring.model_monitoring_actions (action_id, model")
+    assert "'owner''s call'" in payload["statement"] and "DATE '2026-12-31'" in payload["statement"]
+    bare = ["model-monitoring", "act", "--model", "m", "--alert-id", "abc", "--reason", "r", "--author", "a"]
+    assert main([*bare, "--action", "risk_accepted"]) != 0  # an acceptance needs its date
+    assert main([*bare, "--action", "closed", "--valid-until", "2026-12-31"]) != 0
+    assert main([*bare, "--action", "ignore"]) != 0
+    capsys.readouterr()
+
+
+def test_actions_in_the_state_file_drive_the_replay(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    state = _state(tmp_path)
+    assert main(["model-monitoring", "alerts", "--state", str(state), "--json"]) == 0
+    alert_id = json.loads(capsys.readouterr().out)["alerts"][0]["alert_id"]
+    accept = ["model-monitoring", "act", "--model", "m", "--alert-id", alert_id, "--action", "risk_accepted",
+              "--reason", "temporary", "--author", "ana", "--valid-until", "2026-03-31", "--state", str(state),
+              "--created-at", "2026-03-02T00:00:00"]  # fmt: skip
+    assert main(accept) == 0
+    assert json.loads(state.read_text())["actions"][0]["alert_id"] == alert_id
+    assert main(accept) == 0 and len(json.loads(state.read_text())["actions"]) == 1  # same decision, one row
+    capsys.readouterr()
+    base = ["model-monitoring", "alerts", "--state", str(state), "--fail-on-red"]
+    assert main([*base, "--as-of", "2026-03-15"]) == 0 and "(accepted)" in capsys.readouterr().out
+    assert main([*base, "--as-of", "2026-04-15"]) == 4
+    assert main([*base, "--as-of", "soon"]) != 0

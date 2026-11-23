@@ -9,6 +9,7 @@ import pytest
 
 from bricksmith.monitor.bins import BinSpec
 from bricksmith.monitor.errors import MonitorError
+from bricksmith.monitor.model.actions import action_row
 from bricksmith.monitor.model.config import parse_config
 from bricksmith.monitor.model.engine import MemoryStore, check, data_period, jobs_of
 from bricksmith.monitor.reference import Reference
@@ -64,8 +65,14 @@ DECLARATION: dict[str, Any] = {
 }
 
 
-def run(rows: list[dict[str, Any]], store: MemoryStore | None = None, run_id: str = "r1", **changes: Any) -> Any:  # noqa: ANN401
-    return check(rows, parse_config({**DECLARATION, **changes}), store or MemoryStore(), run_id=run_id, now="t0")
+def run(
+    rows: list[dict[str, Any]],
+    store: MemoryStore | None = None,
+    run_id: str = "r1",
+    now: str = "t0",
+    **changes: Any,  # noqa: ANN401
+) -> Any:  # noqa: ANN401
+    return check(rows, parse_config({**DECLARATION, **changes}), store or MemoryStore(), run_id=run_id, now=now)
 
 
 def pick(results: list[dict[str, Any]], **where: object) -> list[dict[str, Any]]:
@@ -264,3 +271,59 @@ def test_trend_check_flags_a_departure_from_the_series() -> None:
     assert result.outcome.open_alerts >= len(trends) and result.outcome.status == "failed"
     untrended = run(predictions(drift=True), trend=None)
     assert {r["trend_status"] for r in untrended.tables["results"]} == {""}
+
+
+NOW = "2026-02-01T00:00:00+00:00"
+
+
+def _act(alert_id: str, action: str, at: str, **extra: Any) -> dict[str, Any]:  # noqa: ANN401
+    return action_row(model="churn", alert_id=alert_id, action=action, reason="reviewed", author="ana",
+                      created_at=at, **extra)  # fmt: skip
+
+
+def _stored(actions: list[dict[str, Any]]) -> MemoryStore:
+    return MemoryStore(tables={"actions": actions})
+
+
+def test_accepted_spans_stop_failing_the_critical_gate_until_they_expire() -> None:
+    rows = predictions(drifted=tuple(PROD[-2:]))
+    gate = {"gate": {"fail_on": ["critical"]}, "trend": None}
+    first = run(rows, **gate)
+    spans = [a for a in first.tables["alerts"] if a["kind"] == "persistence" and a["severity"] == "critical"]
+    assert first.outcome.status == "failed" and spans[0]["action"] is None
+    accept = [_act(a["alert_id"], "risk_accepted", "2026-01-01T00:00:00", valid_until="2999-01-01") for a in spans]
+    held = run(rows, _stored(accept), run_id="r2", now=NOW, **gate)
+    same = next(a for a in held.tables["alerts"] if a["alert_id"] == spans[0]["alert_id"])
+    assert same["state"] == "accepted" and same["action"] == "risk_accepted" and same["valid_until"] == "2999-01-01"
+    assert held.outcome.critical_alerts == 0 and held.outcome.status != "failed"
+    assert f"{len(spans)} accepted" in held.outcome.message
+    lapsed = [_act(a["alert_id"], "risk_accepted", "2026-01-01T00:00:00", valid_until="2026-01-31") for a in spans]
+    again = run(rows, _stored(lapsed), run_id="r3", now=NOW, **gate)
+    assert again.outcome.status == "failed" and again.outcome.critical_alerts == first.outcome.critical_alerts
+
+
+def test_closed_spans_leave_the_open_counts_and_analysis_keeps_them() -> None:
+    rows = predictions(drifted=tuple(PROD[-2:]))
+    first = run(rows, trend=None)
+    spans = [a for a in first.tables["alerts"] if a["kind"] == "persistence"]
+    closed = _act(spans[0]["alert_id"], "closed", "2026-01-01T00:00:00")
+    analysed = [_act(s["alert_id"], "analysis", "2026-01-01T00:00:00") for s in spans[1:]]
+    after = run(rows, _stored([closed, *analysed]), run_id="r2", now=NOW, trend=None)
+    states = {a["alert_id"]: a["state"] for a in after.tables["alerts"] if a["kind"] == "persistence"}
+    assert states[spans[0]["alert_id"]] == "closed" and all(states[s["alert_id"]] == "open" for s in spans[1:])
+    assert after.outcome.open_alerts == first.outcome.open_alerts - 1
+    assert after.tables["actions"] == []  # a run never writes actions
+
+
+def test_an_accepted_light_alert_is_not_counted_by_the_red_gate() -> None:
+    rows = predictions(drift=True)
+    first = run(rows, gate={"fail_on": ["red"]}, trend=None)
+    reds = [a for a in first.tables["alerts"] if a["kind"] == "light" and a["light"] == "red"
+            and a["monitoring_period"] == PROD[-1]]  # fmt: skip
+    assert first.outcome.status == "failed" and len(reds) == first.outcome.red
+    every = [_act(a["alert_id"], "risk_accepted", "2026-01-01T00:00:00", valid_until="2999-01-01") for a in reds]
+    held = run(rows, _stored(every), run_id="r2", now=NOW, gate={"fail_on": ["red"]}, trend=None)
+    assert held.outcome.red == 0 and held.outcome.status != "failed"
+    closed = [_act(a["alert_id"], "closed", "2026-01-01T00:00:00") for a in reds]
+    still = run(rows, _stored(closed), run_id="r3", now=NOW, gate={"fail_on": ["red"]}, trend=None)
+    assert still.outcome.status == "failed"  # closing a light alert is bookkeeping, not suppression
