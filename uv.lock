@@ -325,6 +325,10 @@ source = { editable = "." }
 bundle = [
     { name = "databricks-bundles" },
 ]
+feature-engines = [
+    { name = "numpy" },
+    { name = "pyarrow" },
+]
 features = [
     { name = "databricks-feature-engineering" },
 ]
@@ -344,6 +348,9 @@ spark = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyarrow" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
@@ -363,13 +370,18 @@ requires-dist = [
     { name = "databricks-feature-engineering", marker = "extra == 'features'" },
     { name = "databricks-sdk", marker = "extra == 'sdk'" },
     { name = "mlflow", marker = "extra == 'mlops'" },
+    { name = "numpy", marker = "extra == 'feature-engines'" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.3.6" },
+    { name = "pyarrow", marker = "extra == 'feature-engines'" },
     { name = "scikit-learn", marker = "extra == 'mlops'" },
 ]
-provides-extras = ["spark", "sdk", "bundle", "mlops", "features", "postgres"]
+provides-extras = ["spark", "sdk", "bundle", "mlops", "features", "feature-engines", "postgres"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyarrow" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
