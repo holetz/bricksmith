@@ -53,6 +53,8 @@ KEEP = "keep"
 MAX = "max"
 MIN = "min"
 SIGN = "sign"
+NONZERO = "nonzero"
+FLOOR = "floor"
 MANUAL = "manual"
 
 
@@ -155,11 +157,13 @@ def apply_woe(
 def _judge(value: float | None, threshold: float | None, rule: str) -> bool:
     if value is None or threshold is None:
         return False
-    return value > threshold if rule == MAX else value < threshold
+    if rule == MAX:
+        return value > threshold
+    return value <= threshold if rule in (FLOOR, NONZERO) else value < threshold
 
 
 def _reason(metric: str, value: float, threshold: float, rule: str) -> str:
-    side = "above the maximum" if rule == MAX else "below the minimum"
+    side = {MAX: "above the maximum", FLOOR: "at or below", NONZERO: "at or below"}.get(rule, "below the minimum")
     return f"{metric} {value:.6g} {side} {threshold:.6g}"
 
 
@@ -413,7 +417,27 @@ class _Run:
             self.entry(variable, REDUNDANCY, "vif", value, options.max_vif, MAX)
 
     def multivariate(self) -> None:
-        fail("the multivariate step is not available in this version")
+        from bricksmith.mlops.selection.multivariate import evaluate  # noqa: PLC0415 - scikit-learn loads where used
+
+        options = self.config.multivariate
+        for variable in self.alive:
+            if self.kinds[variable] == CATEGORICAL:
+                self.entry(variable, MULTIVARIATE, "coefficient", None, decision=INFO,
+                           reason="categorical: not evaluated")  # fmt: skip
+        numerics = [v for v in self.alive if self.kinds[v] == NUMERIC]
+        if not numerics:
+            return
+        holdout = self.engine.sample(numerics, out_of_time=True) if self.config.out_of_time else []
+        scores = evaluate(self.engine.sample(numerics), holdout, numerics, self.config)
+        for variable in numerics:
+            if scores is None:
+                self.entry(variable, MULTIVARIATE, "coefficient", None, decision=INFO,
+                           reason="too few complete rows, or a single target value")  # fmt: skip
+                continue
+            coefficient, importance = scores[variable]
+            self.entry(variable, MULTIVARIATE, "coefficient", abs(coefficient), 0.0, NONZERO,
+                       reason="" if abs(coefficient) > 0 else "zero coefficient under the penalty")  # fmt: skip
+            self.entry(variable, MULTIVARIATE, "permutation_importance", importance, options.min_importance, FLOOR)
 
     def judgment(self) -> None:
         options = self.config.judgment
