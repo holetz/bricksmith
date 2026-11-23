@@ -86,10 +86,9 @@ def check_frame(frame: DataFrame, definition: FeatureTable) -> DataFrame:
             msg = f"feature {feature.name} is stored as {actual}, which is not {feature.type}"
             raise FeatureStoreError(msg)
     frame = frame.withColumn(definition.closing, f.col(definition.closing).cast("date"))
-    null_any = None
+    null_any = f.lit(False)  # noqa: FBT003 - a Spark literal, not a flag
     for key in definition.primary_key:
-        test = f.col(key).isNull()
-        null_any = test if null_any is None else null_any | test
+        null_any = null_any | f.col(key).isNull()
     if frame.where(null_any).limit(1).count():
         msg = f"a primary key column {definition.primary_key} is null"
         raise FeatureStoreError(msg)
