@@ -1,6 +1,6 @@
 """Incremental transfers: bookmarks, partial-transfer recovery and replay.
 
-Delivery semantics (see ``docs/guide/external-io.md``): the source is read in bookmark order, one
+Delivery semantics (see ``docs/how-to/external-io.md``): the source is read in bookmark order, one
 batch at a time; each batch is committed to the sink together with a ledger token that names the
 batch by the bookmark it starts after. A progress record ("pending") is saved after every
 committed batch; the committed bookmark advances only when the whole transfer succeeded. A replay

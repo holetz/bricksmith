@@ -1,0 +1,32 @@
+{
+  "sourceDate": "2026-11-17",
+  "source": "Anthropic list prices (platform.claude.com/docs/en/about-claude/pricing), first tabulated by cache-maxxing (github.com/5m0k3/cache-maxxing, MIT); quenching owns this copy",
+  "unit": "USD per million tokens",
+  "cacheWrite": {"5m": 1.25, "1h": 2},
+  "output": 5,
+  "fast": 2,
+  "longPrompt": {"haiku-5-5": {"above": 100000, "multiplier": 5}},
+  "models": {
+    "fable-5-2": {"input": 8, "cacheRead": 0.2},
+    "mythos-5-2": {"input": 8, "cacheRead": 0.2},
+    "fable-5-1": {"input": 10, "cacheRead": 0.25},
+    "mythos-5-1": {"input": 10, "cacheRead": 0.25},
+    "fable-5": {"input": 10, "cacheRead": 1},
+    "mythos-5": {"input": 10, "cacheRead": 1},
+    "opus-5-5": {"input": 4, "cacheRead": 0.2},
+    "opus-5": {"input": 5, "cacheRead": 0.5},
+    "opus-4-8": {"input": 5, "cacheRead": 0.5},
+    "opus-4-7": {"input": 5, "cacheRead": 0.5},
+    "opus-4-6": {"input": 5, "cacheRead": 0.5},
+    "opus-4-5": {"input": 5, "cacheRead": 0.5},
+    "opus-4-1": {"input": 15, "cacheRead": 1.5},
+    "opus-4": {"input": 15, "cacheRead": 1.5},
+    "sonnet-5-5": {"input": 2, "cacheRead": 0.1},
+    "sonnet-5": {"input": 2, "cacheRead": 0.2},
+    "sonnet-4-6": {"input": 3, "cacheRead": 0.3},
+    "sonnet-4-5": {"input": 3, "cacheRead": 0.3},
+    "sonnet-4": {"input": 3, "cacheRead": 0.3},
+    "haiku-5-5": {"input": 0.1, "cacheRead": 0.01},
+    "haiku-4-5": {"input": 1, "cacheRead": 0.1}
+  }
+}

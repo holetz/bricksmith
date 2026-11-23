@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0010. Independently implement behavior-derived requirements"
+description: "Why requirements are implemented independently from generic behavior, never translated from the private reference."
+resource: "tests/**, scripts/leak_check.py"
+timestamp: "2026-10-14T13:52:10-03:00"
+audience: both
+authority: current
+---
+
 # 0010. Independently implement behavior-derived requirements
 
 - Status: accepted
@@ -41,7 +51,7 @@ from observed behavior and starts implementation from an empty library.
 
 ## Consequences
 
-- The [capability review](../planning/capability-review.md) and
+- The [capability review](../project/capability-review.md) and
   [development epic](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md) govern the next implementation work.
 - Their generic requirements are the implementation handoff. The private source path and local
   evidence map are not requested inputs, and their absence does not block implementation. Close

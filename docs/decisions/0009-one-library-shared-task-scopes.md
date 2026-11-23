@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0009. One library with growing capabilities and shared task scopes"
+description: "Why bricksmith is one library whose data, MLOps and monitoring tasks share discovery, graph and runner."
+resource: "pyproject.toml, src/bricksmith/**"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: current
+---
+
 # 0009. One library with growing capabilities and shared task scopes
 
 - Status: accepted

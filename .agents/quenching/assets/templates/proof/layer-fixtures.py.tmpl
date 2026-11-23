@@ -1,0 +1,19 @@
+"""Shared fixtures for the ``<layer>`` proof layer (reach: ``<reach>``)."""
+from __future__ import annotations
+
+import pytest
+
+
+# QUENCHING PROOF FIXTURE LIBRARY: BEGIN
+# The declared reach is the ceiling for this module: <reach>.
+# Keep pure values/factories for ``nothing``, temporary files for ``tree``,
+# process or database setup for ``session``, and shared external state for ``workspace``.
+
+
+@pytest.fixture
+def <fixture_name>():
+    """Replace this body with one fixture whose reach does not exceed ``<reach>``."""
+    yield <fixture_value>
+
+
+# QUENCHING PROOF FIXTURE LIBRARY: END

@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0004. Free-first functional tests with supplementary corporate proof"
+description: "Why functional tests run first on Databricks Free Edition, with corporate proof only for unavailable features."
+resource: "tests/remote/**"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: current
+---
+
 # 0004. Free-first functional tests with supplementary corporate proof
 
 - Status: accepted; environment and authentication policy amended by
@@ -44,7 +54,7 @@ feature availability is recorded per actual workspace, not assumed.
 
 ## Consequences
 
-- The [test environment guide](../development/databricks-tests.md) and [.env.example](../../.env.example)
+- The [test environment guide](../project/databricks-tests.md) and [.env.example](../../.env.example)
   define local configuration and the required setup proofs.
 - A configured profile, a successful identity request, a working compute query and a successful
   deploy/run/cleanup are separate states. Only actual test assertions establish feature coverage.

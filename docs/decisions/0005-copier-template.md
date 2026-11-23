@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0005. The project template is rendered with copier"
+description: "Why the project template is rendered and updated with copier."
+resource: "examples/**"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: current
+---
+
 # 0005. The project template is rendered with copier
 
 - Status: accepted

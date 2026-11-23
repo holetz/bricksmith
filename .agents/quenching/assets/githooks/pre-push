@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# pre-push — refuse a push whose commits carry an author or committer email outside
+# `shared.gitIdentity.allowedEmails`. Git passes the refs being pushed on stdin.
+# Shipped by `cq deploy`; activate per clone: git config core.hooksPath .agents/quenching/assets/githooks
+set -eu
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/.agents/quenching/bin/cq" git identity --pre-push --remote "$1" --root "$ROOT"

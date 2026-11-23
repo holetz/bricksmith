@@ -1,0 +1,13 @@
+/* Quenching documentation styles.
+ *
+ * Deliberately almost empty. The badge, hero and card rules that used to live here styled theme
+ * components in the OKF markdown; the bundle became the site's own source, generator-neutral
+ * markdown became a whole-bundle rule, and those constructs were removed rather than restyled.
+ * Retired, not deprecated — nothing here is kept "just in case".
+ *
+ * What remains is not a component: it is the reduced-motion guard, an accessibility contract that
+ * holds whatever the pages contain, and which the build inspects in the rendered HTML. */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+}

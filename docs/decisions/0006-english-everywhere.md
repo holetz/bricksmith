@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0006. English everywhere"
+description: "Why code, identifiers, docs, specs and commit messages are written in English."
+resource: "src/**, tests/**"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: current
+---
+
 # 0006. English everywhere
 
 - Status: accepted

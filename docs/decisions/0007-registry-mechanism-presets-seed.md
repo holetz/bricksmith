@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0007. The registry splits mechanism, preset and seed"
+description: "Why the column registry separates the checking mechanism, the naming preset and the seed data."
+resource: "src/bricksmith/registry/**"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: current
+---
+
 # 0007. The registry splits mechanism, preset and seed
 
 - Status: accepted; packaging and dependency boundaries amended by

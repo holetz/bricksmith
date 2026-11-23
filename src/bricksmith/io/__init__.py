@@ -1,4 +1,4 @@
-"""External inputs, SQL connectors and volume artifacts (see ``docs/guide/external-io.md``).
+"""External inputs, SQL connectors and volume artifacts (see ``docs/how-to/external-io.md``).
 
 Importing this package loads only the standard library; drivers and the Databricks SDK are
 imported by the caller or lazily through ``bricksmith.clients``.

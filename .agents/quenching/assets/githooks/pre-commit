@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# pre-commit — refuse a commit whose author or committer email is outside
+# `shared.gitIdentity.allowedEmails` in .agents/quenching.json (no declaration, nothing judged).
+# Shipped by `cq deploy`; activate per clone: git config core.hooksPath .agents/quenching/assets/githooks
+set -eu
+ROOT="$(git rev-parse --show-toplevel)"
+exec "$ROOT/.agents/quenching/bin/cq" git identity --staged --root "$ROOT"

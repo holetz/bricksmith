@@ -1,3 +1,13 @@
+---
+type: decision
+title: "0008. bricksmith monitoring succeeds `psi_spark`"
+description: "Why bricksmith monitoring succeeds the standalone psi_spark binning and stability repository."
+resource: "src/bricksmith/monitor/**"
+timestamp: "2026-10-13T14:06:51-03:00"
+audience: both
+authority: current
+---
+
 # 0008. bricksmith monitoring succeeds `psi_spark`
 
 - Status: accepted; packaging, dependency boundaries and persistence amended by

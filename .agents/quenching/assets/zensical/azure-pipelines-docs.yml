@@ -1,0 +1,41 @@
+# Opt-in Azure DevOps pipeline. Copy to azure-pipelines-docs.yml in the target repo.
+# It publishes a named build artifact; deployment to Azure Static Web Apps or Pages is separate.
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: self
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.x'
+  - bash: |
+      if [ -f pyproject.toml ] && { [ -f uv.lock ] || grep -q '^\[tool\.uv\]' pyproject.toml; }; then
+        python -m pip install uv
+        if [ -f uv.lock ]; then uv sync --locked; else uv lock && uv sync; fi
+      elif [ -f pyproject.toml ]; then
+        echo "pyproject.toml uses a non-uv manager; configure its documented install command before enabling this pipeline" >&2
+        exit 1
+      else
+        python -m pip install -r requirements.txt
+      fi
+    displayName: Install documentation toolchain
+  - bash: |
+      if [ -f pyproject.toml ] && { [ -f uv.lock ] || grep -q '^\[tool\.uv\]' pyproject.toml; }; then
+        uv run zensical build --clean --strict
+      elif [ -f pyproject.toml ]; then
+        echo "pyproject.toml uses a non-uv manager; configure its documented runner before enabling this pipeline" >&2
+        exit 1
+      else
+        zensical build --clean --strict
+      fi
+    displayName: Build documentation (strict)
+  - task: PublishPipelineArtifact@1
+    inputs:
+      targetPath: site
+      artifact: documentation-site
+      publishLocation: pipeline

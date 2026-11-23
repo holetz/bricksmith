@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""cq — quenching's one entry point, and the only thing that knows the pillar names.
+
+    .agents/quenching/bin/cq [--root PATH] <pillar> <subcommand> ...   (a deployed target)
+    python3 quenching/assets/bin/cq --version                  (this repository's source)
+
+The registered pillars, each answering with the same contract its launcher answered with — the
+subcommands, the `--json` payloads and the exit codes (0 ok · 1 findings · 2 refusal · 3 usage) are
+the ones frozen in `tests/fixtures/golden/`. This file routes; it decides nothing else.
+
+Python 3.11 is the minimum runtime. The check below runs before the package imports so a runtime
+without `tomllib` gets a named refusal instead of a traceback from a pillar that needs it.
+
+WHY THE TABLE CARRIES `takes_root`
+----------------------------------
+`--root` is the one option that reads as global and is not: `specs --root` names the repository
+whose configured provider owns the specs, `components --root` names the surface holding `commands/`, and
+`ops --root` names the operations surface. `knowledge --root` names the repository root and its
+bundle remains a positional override. The table says which pillars declare one, and naming
+`--root` for a pillar that does not is a usage error, not a guess.
+
+WHY THE IMPORT IS LAZY
+----------------------
+`importlib` resolves the pillar named on the command line and no other. `cq specs status`
+does not pay to import the knowledge and components trees, and a pillar that fails to
+import cannot take the other two down with it.
+
+`session` IS NOT A PILLAR — the `## Open Decisions` entry, resolved here
+-----------------------------------------------------------------------
+The spec asked whether `session` survives as a fourth first-level pillar, and declared how
+to decide it: at this task, if no command body but the retro invokes it, it becomes
+`cq components session` and leaves the root. Measured on the surface as it stands, exactly
+one body cites the tool — `commands/components/command/retro.md` — so the criterion fires. `design` is a
+separate pillar because its DTCG source, portable projections, and rendered artifacts form a
+front of their own; it is not session's replacement.
+
+It is mounted as a real subcommand of `components`, in that pillar's own parser, and not
+intercepted here: a route this file knew about and `cq components --help` did not would be a
+surface that lies about itself. The caller also lives in the components command surface, so
+the tool and its only caller now share the same front.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib
+import importlib.util
+import json
+import os
+import sys
+from typing import NamedTuple
+
+
+PYTHON_FLOOR = (3, 11)
+PYTHON_FLOOR_EXIT = 2
+
+
+def _check_python_floor() -> bool:
+    if sys.version_info[:2] >= PYTHON_FLOOR:
+        return True
+    found = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    print(f"cq-python-floor: Python {PYTHON_FLOOR[0]}.{PYTHON_FLOOR[1]} or newer is required; "
+          f"found {found}", file=sys.stderr)
+    return False
+
+
+if not _check_python_floor():
+    raise SystemExit(PYTHON_FLOOR_EXIT)
+
+
+ASSETS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+PLUGIN_ROOT = os.path.dirname(ASSETS)
+
+
+def _read(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+from quenching.common.output import CQArgumentParser, USAGE
+from quenching.common.version import VERSION
+from quenching.common.doctor import run as run_doctor
+from quenching.common.lent import lend
+
+
+class Pillar(NamedTuple):
+    module: str  # the module whose `main(argv) -> int` IS the pillar
+    takes_root: bool  # whether the pillar's own parser declares `--root`
+    help: str
+
+
+PILLARS: dict[str, Pillar] = {
+    "specs": Pillar(
+        "quenching.specs.commands.cli", True,
+        "the provider-owned specs front — capture, read, task, promote, validate"),
+    "knowledge": Pillar(
+        "quenching.knowledge.cli", True,
+        "the /docs/ OKF bundle — validate, project and stage documentation surfaces"),
+    "design": Pillar(
+        "quenching.design.cli", True,
+        "the /.design/ DTCG source — build, import, verify, and render portable artifacts"),
+    "components": Pillar(
+        "quenching.components.commands.cli", True,
+        "the .claude/ command surface — lint, doctor, registry, read, session"),
+    "ops": Pillar(
+        "quenching.ops.cli", True,
+        "the operations surface — inventory, doctor, status"),
+    "proof": Pillar(
+        "quenching.proof.cli", True,
+        "the verification surface — inventory, doctor, ratchet, status"),
+    "delivery": Pillar(
+        "quenching.delivery.cli", True,
+        "the delivery surface — workflow inventory, doctor, and status"),
+    "toolchain": Pillar(
+        "quenching.toolchain.cli", True,
+        "the toolchain surface — applicability, inventory, doctor, status"),
+    "security": Pillar(
+        "quenching.security", True,
+        "read-only security questions — permissions, secret coverage, advisory configuration, access ownership"),
+    "opensource": Pillar(
+        "quenching.opensource.cli", True,
+        "the open source front — every owner's catalog answers and the baseline level"),
+    "codex": Pillar(
+        "quenching.codex", True,
+        "the Codex CLI — quota probe, an independent read-only review, and the per-task executor"),
+    "git": Pillar(
+        "quenching.git", False,
+        "a repository's git facts — the base branch, and whether it is the host's own default"),
+    "config": Pillar(
+        "quenching.config", True,
+        "the configuration layers, read-only — the effective value of every key and its source"),
+    "portal": Pillar(
+        "quenching.portal", False,
+        "the project registry and the central portal over it — add, remove, list, serve"),
+    "mcp": Pillar(
+        "quenching.mcp.cli", True,
+        "the quenching MCP server over stdio — the catalogued verbs as tools, the references as resources"),
+}
+
+
+# What a pillar borrows from another, keyed by borrower: (capability, lender package, module).
+# `cq` lends only what an enabled module carries, so the borrower never imports the lender.
+LOANS: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "specs": (("specs.portal.sessions", "session", "quenching.session.portal"),),
+    "portal": (("portal.specs", "specs", "quenching.specs.portal"),
+               ("portal.worktrees", "session", "quenching.session.worktrees"),
+               ("specs.portal.sessions", "session", "quenching.session.portal")),
+}
+
+
+def module_owners() -> dict[str, str]:
+    """Pillar package -> the module that owns it, read from the shipped module manifest."""
+    try:
+        data = json.loads(_read(os.path.join(ASSETS, "modules.json")) or "{}")
+    except ValueError:
+        return {}
+    return {package: module["name"] for module in data.get("modules", [])
+            for package in module.get("owned", {}).get("packages", [])}
+
+
+def _is_source(root: str) -> bool:
+    """The source of quenching is the root that carries `VERSION` and `assets/modules.json`."""
+    return os.path.isfile(os.path.join(root, "VERSION")) and os.path.isfile(os.path.join(root, "assets", "modules.json"))
+
+
+def package_root(package: str) -> str | None:
+    """The installed root (the source, or a target's `.agents/quenching/`) carrying `package`, or None.
+
+    `cq deploy --modules` decides which packages a target carries; a package absent from this
+    tree is a module the target did not deploy.
+    """
+    owner = module_owners().get(package)
+    for entry in sys.path:
+        if os.path.basename(os.path.normpath(entry)) != "bin" or not os.path.isdir(os.path.join(entry, "quenching", package)):
+            continue
+        root = os.path.dirname(os.path.dirname(os.path.realpath(entry)))
+        if owner is None or _is_source(root):
+            return root
+    return None
+
+
+def present(package: str) -> bool:
+    return package_root(package) is not None
+
+
+def absent_note(name: str) -> str:
+    return "" if present(name) else f" (module {module_owners().get(name, '?')} is not enabled)"
+
+
+def run_modules(argv: list[str]) -> int:
+    """`cq modules [--json]`: which principal modules this process can reach."""
+    parser = CQArgumentParser(prog="cq modules", description="list the quenching modules this cq can reach")
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parsed = parser.parse_args(argv)
+    owners = module_owners()
+    modules = {}
+    for package, module in owners.items():
+        entry = modules.setdefault(module, {"name": module, "pillars": [], "enabled": True, "root": None})
+        if package in PILLARS:
+            entry["pillars"].append(package)
+        found = package_root(package)
+        entry["enabled"] = entry["enabled"] and found is not None
+        if found and entry["root"] is None:
+            entry["root"] = found  # the plugin root whose commands/ a conductor reads
+    for entry in modules.values():
+        if not entry["enabled"]:
+            entry["root"] = None
+    rows = list(modules.values())
+    if parsed.json:
+        print(json.dumps({"ok": True, "modules": rows}, indent=2))
+    else:
+        for row in rows:
+            state = "enabled" if row["enabled"] else "not enabled"
+            print(f"{row['name']:<20} {state:<12} {', '.join(row['pillars'])}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = CQArgumentParser(
+        prog="cq",
+        description="the quenching plugin's tooling, one pillar at a time",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="pillars:\n"
+               + "\n".join(f"  {name:<11} {pillar.help}{absent_note(name)}"
+                           for name, pillar in PILLARS.items())
+               + "\n\n  deploy      install the quenching surface in a target repository"
+               + "\n\n`cq doctor --help` prints the top-level prerequisite check; "
+                 "`cq deploy --help` prints the deployment contract; "
+                 "`cq <pillar> --help` prints that pillar's own subcommands.")
+    p.add_argument("--root",
+                    help="forwarded to the pillar as its own --root; design, specs, "
+                    "components, ops, proof, delivery, toolchain, security, opensource, codex, config, and mcp declare one")
+    # Bare, so `cq --version` IS the lockstep probe: the whole assertion is
+    # `test "$(cq --version)" = "$(cat VERSION)"`, with nothing to strip first. A pillar
+    # named before it keeps its own prefixed line — this option only answers for the plugin.
+    p.add_argument("--version", action="version", version=VERSION,
+                   help="print the plugin version and exit")
+    p.add_argument("pillar", nargs="?", choices=list(PILLARS),
+                   help="which pillar answers")
+    # REMAINDER and not a nested subparser tree: every token after the pillar name belongs
+    # to the pillar's own parser, options included, and cq must not reinterpret any of them.
+    p.add_argument("rest", nargs=argparse.REMAINDER,
+                   help="the pillar's subcommand and its arguments")
+    return p
+
+
+def build_doctor_parser() -> argparse.ArgumentParser:
+    p = CQArgumentParser(
+        prog="cq doctor",
+        description="check the Python floor and prerequisites selected by the backend/profile",
+    )
+    p.add_argument("--root", default=os.getcwd(),
+                   help="target repository root (default: current directory)")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.add_argument("--setup", action="store_true",
+                   help="preview a minimal .claude/quenching.json from detected provider/fronts")
+    p.add_argument("--write", action="store_true",
+                   help="confirm writing the setup preview (requires --setup)")
+    return p
+
+
+def _top_level_command(argv: list[str]) -> tuple[str | None, int | None]:
+    """Find the first command while allowing the global `--root` before it."""
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--root":
+            if index + 1 >= len(argv):
+                return None, None
+            index += 2
+            continue
+        if token.startswith("--root="):
+            index += 1
+            continue
+        if token.startswith("-"):
+            return None, None
+        return token, index
+    return None, None
+
+
+def _run_top_doctor(argv: list[str], command_index: int) -> int:
+    # Remove the command token so both `cq doctor --root .` and `cq --root . doctor` share
+    # one parser and one output contract.
+    args = argv[:command_index] + argv[command_index + 1:]
+    parsed = build_doctor_parser().parse_args(args)
+    return run_doctor(parsed.json, os.path.abspath(parsed.root), setup=parsed.setup,
+                      write=parsed.write)
+
+
+def _provider_refusal() -> int | None:
+    """Exit 2 with the reason when `QUENCHING_CONFIG_PROVIDER` names no registered provider.
+
+    Decided here, once, so no front that loads the configuration runs on defaults it was never
+    meant to use: the unknown provider never falls back to the file, and never to nothing."""
+    from quenching.common.config import active_provider
+    _provider, refusal = active_provider()
+    if refusal is None:
+        return None
+    print(f"cq: {refusal['code']}: {refusal['message']}; {refusal['remedy']}", file=sys.stderr)
+    return refusal["exit"]
+
+
+def _run_top_deploy(argv: list[str], command_index: int) -> int:
+    try:
+        from quenching.deploy.cli import main as deploy_main
+    except ImportError:
+        print("cq: deploy belongs to module quenching-specs, which is not deployed here",
+              file=sys.stderr)
+        return 2
+    return deploy_main(argv[:command_index] + argv[command_index + 1:])
+
+
+def main(argv: list[str]) -> int:
+    command, command_index = _top_level_command(argv)
+    if command == "doctor" and command_index is not None:
+        refused = _provider_refusal()
+        return refused if refused is not None else _run_top_doctor(argv, command_index)
+    if command == "deploy" and command_index is not None:
+        return _run_top_deploy(argv, command_index)
+    if command == "modules" and command_index == 0:
+        return run_modules(argv[1:])
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.pillar:
+        parser.error("choose a pillar")
+    pillar = PILLARS[args.pillar]
+    rest = list(args.rest)
+    if args.root:
+        if not pillar.takes_root:
+            parser.error(f"{args.pillar} declares no --root")
+        rest = ["--root", args.root] + rest
+    if not present(args.pillar):
+        print(f"cq: {args.pillar} belongs to module {module_owners().get(args.pillar, '?')}, "
+              "which is not enabled; add it with `cq deploy --modules`", file=sys.stderr)
+        return 2
+    refused = _provider_refusal()
+    if refused is not None:
+        return refused
+    for capability, package, module in LOANS.get(args.pillar, ()):
+        if present(package):
+            lend(capability, module)
+    try:
+        return importlib.import_module(pillar.module).main(rest)
+    except SystemExit as exc:
+        # A child parser still owns its syntax and its usage text. Normalize argparse's historic
+        # exit 2 at the one shipped entry point, while preserving --help/--version exit 0.
+        if exc.code == 2:
+            return USAGE
+        raise
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

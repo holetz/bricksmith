@@ -8,7 +8,7 @@ resources (jobs, schemas, volumes) are built natively in Python — nothing is g
 The same library grows to include a column registry with a naming grammar, a model development
 flow and data and model monitoring, with agent skills that cover the work end to end.
 
-> **Status:** planning. Public repository, nothing released yet. See the [roadmap](docs/roadmap.md)
+> **Status:** planning. Public repository, nothing released yet. See the [roadmap](docs/vision/roadmap.md)
 > and [development epic](https://github.com/holetz/bricksmith/blob/quenching/specs/5.md).
 
 ## One library, growing capabilities
@@ -45,7 +45,7 @@ extras within `bricksmith`; installing a capability will not require a separate 
 See [decision 0009](docs/decisions/0009-one-library-shared-task-scopes.md).
 
 Development uses generic behavioral requirements and independently designed examples and tests.
-The [capability review](docs/planning/capability-review.md) feeds the epic without carrying private
+The [capability review](docs/project/capability-review.md) feeds the epic without carrying private
 source code, vocabulary or history into the library. See
 [decision 0010](docs/decisions/0010-behavior-derived-independent-development.md).
 
@@ -61,7 +61,7 @@ docs/           roadmap and decision records
 Planned: `template/` (copier template for a new data project), `examples/` (the rendered template,
 deployed by the end-to-end tests) and `plugins/bricksmith/` (the optional Claude Code plugin).
 The three delivery contracts and installation/update proofs are specified in
-[delivery contracts](docs/planning/delivery-contracts.md). Additional agent adapters are extensions.
+[delivery contracts](docs/project/delivery-contracts.md). Additional agent adapters are extensions.
 
 ## Development
 
@@ -80,7 +80,7 @@ For remote tests, configure [.env.example](.env.example) as an ignored `.env`. I
 both a primary Free Edition profile and a supplementary corporate profile, with explicit test
 destinations. Select one environment per run; the library will not load dotenv or authenticate
 on import. The profile/context runner is still planned. See
-[test setup and proof stages](docs/development/databricks-tests.md).
+[test setup and proof stages](docs/project/databricks-tests.md).
 
 ## License
 
