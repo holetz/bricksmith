@@ -6,10 +6,11 @@ from __future__ import annotations
 import subprocess
 import sys
 from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from bricksmith.graph import load_graph
 from bricksmith.mlops.featurestore import (
     FeatureStoreError,
     Lookup,
@@ -20,6 +21,11 @@ from bricksmith.mlops.featurestore import (
 )
 from bricksmith.mlops.featurestore.config import FeatureTable, plan_columns, require_closing
 from bricksmith.mlops.featurestore.rows import build_training_set, check_rows, stamp_availability
+from bricksmith.plan import build_plan
+from bricksmith.storage.spec import parse_write_spec
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 HEAVY = ("pyspark", "databricks", "mlflow", "sklearn", "pandas", "numpy", "pyarrow")
 
@@ -312,3 +318,67 @@ def test_training_set_guards() -> None:
     assert build_training_set([], lookups, definitions, data).data == []
     with pytest.raises(FeatureStoreError, match="no feature table definition"):
         build_training_set([], lookups, {}, data)
+
+
+# --- plan integration ------------------------------------------------------------------------------------
+
+FEATURE_TASK = """
+from bricksmith.tasks import task
+
+
+@task(kind="features", outputs=OUTPUTS, metadata=METADATA)
+def balances(ctx):
+    ctx.write("balances", [])
+"""
+
+
+def feature_project(root: Path, metadata: dict[str, Any], outputs: object = "balances") -> Path:
+    path = root / "catalogs/main/features/balances.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = FEATURE_TASK.replace("METADATA", repr(metadata)).replace("OUTPUTS", repr(outputs))
+    path.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_plan_derives_replace_by_closing_for_a_feature_table(tmp_path: Path) -> None:
+    plan = build_plan(load_graph(feature_project(tmp_path, {"feature_table": declaration()})))
+    assert not plan.errors
+    options = plan.entry("main.features.balances").targets[0].options
+    assert options["write"] == "replace_partitions"
+    assert options["partition_by"] == ["closing_date"] and options["keys"] == ["account_id", "closing_date"]
+    spec = parse_write_spec(options)
+    assert spec.strategy == "replace_partitions" and spec.keys == ("account_id", "closing_date")
+    agreeing = {"feature_table": declaration(), "write": "replace_partitions", "partition_by": ["closing_date"]}
+    assert not build_plan(load_graph(feature_project(tmp_path / "same", agreeing))).errors
+
+
+def test_plan_applies_the_options_to_the_declared_output_only(tmp_path: Path) -> None:
+    metadata = {"feature_table": declaration(output="balances"), "write": "overwrite"}
+    with_output = feature_project(tmp_path, metadata, ["balances", "balances_audit"])
+    plan = build_plan(load_graph(with_output))
+    assert [i.code for i in plan.errors] == ["invalid_feature_table"]
+    assert "write='overwrite' conflicts" in plan.errors[0].message
+    metadata = {"feature_table": declaration(output="balances")}
+    targets = (
+        build_plan(load_graph(feature_project(tmp_path / "b", metadata, ["balances", "audit"])))
+        .entry("main.features.balances")
+        .targets
+    )
+    assert targets[0].options["write"] == "replace_partitions" and "write" not in targets[1].options
+
+
+@pytest.mark.parametrize(
+    ("metadata", "outputs", "message"),
+    [
+        ({"feature_table": declaration(), "partition_by": ["other"]}, "balances", "partition_by"),
+        ({"feature_table": declaration(), "keys": ["account_id"]}, "balances", "keys"),
+        ({"feature_table": declaration()}, ["balances", "audit"], "declare output"),
+        ({"feature_table": declaration(output="nothing")}, "balances", "exactly one task output"),
+        ({"feature_table": declaration(frequency="hourly")}, "balances", "frequency"),
+    ],
+)
+def test_invalid_feature_tables_are_plan_errors(
+    tmp_path: Path, metadata: dict[str, Any], outputs: object, message: str
+) -> None:
+    plan = build_plan(load_graph(feature_project(tmp_path, metadata, outputs)))
+    assert [i.code for i in plan.errors] == ["invalid_feature_table"] and message in plan.errors[0].message

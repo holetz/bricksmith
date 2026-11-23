@@ -372,6 +372,8 @@ def _table_steps(  # noqa: C901, PLR0912, PLR0915 - one branch per strategy
         mutate = [Step(MUTATE, "replace the whole table" if exists else "create the table from the input", sql)]
     elif spec.strategy == "replace_partitions":
         pre += window_checks
+        if spec.keys:
+            pre += _key_steps(spec.keys)
         extra, mutate = _replace_steps(spec, base, target, values)
         pre += extra
         if not exists:
