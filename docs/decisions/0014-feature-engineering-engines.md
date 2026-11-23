@@ -1,6 +1,6 @@
 ---
 type: decision
-title: "0012. Feature engineering: one catalog, a numpy oracle and native Spark by default"
+title: "0014. Feature engineering: one catalog, a numpy oracle and native Spark by default"
 description: "Why windowed features are declared once and computed by a numpy reference, native Spark expressions or an Arrow engine."
 resource: "src/bricksmith/features/**"
 timestamp: "2026-11-23T09:30:00-03:00"
@@ -8,7 +8,7 @@ audience: both
 authority: current
 ---
 
-# 0012. Feature engineering: one catalog, a numpy oracle and native Spark by default
+# 0014. Feature engineering: one catalog, a numpy oracle and native Spark by default
 
 - Status: accepted
 - Date: 2026-11-23

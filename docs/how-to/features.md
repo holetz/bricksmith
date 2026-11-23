@@ -159,4 +159,4 @@ Definitions that differ from naive positional-array code, each covered by a gold
 - Terciles are null below three positions instead of dividing by zero.
 - Percentiles never index past the window.
 
-See [decision 0012](../decisions/0012-feature-engineering-engines.md) for why there are three engines.
+See [decision 0014](../decisions/0014-feature-engineering-engines.md) for why there are three engines.
