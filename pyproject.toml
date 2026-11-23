@@ -21,6 +21,7 @@ spark = ["databricks-connect"]
 sdk = ["databricks-sdk"]
 bundle = ["databricks-bundles"]
 mlops = ["mlflow", "scikit-learn"]
+features = ["databricks-feature-engineering"]
 postgres = [
     "psycopg[binary]>=3.3.6",
 ]
