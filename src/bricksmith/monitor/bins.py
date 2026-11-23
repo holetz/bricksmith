@@ -17,6 +17,7 @@ NULL = "null"
 BELOW = "below"
 ABOVE = "above"
 UNSEEN = "unseen"
+ZERO = "zero"
 OUTLIERS = ("separate", "clip")
 NUMERIC_METHODS = ("quantile", "fixed")
 
@@ -44,6 +45,7 @@ class BinSpec:
     categories: tuple[str, ...] = ()
     counts: Mapping[str, int] = field(default_factory=dict)
     method: str = ""
+    zero: bool = False
 
     def bin_ids(self) -> tuple[str, ...]:
         """Return the bin ids in a stable order."""
@@ -51,9 +53,10 @@ class BinSpec:
             return (*(f"cat:{c}" for c in self.categories), UNSEEN, NULL)
         edge = (BELOW,) if self.outliers == "separate" else ()
         tail = (ABOVE,) if self.outliers == "separate" else ()
-        return (*edge, *(f"bin_{i}" for i in range(len(self.edges) - 1)), *tail, NULL)
+        zero = (ZERO,) if self.zero else ()
+        return (*edge, *zero, *(f"bin_{i}" for i in range(len(self.edges) - 1)), *tail, NULL)
 
-    def assign(self, value: object) -> str:
+    def assign(self, value: object) -> str:  # noqa: PLR0911 - one return per bin rule
         """Return the bin id of ``value``; never refits."""
         if is_null(value):
             return NULL
@@ -61,6 +64,8 @@ class BinSpec:
             text = category_text(value)
             return f"cat:{text}" if text in self.categories else UNSEEN
         x = float(value)  # type: ignore[arg-type]
+        if self.zero and x == 0:
+            return ZERO
         last = len(self.edges) - 1
         if x < self.edges[0]:
             return BELOW if self.outliers == "separate" else "bin_0"
@@ -72,8 +77,8 @@ class BinSpec:
         return f"bin_{last - 1}"  # pragma: no cover - unreachable for ordered edges
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form."""
-        return {
+        """Return the serializable form; ``zero`` appears only when set, so older forms are unchanged."""
+        data: dict[str, Any] = {
             "categories": list(self.categories),
             "column": self.column,
             "counts": {k: int(self.counts[k]) for k in sorted(self.counts)},
@@ -82,6 +87,9 @@ class BinSpec:
             "method": self.method,
             "outliers": self.outliers,
         }
+        if self.zero:
+            data["zero"] = True
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> BinSpec:
@@ -94,6 +102,7 @@ class BinSpec:
             categories=tuple(str(c) for c in data.get("categories", ())),
             counts={str(k): int(v) for k, v in data.get("counts", {}).items()},
             method=str(data.get("method", "")),
+            zero=data.get("zero", False) is True,
         )
 
 
@@ -105,9 +114,11 @@ def count_bins(spec: BinSpec, values: Mapping[Hashable, int]) -> dict[str, int]:
     return result
 
 
-def _quantile_edges(counts: Mapping[Hashable, int], bins: int) -> tuple[float, ...]:
+def _quantile_edges(counts: Mapping[Hashable, int], bins: int, *, allow_empty: bool = False) -> tuple[float, ...]:
     ordered = sorted((float(v), int(c)) for v, c in counts.items() if not is_null(v) and c > 0)  # type: ignore[arg-type]
     total = sum(c for _, c in ordered)
+    if total == 0 and allow_empty:
+        return (0.0, 0.0)
     if total == 0:
         msg = "cannot fit numeric bins: no non-null values"
         raise MonitorError(msg)
@@ -128,7 +139,8 @@ def fit_bins(column: str, counts: Mapping[Hashable, int], config: Mapping[str, A
     """Fit one column from a ``value -> count`` mapping (null and NaN keys allowed) and a bin configuration.
 
     ``config``: ``{"type": "numeric", "method": "quantile", "bins": 4}``, ``{"type": "numeric", "edges": [...]}`` or
-    ``{"type": "categorical", "max_categories": 20, "min_count": 1}``; numeric also takes ``outliers``.
+    ``{"type": "categorical", "max_categories": 20, "min_count": 1}``; numeric also takes ``outliers`` and
+    ``zero: "separate"`` (exact zeros get their own bin and quantile edges are fitted on the non-zero values).
     """
     kind = str(config.get("type", "numeric"))
     if kind == "categorical":
@@ -147,6 +159,7 @@ def fit_bins(column: str, counts: Mapping[Hashable, int], config: Mapping[str, A
         if outliers not in OUTLIERS:
             msg = f"outliers must be one of {', '.join(OUTLIERS)}, got {outliers!r}"
             raise MonitorError(msg)
+        zero = _zero_option(column, config.get("zero", False))
         if "edges" in config:
             edges = tuple(float(e) for e in config["edges"])
             if len(edges) < MIN_EDGES or any(b <= a for a, b in itertools.pairwise(edges)):
@@ -159,11 +172,31 @@ def fit_bins(column: str, counts: Mapping[Hashable, int], config: Mapping[str, A
             if method != "quantile" or bins < 1:
                 msg = f"{column}: numeric bins need method 'quantile' with bins >= 1, or explicit edges"
                 raise MonitorError(msg)
-            edges = _quantile_edges(counts, bins)
-        spec = BinSpec(column, "numeric", edges=edges, outliers=outliers, method=method)
+            edges = _quantile_edges(_without_zeros(counts) if zero else counts, bins, allow_empty=zero)
+        spec = BinSpec(column, "numeric", edges=edges, outliers=outliers, method=method, zero=zero)
     else:
         msg = f"{column}: bin type must be 'numeric' or 'categorical', got {kind!r}"
         raise MonitorError(msg)
     return BinSpec(
-        spec.column, spec.kind, spec.edges, spec.outliers, spec.categories, count_bins(spec, counts), spec.method
+        spec.column,
+        spec.kind,
+        spec.edges,
+        spec.outliers,
+        spec.categories,
+        count_bins(spec, counts),
+        spec.method,
+        spec.zero,
     )
+
+
+def _zero_option(column: str, value: object) -> bool:
+    if value in (False, None, "", "none"):
+        return False
+    if value in (True, "separate"):
+        return True
+    msg = f"{column}: zero must be 'separate' (or true/false), got {value!r}"
+    raise MonitorError(msg)
+
+
+def _without_zeros(counts: Mapping[Hashable, int]) -> dict[Hashable, int]:
+    return {v: c for v, c in counts.items() if is_null(v) or float(v) != 0}  # type: ignore[arg-type]
