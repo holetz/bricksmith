@@ -10,6 +10,7 @@ import pytest
 
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.model.tables import (
+    ALERTS,
     KEYS,
     KINDS,
     RESULTS,
@@ -31,7 +32,16 @@ def test_every_key_is_a_column_and_results_are_keyed_by_run() -> None:
     assert {"development_value", "out_of_time_value", "monitoring_period"} <= set(SCHEMAS[RESULTS])
     options = write_options(RUNS)
     assert options["write"] == "merge" and options["keys"] == ["run_id", "model"]
-    assert options["on_empty"] == "allow_empty"
+    assert options["on_empty"] == "allow_empty" and options["evolution"] == {}
+
+
+def test_judgment_and_alert_span_columns_are_additive() -> None:
+    assert {"limit_kind", "limit_reference", "compared_value", "baseline_mean", "baseline_sd", "baseline_points",
+            "trend_status", "trend_expected", "trend_deviation"} <= set(SCHEMAS[RESULTS])  # fmt: skip
+    assert {"kind", "state", "opened_period", "escalated_period", "closed_period", "last_period",
+            "flagged_periods", "recurrence"} <= set(SCHEMAS[ALERTS])  # fmt: skip
+    assert {"open_alerts", "critical_alerts"} <= set(SCHEMAS[RUNS])
+    assert KEYS[ALERTS] == ("model", "run_id", "alert_id")
 
 
 def test_typed_rows_and_merge() -> None:
@@ -96,3 +106,21 @@ def test_views_read_only_the_latest_finished_run() -> None:
     ).fetchall()
     assert status == [("2026-01", "green", 0, 0), ("2026-02", "yellow", 0, 1)]
     assert db.execute("SELECT count(*) FROM main.model_monitoring_open_alerts").fetchone() == (0,)
+
+
+def test_open_alerts_view_keeps_open_spans_only() -> None:
+    db = sqlite3.connect(":memory:")
+    for kind in KINDS:
+        _create(db, kind)
+    alert = {"model": "m", "model_version": "1", "run_id": "r1", "monitoring_period": "2026-02", "metric": "psi"}
+    _insert(db, ALERTS, [
+        {**alert, "alert_id": "a", "kind": "light", "state": "open"},
+        {**alert, "alert_id": "b", "kind": "persistence", "state": "closed"},
+        {**alert, "alert_id": "c", "kind": "trend", "state": "open"},
+        {**alert, "alert_id": "d"},  # written before alert states existed
+    ])  # fmt: skip
+    _insert(db, RUNS, [{"run_id": "r1", "model": "m", "status": "success", "finished_at": "2026-03-01T00:00:00"}])
+    for statement in view_statements("main"):
+        db.execute(statement.replace("CREATE OR REPLACE VIEW", "CREATE VIEW"))
+    found = db.execute("SELECT alert_id FROM main.model_monitoring_open_alerts ORDER BY 1").fetchall()
+    assert found == [("a",), ("c",), ("d",)]

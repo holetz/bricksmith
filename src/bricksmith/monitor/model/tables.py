@@ -4,6 +4,9 @@ Results, details and alerts carry the run id in their key: a rerun adds rows, an
 version and monitoring period, the latest run whose record says it finished (``success`` or ``partial``). The run
 record is written last, so rows of a run that died mid-write are never read. Every column a report filters on is a
 plain scalar; only the binning ``body`` keeps JSON.
+
+Columns added after a table was first created (limit kinds, baselines, trend and alert spans) reach existing tables
+through the ``evolution`` write option, which admits compatible additions only.
 """
 
 from __future__ import annotations
@@ -44,7 +47,9 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "value": "DOUBLE", "light": "STRING", "light_rank": "INT", "reason": "STRING", "green_limit": "DOUBLE",
         "red_limit": "DOUBLE", "direction": "STRING", "rows": "BIGINT", "reference": "STRING",
         "development_value": "DOUBLE", "out_of_time_value": "DOUBLE", "binning_version": "INT",
-        "computed_at": "STRING",
+        "computed_at": "STRING", "limit_kind": "STRING", "limit_reference": "STRING", "compared_value": "DOUBLE",
+        "baseline_mean": "DOUBLE", "baseline_sd": "DOUBLE", "baseline_points": "INT", "trend_status": "STRING",
+        "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE",
     },
     DETAILS: {
         "model": "STRING", "model_version": "STRING", "run_id": "STRING", **_PERIOD, "bin": "STRING",
@@ -55,14 +60,17 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "model": "STRING", "model_version": "STRING", "run_id": "STRING", "alert_id": "STRING",
         "monitoring_period": "STRING", "data_period": "STRING", "segment": "STRING", "column": "STRING",
         "metric": "STRING", "family": "STRING", "light": "STRING", "severity": "STRING", "severity_rank": "INT",
-        "value": "DOUBLE", "message": "STRING", "created_at": "STRING",
+        "value": "DOUBLE", "message": "STRING", "created_at": "STRING", "kind": "STRING", "state": "STRING",
+        "opened_period": "STRING", "escalated_period": "STRING", "closed_period": "STRING", "last_period": "STRING",
+        "flagged_periods": "INT", "recurrence": "BOOLEAN",
     },
     RUNS: {
         "run_id": "STRING", "model": "STRING", "model_version": "STRING", "task_id": "STRING",
         "physical": "STRING", "input_version": "STRING", "code_version": "STRING", "binning_version": "INT",
         "binning_fingerprint": "STRING", "references": "STRING", "latest_period": "STRING", "periods": "INT",
         "status": "STRING", "gate": "STRING", "red": "INT", "yellow": "INT", "errors": "INT", "alerts": "INT",
-        "message": "STRING", "started_at": "STRING", "finished_at": "STRING",
+        "message": "STRING", "started_at": "STRING", "finished_at": "STRING", "open_alerts": "INT",
+        "critical_alerts": "INT",
     },
 }  # fmt: skip
 KEYS: dict[str, tuple[str, ...]] = {
@@ -77,8 +85,17 @@ _PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
 
 
 def write_options(kind: str) -> dict[str, object]:
-    """Return the write metadata of a model monitoring table: ``merge`` on its key; an empty write creates it."""
-    return {"write": "merge", "keys": list(KEYS[kind]), "on_empty": "allow_empty", "model_monitoring_table": kind}
+    """Return the write metadata of a model monitoring table.
+
+    ``merge`` on its key; an empty write creates it; ``evolution`` adds columns introduced after the table existed.
+    """
+    return {
+        "write": "merge",
+        "keys": list(KEYS[kind]),
+        "on_empty": "allow_empty",
+        "evolution": {},
+        "model_monitoring_table": kind,
+    }
 
 
 def key_of(kind: str, row: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -148,8 +165,9 @@ def view_statements(scope: str, prefix: str = "model_monitoring_") -> list[str]:
 
     ``<prefix>latest``: results of the latest finished run per model, version and monitoring period.
     ``<prefix>latest_details``: the per-bin details of the same runs. ``<prefix>model_status``: the worst light
-    per model, version and monitoring period with red, yellow and error counts. ``<prefix>open_alerts``: alerts of
-    the latest finished run per model, version and monitoring period.
+    per model, version and monitoring period with red, yellow and error counts. ``<prefix>open_alerts``: the open
+    alerts (light alerts, and persistence and trend spans still open) of the latest finished run per model, version
+    and monitoring period; alerts written before alert states existed count as open.
     """
     latest = table_name(scope, prefix, "latest")
     status = (
@@ -164,11 +182,15 @@ def view_statements(scope: str, prefix: str = "model_monitoring_") -> list[str]:
         f"  max(CASE WHEN `column` = '' AND segment = '' AND metric = 'row_count' THEN value END) AS row_count\n"
         f"FROM {latest} GROUP BY model, model_version, monitoring_period"
     )
+    open_alerts = (
+        f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'open_alerts')} AS\n"
+        f"SELECT * FROM ({_trusted(scope, prefix, ALERTS)}) a\nWHERE coalesce(a.state, 'open') = 'open'"
+    )
     return [
         f"CREATE OR REPLACE VIEW {latest} AS\n{_trusted(scope, prefix, RESULTS)}",
         f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'latest_details')} AS\n{_trusted(scope, prefix, DETAILS)}",
         status,
-        f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'open_alerts')} AS\n{_trusted(scope, prefix, ALERTS)}",
+        open_alerts,
     ]
 
 
