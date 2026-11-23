@@ -1,7 +1,8 @@
 """The ``model_monitoring`` declaration of a task: which model, which prediction columns, references and metrics.
 
 A declaration names the prediction table roles (score, label, grade, segment, sample), the development and
-out-of-time references, the metric families, the limits that color each result and the gate the run applies.
+out-of-time references, the metric families, the limits that color each result (absolute bands, relative change
+against a reference, or control-chart distance), the trend and persistence policies and the gate the run applies.
 Unknown keys and invalid values are errors, so a typo fails the plan instead of silently watching nothing.
 """
 
@@ -13,7 +14,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import BOTH, HIGHER, Limits
+from bricksmith.monitor.limits import BOTH, CONTROL, HIGHER, RELATIVE, Limits
+from bricksmith.monitor.persistence import PersistencePolicy
+from bricksmith.monitor.trend import TrendPolicy
 
 KEY = "model_monitoring"
 DEVELOPMENT = "development"
@@ -45,12 +48,15 @@ DEFAULT_LIMITS: dict[str, Limits | None] = {
     "csi": Limits(0.10, 0.25, HIGHER),
     "grade_psi": Limits(0.10, 0.25, HIGHER),
     "volume_ratio": Limits(0.20, 0.50, BOTH, center=1.0),
+    "calibration_ratio": Limits(0.30, 0.50, BOTH, center=1.0),
 }
-GATE_CONDITIONS = ("red", "yellow")
+DEFAULT_TREND_METRICS = ("psi", "ks", "auc", "calibration_ratio")
+GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
 KEYS = frozenset({
     "output", "model", "model_version", "model_version_column", "period", "score", "label", "grade", "segment",
     "sample", "references", "features", "feature_binning", "critical_fields", "metrics", "label_lag", "limits",
-    "gate", "min_rows", "max_periods", "score_bins", "calibration_bins", "scope", "prefix", "epsilon",
+    "gate", "min_rows", "max_periods", "score_bins", "calibration_bins", "scope", "prefix", "epsilon", "trend",
+    "trend_metrics", "persistence", "control_min_points",
 })  # fmt: skip
 
 
@@ -86,7 +92,11 @@ class Sample:
 
 @dataclass(frozen=True)
 class Gate:
-    """What the run does: ``fail_on`` colors in the latest monitoring period, and the policy for engine errors."""
+    """What the run does: ``fail_on`` conditions and the policy for engine errors.
+
+    ``red`` and ``yellow`` count results of the latest monitoring period; ``critical`` and ``alert`` count open
+    persistence and trend alerts (critical ones only, or any).
+    """
 
     fail_on: tuple[str, ...] = ()
     on_error: str = "warn"
@@ -125,6 +135,10 @@ class ModelMonitorConfig:
     metrics: tuple[str, ...] = FAMILIES
     label_lag: int = 0
     limits: dict[str, Limits | None] = field(default_factory=lambda: dict(DEFAULT_LIMITS))
+    trend: TrendPolicy | None = field(default_factory=TrendPolicy)
+    trend_metrics: tuple[str, ...] = DEFAULT_TREND_METRICS
+    persistence: PersistencePolicy = field(default_factory=PersistencePolicy)
+    control_min_points: int = 3
     gate: Gate = field(default_factory=Gate)
     min_rows: int = 30
     max_periods: int = 24
@@ -154,6 +168,10 @@ class ModelMonitorConfig:
         """Return the limits of ``metric`` (``None``: no rule)."""
         return self.limits.get(metric)
 
+    def control_metrics(self) -> frozenset[str]:
+        """Return the metrics judged by control-chart limits (their baselines need per-period reference values)."""
+        return frozenset(m for m, lim in self.limits.items() if lim is not None and lim.kind == CONTROL)
+
     def binning_fingerprint(self) -> str:
         """Hash what decides the bins; limits, gate and lags never trigger a refit."""
         content = {
@@ -172,6 +190,7 @@ class ModelMonitorConfig:
         """Return the serializable form."""
         return {
             "calibration_bins": self.calibration_bins,
+            "control_min_points": self.control_min_points,
             "critical_fields": list(self.critical_fields),
             "development": self.development.to_dict(),
             "epsilon": self.epsilon,
@@ -190,6 +209,7 @@ class ModelMonitorConfig:
             "out_of_time": self.out_of_time.to_dict() if self.out_of_time else None,
             "output": self.output,
             "period": self.period,
+            "persistence": self.persistence.to_dict(),
             "prefix": self.prefix,
             "sample": self.sample,
             "scope": self.scope,
@@ -198,6 +218,8 @@ class ModelMonitorConfig:
             "segment": self.segment,
             "stability_dataset": self.stability_dataset,
             "stability_prefix": self.stability_prefix,
+            "trend": self.trend.to_dict() if self.trend else None,
+            "trend_metrics": list(self.trend_metrics),
         }
 
 
@@ -269,17 +291,42 @@ def _metrics(value: object) -> tuple[str, ...]:
     return tuple(f for f in FAMILIES if f in items)
 
 
-def _limits(value: object) -> dict[str, Limits | None]:
+def _limit(metric: str, item: object, oot: Sample | None) -> Limits:
+    """Parse one metric's limits; a relative limit compares with ``development`` unless it names ``out_of_time``."""
+    limits = Limits.from_dict(item)
+    if limits.kind != RELATIVE:
+        return limits
+    reference = limits.reference or DEVELOPMENT
+    if reference not in REFERENCES:
+        msg = f"limits of {metric!r}: reference must be {DEVELOPMENT} or {OUT_OF_TIME}, got {reference!r}"
+        raise _fail(msg)
+    if reference == OUT_OF_TIME and oot is None:
+        msg = f"limits of {metric!r} compare with {OUT_OF_TIME}, so declare that reference"
+        raise _fail(msg)
+    return Limits(limits.green, limits.red, limits.direction, limits.center, RELATIVE, reference)
+
+
+def _limits(value: object, oot: Sample | None) -> dict[str, Limits | None]:
     if not isinstance(value, dict):
-        msg = "limits must map a metric to {green, red, direction, center} (or null to disable)"
+        msg = "limits must map a metric to {green, red, direction, center, kind, reference} (or null to disable)"
         raise _fail(msg)
     result = dict(DEFAULT_LIMITS)
     for metric, item in value.items():
         if metric not in METRICS:
             msg = f"unknown metric {metric!r} in limits; known: {', '.join(METRICS)}"
             raise _fail(msg)
-        result[metric] = None if item is None else Limits.from_dict(item)
+        result[metric] = None if item is None else _limit(metric, item, oot)
     return result
+
+
+def _trend(data: dict[str, Any]) -> tuple[TrendPolicy | None, tuple[str, ...]]:
+    value = data.get("trend", {})
+    metrics = data.get("trend_metrics", list(DEFAULT_TREND_METRICS))
+    if not isinstance(metrics, list) or set(metrics) - set(METRICS):
+        msg = f"trend_metrics must be a list of metrics among {', '.join(METRICS)}"
+        raise _fail(msg)
+    policy = None if value in (None, False) else TrendPolicy.from_dict(value or {})
+    return policy, tuple(m for m in METRICS if m in metrics)
 
 
 def _gate(value: object) -> Gate:
@@ -322,6 +369,7 @@ def parse_config(data: object) -> ModelMonitorConfig:
         raise _fail(msg)
     sample = _optional(data, "sample")
     development, oot = _references(data["references"], sample)
+    trend, trend_metrics = _trend(data)
     stability_dataset, stability_prefix = _binning(data.get("feature_binning"))
     critical = data.get("critical_fields", [])
     if not isinstance(critical, list):
@@ -347,7 +395,11 @@ def parse_config(data: object) -> ModelMonitorConfig:
             critical_fields=tuple(_name(c, "critical_fields item") for c in critical),
             metrics=_metrics(data.get("metrics")),
             label_lag=_int(data, "label_lag", 0, 0),
-            limits=_limits(data.get("limits", {})),
+            limits=_limits(data.get("limits", {}), oot),
+            trend=trend,
+            trend_metrics=trend_metrics,
+            persistence=PersistencePolicy.from_dict(data.get("persistence", {})),
+            control_min_points=_int(data, "control_min_points", 3, 2),
             gate=_gate(data.get("gate")),
             min_rows=_int(data, "min_rows", 30, 0),
             max_periods=_int(data, "max_periods", 24, 1),
@@ -377,6 +429,7 @@ __all__ = [
     "CALIBRATION",
     "COMPLETENESS",
     "DEFAULT_LIMITS",
+    "DEFAULT_TREND_METRICS",
     "DEVELOPMENT",
     "DISCRIMINATION",
     "FAMILIES",
