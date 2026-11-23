@@ -203,7 +203,8 @@ def attach_labels(frame: DataFrame, development: Development, labels: DataFrame 
         if repeated:
             msg = f"label rows repeat the key {tuple(repeated[0][k] for k in keys)!r}"
             raise DatasetValidationError(msg)
-        frame = frame.drop(label.name).join(labels, keys, "left")
+        kept = [c for c in frame.columns if c != label.name]
+        frame = frame.select(*kept).join(labels, keys, "left").select(*kept, label.name)
     elif label.name not in frame.columns:
         frame = frame.withColumn(label.name, f.lit(None))
     late = frame.where(shift_column(f.col(development.closing), label.horizon, development.frequency) > f.lit(as_of))
