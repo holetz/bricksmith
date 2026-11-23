@@ -20,6 +20,7 @@ from bricksmith.mlops.featurestore.config import (
     parse_feature_table,
     shift,
 )
+from bricksmith.mlops.featurestore.rows import TrainingSet, build_training_set, check_rows, stamp_availability
 
 __all__ = [
     "FEATURE_TYPES",
@@ -29,8 +30,12 @@ __all__ = [
     "FeatureStoreError",
     "FeatureTable",
     "Lookup",
+    "TrainingSet",
+    "build_training_set",
+    "check_rows",
     "feature_table_of",
     "is_closing",
     "parse_feature_table",
     "shift",
+    "stamp_availability",
 ]

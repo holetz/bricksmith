@@ -1,4 +1,5 @@
-"""Offline tests for the closing-based feature store: declaration, closing calendar and lookups."""
+"""Offline tests for the closing-based feature store: declaration, calendar, lookups and the row engine."""
+# ruff: noqa: PT018 - dense assertions on hand-derived values
 
 from __future__ import annotations
 
@@ -17,7 +18,8 @@ from bricksmith.mlops.featurestore import (
     parse_feature_table,
     shift,
 )
-from bricksmith.mlops.featurestore.config import plan_columns, require_closing
+from bricksmith.mlops.featurestore.config import FeatureTable, plan_columns, require_closing
+from bricksmith.mlops.featurestore.rows import build_training_set, check_rows, stamp_availability
 
 HEAVY = ("pyspark", "databricks", "mlflow", "sklearn", "pandas", "numpy", "pyarrow")
 
@@ -166,3 +168,147 @@ def test_lookup_resolution_and_column_plan() -> None:
         Lookup("cat.sch.balances", keys=("a", "b")).spine_keys(table)
     with pytest.raises(FeatureStoreError, match="not declared"):
         Lookup("cat.sch.balances", features=("nope",)).selected(table)
+
+
+# --- row engine ------------------------------------------------------------------------------------------
+
+
+def balances() -> FeatureTable:
+    return parse_feature_table(declaration())
+
+
+def source_rows() -> list[dict[str, Any]]:
+    """Rows as computed at the closing they describe (before availability stamping)."""
+    rows = []
+    for account in (1, 2):
+        for month, described in enumerate(("2024-01-31", "2024-02-29", "2024-03-31")):
+            if account == 2 and month == 0:
+                continue
+            value = float(account * 100 + month)
+            rows.append({
+                "account_id": account,
+                "described": described,
+                "balance_avg_3": value,
+                "segment": "ab"[account - 1],
+                "balance_hist": [value, value - 1.0],
+            })  # fmt: skip
+    return rows
+
+
+def test_stamp_availability_moves_rows_to_the_closing_they_became_known() -> None:
+    stamped = stamp_availability(source_rows(), balances(), described="described")
+    assert [r["closing_date"] for r in stamped[:3]] == [date(2024, 2, 29), date(2024, 3, 31), date(2024, 4, 30)]
+    assert all("described" not in r for r in stamped)
+    lagless = parse_feature_table(declaration(availability_lag=0))
+    assert stamp_availability([{"closing_date": "2024-01-31"}], lagless)[0]["closing_date"] == date(2024, 1, 31)
+    with pytest.raises(FeatureStoreError, match="no column"):
+        stamp_availability([{"x": 1}], lagless)
+    with pytest.raises(FeatureStoreError, match="not a monthly closing"):
+        stamp_availability([{"closing_date": "2024-01-15"}], lagless)
+
+
+def test_check_rows_refuses_broken_primary_keys_and_types() -> None:
+    table = balances()
+    rows = stamp_availability(source_rows(), table, described="described")
+    assert len(check_rows(rows, table)) == len(rows)
+    with pytest.raises(FeatureStoreError, match="appear more than once"):
+        check_rows([*rows, rows[0]], table)
+    with pytest.raises(FeatureStoreError, match="null"):
+        check_rows([{**rows[0], "account_id": None}], table)
+    with pytest.raises(FeatureStoreError, match="miss declared columns: segment"):
+        check_rows([{k: v for k, v in rows[0].items() if k != "segment"}], table)
+    with pytest.raises(FeatureStoreError, match="not a monthly closing"):
+        check_rows([{**rows[0], "closing_date": date(2024, 2, 1)}], table)
+    for column, value in (
+        ("balance_avg_3", "x"),
+        ("balance_avg_3", True),
+        ("segment", 1),
+        ("balance_hist", [1.0, "a"]),
+    ):
+        with pytest.raises(FeatureStoreError, match=f"feature {column}"):
+            check_rows([{**rows[0], column: value}], table)
+    nulls = check_rows([{**rows[0], "balance_avg_3": None, "balance_hist": None}], table)
+    assert nulls[0]["balance_avg_3"] is None
+
+
+def test_map_features_are_type_checked() -> None:
+    table = parse_feature_table(
+        declaration(features={"m": {"description": "d", "type": "map<string,double>", "owner": "o", "order": "k"}})
+    )
+    row = {"account_id": 1, "closing_date": "2024-01-31"}
+    assert check_rows([{**row, "m": {"a": 1.0}}], table)[0]["m"] == {"a": 1.0}
+    with pytest.raises(FeatureStoreError, match="feature m"):
+        check_rows([{**row, "m": {"a": "x"}}], table)
+    with pytest.raises(FeatureStoreError, match="feature m"):
+        check_rows([{**row, "m": [1.0]}], table)
+
+
+def training_inputs() -> tuple[list[dict[str, Any]], dict[str, FeatureTable], dict[str, list[dict[str, Any]]]]:
+    table = balances()
+    stored = stamp_availability(source_rows(), table, described="described")
+    spine = [
+        {"account_id": 1, "closing_date": "2024-03-31", "label": 1},
+        {"account_id": 2, "closing_date": date(2024, 3, 31), "label": 0},
+        {"account_id": 3, "closing_date": "2024-03-31", "label": 0},
+        {"account_id": 2, "closing_date": "2024-02-29", "label": None},
+    ]
+    return spine, {"fs.balances": table}, {"fs.balances": stored}
+
+
+def test_training_set_joins_by_exact_closing_with_offsets_and_defaults() -> None:
+    spine, definitions, data = training_inputs()
+    lookups = [Lookup("fs.balances"), Lookup("fs.balances", features=("balance_avg_3",), offset=1, prefix="prev_")]
+    built = build_training_set(spine, lookups, definitions, data)
+    by_key = {(r["account_id"], r["closing_date"]): r for r in built.data}
+    first = by_key[1, date(2024, 3, 31)]
+    # Known at March: the February closing (lag 1); one period back: the January closing.
+    assert first["balance_avg_3"] == 101.0 and first["prev_balance_avg_3"] == 100.0
+    assert first["balance_hist"] == [101.0, 100.0] and first["label"] == 1
+    second = by_key[2, date(2024, 3, 31)]
+    assert second["balance_avg_3"] == 201.0 and second["prev_balance_avg_3"] is None
+    missing = by_key[3, date(2024, 3, 31)]
+    assert missing["segment"] == "unknown" and missing["balance_avg_3"] is None and missing["balance_hist"] is None
+    early = by_key[2, date(2024, 2, 29)]
+    assert early["balance_avg_3"] is None and early["segment"] == "unknown"
+    assert list(first) == ["account_id", "closing_date", "label", "balance_avg_3", "segment", "balance_hist",
+                           "prev_balance_avg_3"]  # fmt: skip
+    assert set(built.reads) == {"fs.balances"} and len(str(built.reads["fs.balances"])) == 64
+
+
+def test_training_and_scoring_differ_only_by_the_spine() -> None:
+    spine, definitions, data = training_inputs()
+    lookups = [Lookup("fs.balances")]
+    training = build_training_set(spine, lookups, definitions, data).data
+    scoring = build_training_set(
+        [{k: v for k, v in r.items() if k != "label"} for r in spine], lookups, definitions, data
+    )
+    assert [{k: v for k, v in r.items() if k != "label"} for r in training] == scoring.data
+
+
+def test_reads_fingerprint_is_order_independent_and_data_sensitive() -> None:
+    spine, definitions, data = training_inputs()
+    lookups = [Lookup("fs.balances")]
+    one = build_training_set(spine, lookups, definitions, data).reads
+    shuffled = build_training_set(spine, lookups, definitions, {"fs.balances": list(reversed(data["fs.balances"]))})
+    assert one == shuffled.reads
+    changed = [dict(r) for r in data["fs.balances"]]
+    changed[0]["balance_avg_3"] = 0.5
+    assert build_training_set(spine, lookups, definitions, {"fs.balances": changed}).reads != one
+
+
+def test_training_set_guards() -> None:
+    spine, definitions, data = training_inputs()
+    lookups = [Lookup("fs.balances")]
+    with pytest.raises(FeatureStoreError, match="appear more than once"):
+        build_training_set(spine, lookups, definitions, {"fs.balances": [*data["fs.balances"], data["fs.balances"][0]]})
+    with pytest.raises(FeatureStoreError, match="observation closing 2024-03-15"):
+        build_training_set([{"account_id": 1, "closing_date": "2024-03-15"}], lookups, definitions, data)
+    with pytest.raises(FeatureStoreError, match="no observation closing"):
+        build_training_set([{"account_id": 1}], lookups, definitions, data)
+    with pytest.raises(FeatureStoreError, match="no rows or no feature table definition"):
+        build_training_set(spine, lookups, definitions, {})
+    with pytest.raises(FeatureStoreError, match="produced twice"):
+        build_training_set([{**spine[0], "segment": "x"}], lookups, definitions, data)
+    assert build_training_set([], lookups, definitions, data).data == []
+    with pytest.raises(FeatureStoreError, match="no feature table definition"):
+        build_training_set([], lookups, {}, data)
