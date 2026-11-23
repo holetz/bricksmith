@@ -8,6 +8,7 @@ import pytest
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import Limits
 from bricksmith.monitor.model import FAMILIES, parse_config, parse_declarations
+from bricksmith.monitor.model.config import Lag
 from bricksmith.monitor.persistence import PersistencePolicy
 from bricksmith.monitor.trend import TrendPolicy
 
@@ -124,3 +125,38 @@ def test_missing_required_keys_and_duplicate_outputs() -> None:
     assert len(parse_declarations([{**BASE, "output": "a"}, {**BASE, "output": "b"}])) == 2
     with pytest.raises(MonitorError, match="distinct output"):
         parse_declarations([BASE, BASE])
+
+
+def test_lags_resolve_metric_then_family_then_label_lag() -> None:
+    config = parse_config({
+        **BASE, "label": "churned", "label_lag": 2,
+        "lags": {"auc": {"months": 12}, "discrimination": 3, "volumetry": {"periods": 1}},
+    })  # fmt: skip
+    assert config.lag_for("discrimination", "auc") == Lag(12, "months")
+    assert config.lag_for("discrimination", "ks") == Lag(3, "periods")
+    assert config.lag_for("calibration", "brier") == Lag(2, "periods")
+    assert config.lag_for("volumetry", "row_count") == Lag(1, "periods")
+    assert config.lag_for("score_psi", "psi") == Lag(0, "periods")
+    assert config.to_dict()["lags"]["auc"] == {"amount": 12, "unit": "months"}
+    assert parse_config(BASE).lags == {} and parse_config(BASE).to_dict()["lags"] == {}
+
+
+@pytest.mark.parametrize(
+    ("lags", "message"),
+    [
+        ({"wobble": 1}, "unknown metric or family 'wobble'"),
+        ({"auc": -1}, "a lag must be an integer >= 0"),
+        ({"auc": True}, "a lag must be an integer >= 0"),
+        ({"auc": {"weeks": 2}}, "one of periods or months"),
+        ({"auc": {"months": 1, "periods": 1}}, "one of periods or months"),
+        ({"auc": {"months": "x"}}, "a lag must be an integer >= 0"),
+        (["auc"], "lags must map"),
+    ],
+)
+def test_bad_lags_are_refused(lags: object, message: str) -> None:
+    with pytest.raises(MonitorError, match=message):
+        parse_config({**BASE, "lags": lags})
+
+
+def test_lags_never_trigger_a_refit() -> None:
+    assert parse_config(BASE).binning_fingerprint() == parse_config({**BASE, "lags": {"auc": 1}}).binning_fingerprint()

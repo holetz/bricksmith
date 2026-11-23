@@ -51,12 +51,15 @@ DEFAULT_LIMITS: dict[str, Limits | None] = {
     "calibration_ratio": Limits(0.30, 0.50, BOTH, center=1.0),
 }
 DEFAULT_TREND_METRICS = ("psi", "ks", "auc", "calibration_ratio")
+PERIODS = "periods"
+MONTHS = "months"
+LAG_UNITS = (PERIODS, MONTHS)
 GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
 KEYS = frozenset({
     "output", "model", "model_version", "model_version_column", "period", "score", "label", "grade", "segment",
     "sample", "references", "features", "feature_binning", "critical_fields", "metrics", "label_lag", "limits",
     "gate", "min_rows", "max_periods", "score_bins", "calibration_bins", "scope", "prefix", "epsilon", "trend",
-    "trend_metrics", "persistence", "control_min_points",
+    "trend_metrics", "persistence", "control_min_points", "lags",
 })  # fmt: skip
 
 
@@ -88,6 +91,27 @@ class Sample:
     def to_dict(self) -> dict[str, str]:
         """Return the serializable form."""
         return {"end": self.end, "name": self.name, "start": self.start, "value": self.value}
+
+
+@dataclass(frozen=True)
+class Lag:
+    """How far back a metric reads: ``amount`` observed periods, or ``amount`` calendar months."""
+
+    amount: int = 0
+    unit: str = PERIODS
+
+    def __post_init__(self) -> None:
+        """Require a non-negative integer amount and a known unit."""
+        if isinstance(self.amount, bool) or not isinstance(self.amount, int) or self.amount < 0:
+            msg = f"a lag must be an integer >= 0, got {self.amount!r}"
+            raise _fail(msg)
+        if self.unit not in LAG_UNITS:
+            msg = f"a lag unit must be {PERIODS} or {MONTHS}, got {self.unit!r}"
+            raise _fail(msg)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable form."""
+        return {"amount": self.amount, "unit": self.unit}
 
 
 @dataclass(frozen=True)
@@ -134,6 +158,7 @@ class ModelMonitorConfig:
     critical_fields: tuple[str, ...] = ()
     metrics: tuple[str, ...] = FAMILIES
     label_lag: int = 0
+    lags: dict[str, Lag] = field(default_factory=dict)
     limits: dict[str, Limits | None] = field(default_factory=lambda: dict(DEFAULT_LIMITS))
     trend: TrendPolicy | None = field(default_factory=TrendPolicy)
     trend_metrics: tuple[str, ...] = DEFAULT_TREND_METRICS
@@ -163,6 +188,13 @@ class ModelMonitorConfig:
             COMPLETENESS: bool(self.critical_fields),
         }
         return tuple(f for f in self.metrics if needs.get(f, True))
+
+    def lag_for(self, family: str, metric: str) -> Lag:
+        """Return the lag of ``metric``: its own, else its family's, else ``label_lag`` (label families), else none."""
+        found = self.lags.get(metric) or self.lags.get(family)
+        if found is not None:
+            return found
+        return Lag(self.label_lag) if family in LABEL_FAMILIES else Lag()
 
     def limits_for(self, metric: str) -> Limits | None:
         """Return the limits of ``metric`` (``None``: no rule)."""
@@ -199,6 +231,7 @@ class ModelMonitorConfig:
             "grade": self.grade,
             "label": self.label,
             "label_lag": self.label_lag,
+            "lags": {name: lag.to_dict() for name, lag in sorted(self.lags.items())},
             "limits": {m: lim.to_dict() if lim else None for m, lim in sorted(self.limits.items())},
             "max_periods": self.max_periods,
             "metrics": list(self.metrics),
@@ -289,6 +322,29 @@ def _metrics(value: object) -> tuple[str, ...]:
         msg = f"metrics must be a non-empty list among {', '.join(FAMILIES)}"
         raise _fail(msg)
     return tuple(f for f in FAMILIES if f in items)
+
+
+def _lag(name: str, value: object) -> Lag:
+    if isinstance(value, dict) and len(value) == 1 and set(value) <= set(LAG_UNITS):
+        ((unit, amount),) = value.items()
+        return Lag(amount, unit)
+    if isinstance(value, dict):
+        msg = f"lags[{name!r}] must be an integer or a mapping with one of {PERIODS} or {MONTHS}, got {value!r}"
+        raise _fail(msg)
+    return Lag(value)  # type: ignore[arg-type]
+
+
+def _lags(value: object) -> dict[str, Lag]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        msg = "lags must map metrics or families to a lag"
+        raise _fail(msg)
+    unknown = sorted(set(value) - set(METRICS) - set(FAMILIES))
+    if unknown:
+        msg = f"lags names unknown metric or family {', '.join(map(repr, unknown))}"
+        raise _fail(msg)
+    return {str(name): _lag(str(name), lag) for name, lag in value.items()}
 
 
 def _limit(metric: str, item: object, oot: Sample | None) -> Limits:
@@ -395,6 +451,7 @@ def parse_config(data: object) -> ModelMonitorConfig:
             critical_fields=tuple(_name(c, "critical_fields item") for c in critical),
             metrics=_metrics(data.get("metrics")),
             label_lag=_int(data, "label_lag", 0, 0),
+            lags=_lags(data.get("lags")),
             limits=_limits(data.get("limits", {}), oot),
             trend=trend,
             trend_metrics=trend_metrics,
@@ -438,11 +495,15 @@ __all__ = [
     "GRADE_PSI",
     "KEY",
     "LABEL_FAMILIES",
+    "LAG_UNITS",
     "METRICS",
+    "MONTHS",
     "OUT_OF_TIME",
+    "PERIODS",
     "SCORE_PSI",
     "VOLUMETRY",
     "Gate",
+    "Lag",
     "ModelMonitorConfig",
     "Sample",
     "parse_config",
