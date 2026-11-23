@@ -10,8 +10,10 @@ User guides that answer "how do I do X" with bricksmith, one capability per page
 * [Context and command line](context-and-cli.md) — How the immutable execution context and the command line select one explicit Databricks environment.
 * [Isolated experiments](experiments.md) — How to try a change in an isolated experiment revision without touching baseline outputs.
 * [External inputs, connectors and volume artifacts](external-io.md) — How to move small, bounded data between tasks and external inputs, SQL connectors and volume artifacts.
+* [Feature store](feature-store.md) — How to declare closing-based feature tables on tasks and build training and scoring sets by exact closing.
 * [Governance](governance.md) — How to declare, plan and apply tags, grants and metadata for managed resources.
 * [Model datasets](model-datasets.md) — How to build population, feature, label and training or prediction datasets as ordinary tasks.
+* [Model monitoring on tasks](model-monitoring.md) — How to declare model monitoring on the task that writes predictions and read its dashboard-ready results.
 * [Models: training, registry and lifecycle](models.md) — How to train, evaluate, register and promote models with ordinary tasks.
 * [Monitoring: references, drift, model quality and alerts](monitoring.md) — How to monitor references, drift, model quality and alerts from tables.
 * [Operations: events, reports, readiness, alerts and budgets](operations.md) — How to record run events and use reports, readiness checks, alerts and budgets.

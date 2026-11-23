@@ -88,6 +88,10 @@ def run_summary(report: RunReport) -> str:
             from bricksmith.monitor.stability.hook import summary_line  # noqa: PLC0415 - only when checks ran
 
             lines += [summary_line(s) for s in r.stability]
+        if r.model_monitoring:
+            from bricksmith.monitor.model.hook import summary_line as model_line  # noqa: PLC0415 - only when checks ran
+
+            lines += [model_line(m) for m in r.model_monitoring]
     counts = report.to_dict()["counts"]
     assert isinstance(counts, dict)  # noqa: S101 - narrowing for the type checker
     lines.append(", ".join(f"{k}={v}" for k, v in counts.items() if v))
