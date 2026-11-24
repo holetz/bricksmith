@@ -1,7 +1,7 @@
 """A reproducible benchmark of the feature engines: wall time per engine and aggregate family.
 
 Synthetic long tables (``entities x closings x columns``, seeded, with nulls) feed each engine one family at a
-time: the numpy reference over Python rows, and on Spark the native and Arrow engines over a frame generated
+time: the numpy reference over Python rows, and on Spark the JVM kernel, native and Arrow engines over a frame generated
 remotely from the same size (Spark's own hash, so the two data sets are alike in shape, not identical). Spark
 results are materialized with one ``max(hash(...))`` aggregate; one warm-up run per engine is excluded, and the time to
 materialize the source alone is reported as the ``source`` row. :func:`render_report` writes a markdown table.
@@ -29,7 +29,9 @@ if TYPE_CHECKING:
 REFERENCE = "reference"
 SPARK = "spark"
 ARROW = "arrow"
-BENCH_ENGINES = (REFERENCE, SPARK, ARROW)
+JVM = "jvm"
+#: ``jvm`` runs with ``engine="jvm"``, so a compute that cannot register the kernel fails instead of timing native.
+BENCH_ENGINES = (REFERENCE, JVM, SPARK, ARROW)
 SOURCE = "source"
 ALL = "all"
 WINDOWS = (3, 6, 12)
