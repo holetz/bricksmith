@@ -99,6 +99,19 @@ serverless. On the local benchmark, Arrow is never faster by enough to justify a
 uv run --group remote python scripts/features_benchmark.py --sizes 2000x24x4 --engines reference,spark,arrow
 ```
 
+The script reads its context from `BRICKSMITH_*` variables in the process environment, and from a `.env` file only
+when one exists, so a CI runner or a borrowed workstation needs no file. It prints one progress line per measurement
+to stderr and the markdown report to stdout. Two options help with long runs:
+
+- `--budget SECONDS` stops cleanly between measurements once the time is spent. The report keeps what ran and says
+  it is partial, listing the measurements not run. A measurement already started finishes, so the run can overshoot
+  by up to one.
+- `--single-closing` times the last closing of each size instead of every closing. Engine rankings can differ
+  between the two modes, so measure the one your pipeline uses.
+
+`--engines` takes any of `reference` and the engines this build ships (`spark`, `arrow`); a name it does not know is
+refused with the list it does.
+
 ## Catalog
 
 A window holds lags 0 (the current closing) to `w - 1`. `n` is the number of non-null values. Every aggregate is
