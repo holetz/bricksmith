@@ -94,3 +94,6 @@ dependencies. `predict_in_subprocess` does the same in a fresh interpreter. Afte
 sample, and never moves aliases; promote the new version deliberately.
 
 Limits: the training set is collected to the driver; the scikit-learn adapter takes numeric and boolean features.
+
+To evaluate every development sample and closing, and to render a technical document from the run's artifacts,
+see [model evaluation and technical documentation](model-evaluation.md).
