@@ -21,6 +21,8 @@ It reads tables only; it never calls the model. It shares its statistical core w
 [monitoring](monitoring.md) (bins, PSI, KS, AUC, calibration, limits, trend, persistence) and can share feature bins with
 [data stability](stability.md). Spark and the model monitoring package load only for tasks that declare it.
 
+The [end-to-end model flow](model-flow.md) declares model monitoring on a pinned scoring task whose prediction table carries the development and out-of-time samples.
+
 ## Declare it on a task
 
 The prediction table carries the development and out-of-time scored rows beside the production rows, told apart by

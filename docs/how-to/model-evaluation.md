@@ -19,6 +19,8 @@ Two packages close the development of a model:
 
 Both import only the standard library. Spark and MLflow are loaded only where they are used.
 
+The [end-to-end model flow](model-flow.md) evaluates scored samples, logs the evaluation to the training run and publishes the technical document beside it.
+
 ## Evaluate every sample
 
 The input is the scored development set: one row per entity and closing, with a sample column, the score, the

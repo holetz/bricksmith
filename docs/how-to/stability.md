@@ -19,6 +19,8 @@ persistence alerts, stores the results in five dashboard-ready tables, and appli
 It shares its statistical core with [model monitoring](monitoring.md): bins (`BinSpec`), PSI, versioned references,
 and the limits, trend and persistence modules in `bricksmith.monitor`.
 
+The [end-to-end model flow](model-flow.md) declares data stability on the feature tables a model reads, with a fixed baseline over the development closings.
+
 ## Declare it on a task
 
 ```python

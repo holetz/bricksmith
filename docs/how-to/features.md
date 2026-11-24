@@ -25,6 +25,8 @@ missing values, and so on. You declare what to compute once. Every engine comput
 Install the extra for the numpy and Arrow engines: `pip install 'bricksmith[feature-engines]'`. The JVM and native
 engines need no extra. Importing `bricksmith.features` loads none of numpy, pyarrow or pyspark.
 
+The [end-to-end model flow](model-flow.md) computes two feature tables under `engine="auto"` and shows where the run report records the engine and any fallback reason.
+
 ## Declare the features
 
 ```python

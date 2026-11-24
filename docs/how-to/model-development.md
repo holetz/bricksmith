@@ -25,6 +25,8 @@ them one declaration and one code path:
 Closings, frequencies and lookups are the feature store's. See
 [decision 0015](../decisions/0015-model-development-stages.md) for the reasons.
 
+The [end-to-end model flow](model-flow.md) declares samples, a label, an exclusion cascade, bands and lookups at two grains, and runs every stage on the shared runner.
+
 ## Declare the development
 
 The declaration is a plain mapping: inline, or a TOML or JSON file read with `load_development_file`.
