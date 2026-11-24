@@ -83,6 +83,11 @@ bricksmith model card     --model churn_v1 --alias champion      # or --file bri
 Mutating commands print a plan unless `--apply` is given. A promotion plan shows the evidence (metrics, code
 revision, run), the tasks that follow the alias (their results change), the pinned ones (unchanged) and the
 tasks downstream of them. Events and alias history are stored as tags, so rollback returns to the previous target.
+Both fit Unity Catalog's limits (tag values of at most 256 characters, at most 50 tags per object): each review
+event is its own version tag, with a long reason or reviewer shortened and marked `...`, and only the newest eight
+are kept; each alias keeps one registered-model tag with its newest `[from, to]` changes. The full who and why of a
+change lives in the target version's events, which the model card lists. Values written by earlier releases are
+still read.
 `retire` exits 4 and refuses while an `evaluate`/`predict` task still resolves to a retiring version, by pin or by
 the current alias target; it removes aliases and marks versions retired but keeps training runs and artifacts.
 
