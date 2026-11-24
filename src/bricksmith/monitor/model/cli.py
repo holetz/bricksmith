@@ -93,7 +93,7 @@ def _act(args: argparse.Namespace) -> int:
 
 
 def _table_rows(args: argparse.Namespace, spark: Any, kind: str) -> list[dict[str, Any]]:  # noqa: ANN401 - SparkSession
-    from pyspark.sql import functions as F  # noqa: N812, PLC0415 - heavy integration, loaded where used
+    from pyspark.sql import functions as F  # noqa: N812, PLC0415 - heavy integration, loaded where used  # pyright: ignore[reportMissingImports]
 
     frame = spark.table(table_name(args.scope, args.prefix, kind))
     if "model" in frame.columns:
