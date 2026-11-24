@@ -20,6 +20,8 @@ The funnel reuses the monitoring core: stability bins come from `bricksmith.moni
 from `bricksmith.monitor.stats`. Thresholds are configuration with defaults. A default is a starting point, not a
 standard your model must meet.
 
+The [end-to-end model flow](model-flow.md) runs the funnel on a training ABT, stores the ledger and variables tables, and trains on the features it kept.
+
 ## Run it
 
 ```python

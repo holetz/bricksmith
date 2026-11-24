@@ -19,6 +19,8 @@ Feature tables are plain Delta tables written by ordinary tasks, so they share d
 with every other task. Their catalog and schema are your choice. Databricks Feature Engineering is an optional
 adapter, never a requirement (see [decision 0013](../decisions/0013-closing-based-feature-store.md)).
 
+The [end-to-end model flow](model-flow.md) declares two feature tables at two entity grains and builds the training and scoring sets of a model from them.
+
 ## Declare a feature table on a task
 
 ```python
