@@ -1,8 +1,9 @@
 """The ``model_monitoring`` declaration of a task: which model, which prediction columns, references and metrics.
 
 A declaration names the prediction table roles (score, label, grade, segment, sample), the development and
-out-of-time references, the metric families, the limits that color each result (absolute bands, relative change
-against a reference, or control-chart distance), the trend and persistence policies and the gate the run applies.
+out-of-time references, the metric families (the credit-model ones run when a ``credit`` block is declared), the
+limits that color each result (absolute bands, relative change against a reference, or control-chart distance), the
+trend and persistence policies and the gate the run applies.
 Unknown keys and invalid values are errors, so a typo fails the plan instead of silently watching nothing.
 """
 
@@ -14,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import BOTH, CONTROL, HIGHER, KINDS, RELATIVE, Limits
+from bricksmith.monitor.limits import BOTH, CONTROL, HIGHER, KINDS, LOWER, RELATIVE, Limits
 from bricksmith.monitor.persistence import PersistencePolicy
 from bricksmith.monitor.rules import LimitRule, Resolution, parse_rules, resolve
 from bricksmith.monitor.trend import TrendPolicy
@@ -31,8 +32,16 @@ CALIBRATION = "calibration"
 VOLUMETRY = "volumetry"
 COMPLETENESS = "completeness"
 FAMILIES = (SCORE_PSI, FEATURE_CSI, GRADE_PSI, DISCRIMINATION, CALIBRATION, VOLUMETRY, COMPLETENESS)
+GRADE_CALIBRATION = "grade_calibration"
+GRADE_ORDER = "grade_order"
+EARLY_WARNING = "early_warning"
+EXCLUSION_MIX = "exclusion_mix"
+BAD_RATE_CHART = "bad_rate_chart"
+#: Credit-model families: opt-in through a ``credit`` block or an explicit ``metrics`` list.
+CREDIT_FAMILIES = (GRADE_CALIBRATION, GRADE_ORDER, EARLY_WARNING, EXCLUSION_MIX, BAD_RATE_CHART)
+ALL_FAMILIES = FAMILIES + CREDIT_FAMILIES
 #: Families that need a label; their data period is the monitoring period moved back by ``label_lag``.
-LABEL_FAMILIES = frozenset({DISCRIMINATION, CALIBRATION})
+LABEL_FAMILIES = frozenset({DISCRIMINATION, CALIBRATION, GRADE_CALIBRATION, GRADE_ORDER, BAD_RATE_CHART})
 #: The metrics each family writes (column ``""`` for whole-population metrics).
 FAMILY_METRICS: dict[str, tuple[str, ...]] = {
     SCORE_PSI: ("psi",),
@@ -42,14 +51,30 @@ FAMILY_METRICS: dict[str, tuple[str, ...]] = {
     CALIBRATION: ("brier", "ece", "calibration_ratio"),
     VOLUMETRY: ("row_count", "volume_ratio"),
     COMPLETENESS: ("null_rate",),
+    GRADE_CALIBRATION: ("grade_oe", "grade_jeffreys_p", "grade_binomial_p", "grade_binomial_adjusted_p"),
+    GRADE_ORDER: ("grade_inversions",),
+    EARLY_WARNING: ("early_ks", "early_gini", "early_oe"),
+    EXCLUSION_MIX: ("exclusion_psi",),
+    BAD_RATE_CHART: ("bad_rate",),
 }
-METRICS = tuple(m for f in FAMILIES for m in FAMILY_METRICS[f])
+METRICS = tuple(m for f in ALL_FAMILIES for m in FAMILY_METRICS[f])
 DEFAULT_LIMITS: dict[str, Limits | None] = {
     "psi": Limits(0.10, 0.25, HIGHER),
     "csi": Limits(0.10, 0.25, HIGHER),
     "grade_psi": Limits(0.10, 0.25, HIGHER),
     "volume_ratio": Limits(0.20, 0.50, BOTH, center=1.0),
     "calibration_ratio": Limits(0.30, 0.50, BOTH, center=1.0),
+}
+#: Default limits of the credit metrics, added only when a credit family is enabled.
+CREDIT_LIMITS: dict[str, Limits | None] = {
+    "grade_oe": Limits(0.30, 0.50, BOTH, center=1.0),
+    "grade_jeffreys_p": Limits(0.05, 0.01, LOWER),
+    "grade_binomial_p": Limits(0.05, 0.01, LOWER),
+    "grade_binomial_adjusted_p": Limits(0.05, 0.01, LOWER),
+    "grade_inversions": Limits(0, 1, HIGHER),
+    "early_oe": Limits(0.30, 0.50, BOTH, center=1.0),
+    "exclusion_psi": Limits(0.10, 0.25, HIGHER),
+    "bad_rate": Limits(2, 3, BOTH, kind=CONTROL),
 }
 DEFAULT_TREND_METRICS = ("psi", "ks", "auc", "calibration_ratio")
 PERIODS = "periods"
@@ -60,7 +85,7 @@ KEYS = frozenset({
     "output", "model", "model_version", "model_version_column", "period", "score", "label", "grade", "segment",
     "sample", "references", "features", "feature_binning", "critical_fields", "metrics", "label_lag", "limits",
     "gate", "min_rows", "max_periods", "score_bins", "calibration_bins", "scope", "prefix", "epsilon", "trend",
-    "trend_metrics", "persistence", "control_min_points", "lags", "rules",
+    "trend_metrics", "persistence", "control_min_points", "lags", "rules", "credit",
 })  # fmt: skip
 
 
@@ -138,6 +163,63 @@ class Gate:
 
 
 @dataclass(frozen=True)
+class Horizon:
+    """An early-warning horizon: the label column that covers ``periods`` periods and how far back it reads."""
+
+    label: str
+    periods: int
+    lag: Lag
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable form."""
+        return {"label": self.label, "lag": self.lag.to_dict(), "periods": self.periods}
+
+
+@dataclass(frozen=True)
+class Credit:
+    """The ``credit`` block: probability horizons, grade order, the expected-events gate and the credit roles.
+
+    ``horizon`` is the number of periods the score's probability covers (0: no rescaling); ``label_horizon`` the
+    periods the calibration label covers (0: the same as ``horizon``). ``grades`` lists the grades from best to
+    worst (empty: their sorted texts). A grade with fewer than ``min_expected_events`` expected events is not
+    judged. ``correlation`` enables the correlation-adjusted binomial test.
+    """
+
+    horizon: int = 0
+    label_horizon: int = 0
+    grades: tuple[str, ...] = ()
+    min_expected_events: float = 5.0
+    correlation: float | None = None
+    early_warning: tuple[Horizon, ...] = ()
+    exclusion: str = ""
+
+    def exponent(self, periods: int) -> float:
+        """Return ``periods / horizon``, the exponent rescaling a probability to ``periods`` (1 without a horizon)."""
+        return periods / self.horizon if self.horizon else 1.0
+
+    @property
+    def calibration_exponent(self) -> float:
+        """Return the exponent of the calibration label (its horizon over the probability's)."""
+        return self.exponent(self.label_horizon) if self.label_horizon else 1.0
+
+    def horizon_of(self, label: str) -> Horizon | None:
+        """Return the early-warning horizon of a label column."""
+        return next((h for h in self.early_warning if h.label == label), None)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable form."""
+        return {
+            "correlation": self.correlation,
+            "early_warning": [h.to_dict() for h in self.early_warning],
+            "exclusion": self.exclusion,
+            "grades": list(self.grades),
+            "horizon": self.horizon,
+            "label_horizon": self.label_horizon,
+            "min_expected_events": self.min_expected_events,
+        }
+
+
+@dataclass(frozen=True)
 class ModelMonitorConfig:
     """A validated ``model_monitoring`` declaration for one prediction output of a task."""
 
@@ -174,6 +256,12 @@ class ModelMonitorConfig:
     prefix: str = "model_monitoring_"
     epsilon: float = 1e-4
     rules: tuple[LimitRule, ...] = ()
+    credit: Credit | None = None
+
+    @property
+    def credit_options(self) -> Credit:
+        """Return the declared ``credit`` block, or its defaults."""
+        return self.credit or Credit()
 
     @property
     def references(self) -> tuple[Sample, ...]:
@@ -182,17 +270,29 @@ class ModelMonitorConfig:
 
     def families(self) -> tuple[str, ...]:
         """Return the families that apply: label families need a label, and features, grade or fields their roles."""
+        credit = self.credit_options
         needs = {
             FEATURE_CSI: bool(self.features),
             GRADE_PSI: bool(self.grade),
             DISCRIMINATION: bool(self.label),
             CALIBRATION: bool(self.label),
             COMPLETENESS: bool(self.critical_fields),
+            GRADE_CALIBRATION: bool(self.grade and self.label),
+            GRADE_ORDER: bool(self.grade and self.label),
+            EARLY_WARNING: bool(credit.early_warning),
+            EXCLUSION_MIX: bool(credit.exclusion),
+            BAD_RATE_CHART: bool(self.label),
         }
         return tuple(f for f in self.metrics if needs.get(f, True))
 
-    def lag_for(self, family: str, metric: str) -> Lag:
-        """Return the lag of ``metric``: its own, else its family's, else ``label_lag`` (label families), else none."""
+    def lag_for(self, family: str, metric: str, column: str = "") -> Lag:
+        """Return the lag of ``metric``: its own, else its family's, else ``label_lag`` (label families), else none.
+
+        An early-warning result reads its horizon's own lag (``column`` is the horizon's label column).
+        """
+        horizon = self.credit_options.horizon_of(column) if family == EARLY_WARNING else None
+        if horizon is not None:
+            return horizon.lag
         found = self.lags.get(metric) or self.lags.get(family)
         if found is not None:
             return found
@@ -233,10 +333,12 @@ class ModelMonitorConfig:
         return hashlib.sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form (``rules`` only when declared, so existing fingerprints stay)."""
+        """Return the serializable form (``rules`` and ``credit`` only when declared, so existing fingerprints stay)."""
         data = self._base_dict()
         if self.rules:
             data["rules"] = [r.to_dict() for r in self.rules]
+        if self.credit is not None:
+            data["credit"] = self.credit.to_dict()
         return data
 
     def _base_dict(self) -> dict[str, Any]:
@@ -336,12 +438,13 @@ def _binning(value: object) -> tuple[str, str]:
     raise _fail(msg)
 
 
-def _metrics(value: object) -> tuple[str, ...]:
-    items = list(FAMILIES) if value is None else value
-    if not isinstance(items, list) or not items or set(items) - set(FAMILIES):
-        msg = f"metrics must be a non-empty list among {', '.join(FAMILIES)}"
+def _metrics(value: object, *, credit: bool) -> tuple[str, ...]:
+    """Return the declared families; by default every non-credit family, and the credit ones with a ``credit`` block."""
+    items = list(ALL_FAMILIES if credit else FAMILIES) if value is None else value
+    if not isinstance(items, list) or not items or set(items) - set(ALL_FAMILIES):
+        msg = f"metrics must be a non-empty list among {', '.join(ALL_FAMILIES)}"
         raise _fail(msg)
-    return tuple(f for f in FAMILIES if f in items)
+    return tuple(f for f in ALL_FAMILIES if f in items)
 
 
 def _lag(name: str, value: object) -> Lag:
@@ -360,7 +463,7 @@ def _lags(value: object) -> dict[str, Lag]:
     if not isinstance(value, dict):
         msg = "lags must map metrics or families to a lag"
         raise _fail(msg)
-    unknown = sorted(set(value) - set(METRICS) - set(FAMILIES))
+    unknown = sorted(set(value) - set(METRICS) - set(ALL_FAMILIES))
     if unknown:
         msg = f"lags names unknown metric or family {', '.join(map(repr, unknown))}"
         raise _fail(msg)
@@ -382,11 +485,11 @@ def _limit(metric: str, item: object, oot: Sample | None) -> Limits:
     return Limits(limits.green, limits.red, limits.direction, limits.center, RELATIVE, reference)
 
 
-def _limits(value: object, oot: Sample | None) -> dict[str, Limits | None]:
+def _limits(value: object, oot: Sample | None, *, credit: bool) -> dict[str, Limits | None]:
     if not isinstance(value, dict):
         msg = "limits must map a metric to {green, red, direction, center, kind, reference} (or null to disable)"
         raise _fail(msg)
-    result = dict(DEFAULT_LIMITS)
+    result = dict(DEFAULT_LIMITS) | (CREDIT_LIMITS if credit else {})
     for metric, item in value.items():
         if metric not in METRICS:
             msg = f"unknown metric {metric!r} in limits; known: {', '.join(METRICS)}"
@@ -434,6 +537,72 @@ def _gate(value: object) -> Gate:
     return Gate(tuple(items), str(value.get("on_error", "warn")))
 
 
+def _positive(value: object, what: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        msg = f"{what} must be an integer >= 1, got {value!r}"
+        raise _fail(msg)
+    return value
+
+
+def _horizon(item: object) -> Horizon:
+    if not isinstance(item, dict) or set(item) - {"label", "periods", "lag"} or not {"label", "periods"} <= set(item):
+        msg = f"an early_warning horizon must be {{label, periods, lag?}}, got {item!r}"
+        raise _fail(msg)
+    periods = _positive(item["periods"], "early_warning periods")
+    lag = _lag(str(item["label"]), item["lag"]) if "lag" in item else Lag(periods)
+    return Horizon(_name(item["label"], "early_warning label"), periods, lag)
+
+
+def _credit_number(data: dict[str, Any], key: str, default: float) -> float:
+    value = data.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        msg = f"credit {key} must be a number >= 0, got {value!r}"
+        raise _fail(msg)
+    return float(value)
+
+
+def _credit(value: object) -> Credit | None:
+    """Parse the ``credit`` block (``None`` when it is absent)."""
+    if value is None:
+        return None
+    keys = {"horizon", "label_horizon", "grades", "min_expected_events", "correlation", "early_warning", "exclusion"}
+    if not isinstance(value, dict) or set(value) - keys:
+        msg = f"credit must be a mapping with keys among {', '.join(sorted(keys))}, got {value!r}"
+        raise _fail(msg)
+    horizon = _positive(value["horizon"], "credit horizon") if "horizon" in value else 0
+    label_horizon = _positive(value["label_horizon"], "credit label_horizon") if "label_horizon" in value else 0
+    horizons = value.get("early_warning") or []
+    if not isinstance(horizons, list):
+        msg = "credit early_warning must be a list of {label, periods, lag?}"
+        raise _fail(msg)
+    early = tuple(_horizon(h) for h in horizons)
+    if (early or label_horizon) and not horizon:
+        msg = "credit early_warning and label_horizon rescale probabilities, so declare the probability horizon"
+        raise _fail(msg)
+    if len({h.label for h in early}) != len(early):
+        msg = "credit early_warning horizons need distinct label columns"
+        raise _fail(msg)
+    grades = value.get("grades") or []
+    if not isinstance(grades, list) or len(set(map(str, grades))) != len(grades):
+        msg = "credit grades must be a list of distinct grades, best first"
+        raise _fail(msg)
+    correlation = value.get("correlation")
+    if correlation is not None and (
+        isinstance(correlation, bool) or not isinstance(correlation, (int, float)) or not 0 < correlation < 1
+    ):
+        msg = f"credit correlation must be a number strictly between 0 and 1, got {correlation!r}"
+        raise _fail(msg)
+    return Credit(
+        horizon=horizon,
+        label_horizon=label_horizon,
+        grades=tuple(str(g) for g in grades),
+        min_expected_events=_credit_number(value, "min_expected_events", 5.0),
+        correlation=None if correlation is None else float(correlation),
+        early_warning=early,
+        exclusion=_optional(value, "exclusion"),
+    )
+
+
 def _prefix(value: object) -> str:
     prefix = str(value)
     if not prefix.replace("_", "a").isalnum():
@@ -462,6 +631,9 @@ def parse_config(data: object) -> ModelMonitorConfig:
     development, oot = _references(data["references"], sample)
     trend, trend_metrics = _trend(data)
     stability_dataset, stability_prefix = _binning(data.get("feature_binning"))
+    credit = _credit(data.get("credit"))
+    metrics = _metrics(data.get("metrics"), credit=credit is not None)
+    credit_enabled = bool(set(metrics) & set(CREDIT_FAMILIES))
     critical = data.get("critical_fields", [])
     if not isinstance(critical, list):
         msg = "critical_fields must be a list of column names"
@@ -484,10 +656,10 @@ def parse_config(data: object) -> ModelMonitorConfig:
             stability_dataset=stability_dataset,
             stability_prefix=_prefix(stability_prefix),
             critical_fields=tuple(_name(c, "critical_fields item") for c in critical),
-            metrics=_metrics(data.get("metrics")),
+            metrics=metrics,
             label_lag=_int(data, "label_lag", 0, 0),
             lags=_lags(data.get("lags")),
-            limits=_limits(data.get("limits", {}), oot),
+            limits=_limits(data.get("limits", {}), oot, credit=credit_enabled),
             trend=trend,
             trend_metrics=trend_metrics,
             persistence=PersistencePolicy.from_dict(data.get("persistence", {})),
@@ -501,6 +673,7 @@ def parse_config(data: object) -> ModelMonitorConfig:
             prefix=_prefix(data.get("prefix", "model_monitoring_")),
             epsilon=float(data.get("epsilon", 1e-4)),
             rules=_rules(data.get("rules"), oot),
+            credit=credit,
         )
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
@@ -519,15 +692,23 @@ def parse_declarations(value: object) -> tuple[ModelMonitorConfig, ...]:
 
 
 __all__ = [
+    "ALL_FAMILIES",
+    "BAD_RATE_CHART",
     "CALIBRATION",
     "COMPLETENESS",
+    "CREDIT_FAMILIES",
+    "CREDIT_LIMITS",
     "DEFAULT_LIMITS",
     "DEFAULT_TREND_METRICS",
     "DEVELOPMENT",
     "DISCRIMINATION",
+    "EARLY_WARNING",
+    "EXCLUSION_MIX",
     "FAMILIES",
     "FAMILY_METRICS",
     "FEATURE_CSI",
+    "GRADE_CALIBRATION",
+    "GRADE_ORDER",
     "GRADE_PSI",
     "KEY",
     "LABEL_FAMILIES",
@@ -538,7 +719,9 @@ __all__ = [
     "PERIODS",
     "SCORE_PSI",
     "VOLUMETRY",
+    "Credit",
     "Gate",
+    "Horizon",
     "Lag",
     "ModelMonitorConfig",
     "Sample",

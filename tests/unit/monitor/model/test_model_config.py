@@ -160,3 +160,69 @@ def test_bad_lags_are_refused(lags: object, message: str) -> None:
 
 def test_lags_never_trigger_a_refit() -> None:
     assert parse_config(BASE).binning_fingerprint() == parse_config({**BASE, "lags": {"auc": 1}}).binning_fingerprint()
+
+
+CREDIT_BASE = {**BASE, "label": "bad", "grade": "grade"}
+
+
+def test_credit_families_are_opt_in() -> None:
+    config = parse_config(CREDIT_BASE)
+    assert config.credit is None and config.metrics == FAMILIES
+    assert "credit" not in config.to_dict() and config.limits_for("grade_oe") is None
+    assert config.control_metrics() == frozenset()
+
+
+def test_credit_block_enables_the_families_that_apply() -> None:
+    from bricksmith.monitor.model.config import ALL_FAMILIES, Credit, Horizon  # noqa: PLC0415
+
+    config = parse_config({
+        **CREDIT_BASE,
+        "credit": {
+            "horizon": 12, "grades": ["A", "B", "C"], "min_expected_events": 3, "correlation": 0.12,
+            "early_warning": [{"label": "bad_3", "periods": 3}, {"label": "bad_6", "periods": 6, "lag": {"months": 7}}],
+            "exclusion": "exclusion_first",
+        },
+    })  # fmt: skip
+    assert config.metrics == ALL_FAMILIES and config.families()[-5:] == (
+        "grade_calibration", "grade_order", "early_warning", "exclusion_mix", "bad_rate_chart",
+    )  # fmt: skip
+    credit = config.credit_options
+    assert credit == Credit(
+        horizon=12, grades=("A", "B", "C"), min_expected_events=3.0, correlation=0.12,
+        early_warning=(Horizon("bad_3", 3, Lag(3)), Horizon("bad_6", 6, Lag(7, "months"))),
+        exclusion="exclusion_first",
+    )  # fmt: skip
+    assert credit.exponent(3) == 0.25 and credit.calibration_exponent == 1.0
+    assert config.lag_for("early_warning", "early_ks", "bad_6") == Lag(7, "months")
+    assert config.lag_for("early_warning", "early_ks", "bad_3") == Lag(3)
+    assert config.lag_for("grade_calibration", "grade_oe") == Lag(0)
+    assert config.limits_for("grade_jeffreys_p") == Limits(0.05, 0.01, "lower")
+    assert config.limits_for("grade_inversions") == Limits(0, 1)
+    assert config.control_metrics() == frozenset({"bad_rate"})
+    assert config.to_dict()["credit"]["early_warning"][1]["lag"] == {"amount": 7, "unit": "months"}
+
+
+def test_credit_families_need_their_roles() -> None:
+    config = parse_config({**BASE, "credit": {}})
+    assert config.families() == ("score_psi", "volumetry")
+    listed = parse_config({**CREDIT_BASE, "metrics": ["grade_calibration", "bad_rate_chart"]})
+    assert listed.families() == ("grade_calibration", "bad_rate_chart") and listed.credit is None
+    assert listed.credit_options.min_expected_events == 5.0 and listed.limits_for("grade_oe") is not None
+
+
+@pytest.mark.parametrize(
+    ("credit", "message"),
+    [
+        ({"early_warning": [{"label": "bad_3", "periods": 3}]}, "declare the probability horizon"),
+        ({"horizon": 12, "early_warning": [{"label": "b", "periods": 3}, {"label": "b", "periods": 6}]}, "distinct"),
+        ({"horizon": 0}, "horizon must be an integer >= 1"),
+        ({"correlation": 1.0}, "strictly between 0 and 1"),
+        ({"grades": ["A", "A"]}, "distinct grades"),
+        ({"min_expected_events": -1}, "min_expected_events must be a number"),
+        ({"horizon": 12, "early_warning": [{"label": "b"}]}, "label, periods"),
+        ({"surprise": 1}, "credit must be a mapping"),
+    ],
+)
+def test_credit_errors(credit: dict, message: str) -> None:
+    with pytest.raises(MonitorError, match=message):
+        parse_config({**CREDIT_BASE, "credit": credit})
