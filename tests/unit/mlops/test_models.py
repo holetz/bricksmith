@@ -152,6 +152,9 @@ class FakeTracking:
     def set_registered_model_tag(self, name: str, key: str, value: str) -> None:
         self.models[name].tags[key] = value
 
+    def delete_model_version_tag(self, name: str, version: str, key: str) -> None:
+        del self.versions[name, int(version)].tags[key]
+
     def delete_model_version(self, name: str, version: str) -> None:
         del self.versions[name, int(version)]
 
@@ -361,7 +364,25 @@ def test_register_names_and_resolves_explicit_versions_and_aliases(tmp_path: Pat
 
 
 class UnityCatalogTracking(FakeTracking):
-    """Unity Catalog behaviour: search results carry no tags (``tags`` is a raising method, as in the client)."""
+    """Unity Catalog behaviour: search results carry no tags (``tags`` is a raising method, as in the client),
+    tag values are at most 256 characters and an object holds at most 50 tags."""
+
+    @staticmethod
+    def _check(tags: dict[str, str], key: str, value: str) -> None:
+        if len(value) > 256:
+            msg = f"INVALID_PARAMETER_VALUE: tag value exceeds the maximum length of 256 characters ({len(value)})"
+            raise ValueError(msg)
+        if key not in tags and len(tags) >= 50:
+            msg = "INVALID_PARAMETER_VALUE: at most 50 tags per object"
+            raise ValueError(msg)
+
+    def set_model_version_tag(self, name: str, version: str, key: str, value: str) -> None:
+        self._check(self.versions[name, int(version)].tags, key, value)
+        super().set_model_version_tag(name, version, key, value)
+
+    def set_registered_model_tag(self, name: str, key: str, value: str) -> None:
+        self._check(self.models[name].tags, key, value)
+        super().set_registered_model_tag(name, key, value)
 
     def search_model_versions(self, query: str) -> list[SimpleNamespace]:
         def no_tags() -> dict[str, str]:
@@ -390,6 +411,70 @@ def test_versions_read_tags_per_version_when_search_omits_them(tmp_path: Path) -
     assert store.resolve(NAME, "churn_v1", alias="champion").version == 1
     store.delete_model(NAME)
     assert store.registered(NAME) is None
+
+
+def test_lifecycle_events_and_alias_history_stay_within_unity_catalog_tag_limits(tmp_path: Path) -> None:
+    store, client = make_uc_store(tmp_path)
+    adapter = ThresholdAdapter()
+    for _ in range(2):
+        register_run(store, NAME, "churn_v1", train(store, adapter))
+    long_reason = "r\u00e9sum\u00e9 " + "x" * 400  # non-ASCII text is escaped, so characters equal bytes
+    apply_alias_plan(store, plan_promotion(store, NAME, "churn_v1", "champion", 1, reviewer="rev", reason=long_reason))
+    for cycle in range(6):  # 12 more changes: v1 receives 6 rollbacks, v2 6 promotions
+        apply_alias_plan(
+            store, plan_promotion(store, NAME, "churn_v1", "champion", 2, reviewer="rev", reason=f"p{cycle}")
+        )
+        apply_alias_plan(store, plan_rollback(store, NAME, "churn_v1", "champion", reviewer="rev", reason=f"b{cycle}"))
+    assert store.aliases(NAME) == {"champion": 1}
+    first, *rollbacks = store.events(NAME, 1)
+    assert [e["reason"] for e in rollbacks] == ["b0", "b1", "b2", "b3", "b4", "b5"]
+    assert first["action"] == "promote" and first["to"] == 1 and first["reviewer"] == "rev"
+    assert first["reason"].startswith("r\u00e9sum\u00e9 xxx") and first["reason"].endswith("...")
+    apply_alias_plan(store, plan_promotion(store, NAME, "churn_v1", "champion", 2, reviewer="rev", reason="p6"))
+    apply_alias_plan(store, plan_rollback(store, NAME, "churn_v1", "champion", reviewer="rev", reason="b6"))
+    events = store.events(NAME, 1)
+    assert [e["action"] for e in events] == ["promote"] + ["rollback"] * 7
+    tags = client.versions[NAME, 1].tags
+    assert sum(k.startswith("bricksmith_event_") for k in tags) == 8 and all(len(v) <= 256 for v in tags.values())
+    history = store.history(NAME, "champion")
+    assert len(history) == 8 and history[-1] == {"from": 2, "to": 1} and history[-2] == {"from": 1, "to": 2}
+    assert len(client.models[NAME].tags["bricksmith_history_champion"]) <= 256
+    back = plan_rollback(store, NAME, "churn_v1", "champion", reviewer="rev", reason="again")
+    assert (back.from_version, back.to_version) == (1, 2)
+    card = render_card(
+        ModelMetadata.from_json((client.root / store.resolve(NAME, "churn_v1", version=1).run_id / "model" / FILE).read_text()),
+        name=NAME, version=1, aliases=("champion",), state="active", history=tuple(events),
+    )  # fmt: skip
+    assert "- rollback `champion` v1 by rev: b6" in card
+    apply_alias_plan(store, plan_promotion(store, NAME, "churn_v1", "champion", 2, reviewer="rev", reason="move"))
+    apply_retirement(store, plan_retirement(store, NAME, "churn_v1", versions=[1]))
+    kept = store.events(NAME, 1)  # the ninth event drops the oldest tag
+    assert [e.get("reason") for e in kept] == ["b0", "b1", "b2", "b3", "b4", "b5", "b6", None]
+    assert kept[-1]["action"] == "retire" and sum(k.startswith("bricksmith_event_") for k in tags) == 8
+
+
+def test_an_event_whose_structure_alone_overflows_a_tag_is_refused(tmp_path: Path) -> None:
+    store, _ = make_uc_store(tmp_path)
+    register_run(store, NAME, "churn_v1", train(store, ThresholdAdapter()))
+    with pytest.raises(ModelError, match="does not fit"):
+        store.record_event(NAME, 1, {"action": "x" * 300, "reason": "short"})
+
+
+def test_legacy_event_and_history_values_are_still_read_and_extended(tmp_path: Path) -> None:
+    store, client = make_store(tmp_path)
+    register_run(store, NAME, "churn_v1", train(store, ThresholdAdapter()))
+    register_run(store, NAME, "churn_v1", train(store, ThresholdAdapter()))
+    legacy = [{"action": "promote", "alias": "champion", "from": None, "reason": "old", "reviewer": "rev", "to": 1}]
+    client.versions[NAME, 1].tags["bricksmith_events"] = json.dumps(legacy)
+    client.models[NAME].tags["bricksmith_history_champion"] = json.dumps(legacy)
+    store.set_alias(NAME, "champion", 1)
+    assert store.events(NAME, 1) == legacy and store.history(NAME, "champion") == [{"from": None, "to": 1}]
+    apply_alias_plan(store, plan_promotion(store, NAME, "churn_v1", "champion", 2, reviewer="rev", reason="new"))
+    back = plan_rollback(store, NAME, "churn_v1", "champion", reviewer="rev", reason="undo")
+    assert (back.from_version, back.to_version) == (2, 1)
+    apply_alias_plan(store, back)
+    assert [e["reason"] for e in store.events(NAME, 1)] == ["old", "undo"]
+    assert json.loads(client.models[NAME].tags["bricksmith_history_champion"]) == [[None, 1], [1, 2], [2, 1]]
 
 
 @pytest.mark.parametrize(

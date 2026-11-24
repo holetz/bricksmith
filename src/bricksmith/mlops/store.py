@@ -25,10 +25,14 @@ if TYPE_CHECKING:
 
 TAG_MODEL = "bricksmith_model"
 TAG_STATE = "bricksmith_state"
-TAG_EVENTS = "bricksmith_events"
+TAG_EVENTS = "bricksmith_events"  # legacy: every event in one JSON list, written before the bounded tags
+TAG_EVENT = "bricksmith_event_"
 TAG_HISTORY = "bricksmith_history_"
 ACTIVE, RETIRED = "active", "retired"
 MAX_EVENTS = 8
+MAX_TAG_VALUE = 256  # Unity Catalog caps every tag value at 256 characters
+_SHORTENED = ("reason", "reviewer")
+_MORE = "..."
 _ALIAS = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,62}$")
 _IMPLICIT = ("latest", "newest", "current", "default")
 
@@ -60,6 +64,33 @@ def check_selector(alias: str | None, version: int | str | None) -> tuple[str | 
         msg = f"version must be a positive integer, got {version!r}"
         raise ModelAmbiguousError(msg)
     return None, int(text)
+
+
+def _compact(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))  # ASCII only: characters equal bytes
+
+
+def fit_event(event: Mapping[str, Any]) -> str:
+    """Return ``event`` as compact JSON within ``MAX_TAG_VALUE``, shortening ``reason`` then ``reviewer``."""
+    data = dict(event)
+    text = _compact(data)
+    for key in _SHORTENED:
+        original = data.get(key)
+        keep = len(original) if isinstance(original, str) else 0
+        while len(text) > MAX_TAG_VALUE and keep > 0:
+            keep = max(0, keep - (len(text) - MAX_TAG_VALUE) - len(_MORE))
+            data[key] = str(original)[:keep] + _MORE
+            text = _compact(data)
+    if len(text) > MAX_TAG_VALUE:
+        msg = f"event does not fit a {MAX_TAG_VALUE}-character tag even with its free text shortened"
+        raise ModelError(msg)
+    return text
+
+
+def _event_tags(tags: Mapping[str, str]) -> list[tuple[int, str, str]]:
+    """Return ``(sequence, key, value)`` of the bounded event tags, oldest first."""
+    found = [(k.removeprefix(TAG_EVENT), k, v) for k, v in tags.items() if k.startswith(TAG_EVENT)]
+    return sorted((int(n), k, v) for n, k, v in found if n.isdigit())
 
 
 def _is_missing(error: Exception) -> bool:
@@ -309,26 +340,35 @@ class ModelStore:
         return dict(self.client.get_model_version(name, str(version)).tags or {})
 
     def events(self, name: str, version: int) -> list[dict[str, Any]]:
-        """Return the recorded review events of a version (oldest first)."""
-        return list(json.loads(self.tags(name, version).get(TAG_EVENTS, "[]")))
+        """Return the newest ``MAX_EVENTS`` review events of a version (oldest first), legacy list included."""
+        tags = self.tags(name, version)
+        legacy = list(json.loads(tags.get(TAG_EVENTS, "[]")))
+        return [*legacy, *(json.loads(v) for _, _, v in _event_tags(tags))][-MAX_EVENTS:]
 
     def record_event(self, name: str, version: int, event: Mapping[str, Any]) -> None:
-        """Append a review event to a version, keeping the newest ``MAX_EVENTS``."""
-        kept = [*self.events(name, version), dict(event)][-MAX_EVENTS:]
-        self.tag_version(name, version, TAG_EVENTS, json.dumps(kept, sort_keys=True, separators=(",", ":")))
+        """Add a review event as its own tag (within ``MAX_TAG_VALUE``) and drop tags beyond ``MAX_EVENTS``."""
+        keyed = _event_tags(self.tags(name, version))
+        sequence = keyed[-1][0] + 1 if keyed else 1
+        self.tag_version(name, version, f"{TAG_EVENT}{sequence:06d}", fit_event(event))
+        for _, key, _ in keyed[: max(0, len(keyed) + 1 - MAX_EVENTS)]:
+            self.client.delete_model_version_tag(name, str(version), key)
 
     def history(self, name: str, alias: str) -> list[dict[str, Any]]:
-        """Return the alias history (oldest first) from the registered model tag."""
+        """Return the alias changes (oldest first) as ``{"from", "to"}``; legacy full entries are read too."""
         found = self.registered(name)
         raw = dict((found.tags if found else None) or {}).get(TAG_HISTORY + alias, "[]")
-        return list(json.loads(raw))
+        return [
+            {"from": e.get("from"), "to": e.get("to")} if isinstance(e, Mapping) else {"from": e[0], "to": e[1]}
+            for e in json.loads(raw)
+        ]
 
     def record_history(self, name: str, alias: str, entry: Mapping[str, Any]) -> None:
-        """Append an alias change to the history tag, keeping the newest ``MAX_EVENTS``."""
-        kept = [*self.history(name, alias), dict(entry)][-MAX_EVENTS:]
-        self.client.set_registered_model_tag(
-            name, TAG_HISTORY + alias, json.dumps(kept, sort_keys=True, separators=(",", ":"))
-        )
+        """Append an alias change as a ``[from, to]`` pair, keeping the newest that fit one tag value."""
+        kept = [[e["from"], e["to"]] for e in self.history(name, alias)]
+        kept = [*kept, [entry.get("from"), entry.get("to")]][-MAX_EVENTS:]
+        while len(_compact(kept)) > MAX_TAG_VALUE:
+            kept = kept[1:]
+        self.client.set_registered_model_tag(name, TAG_HISTORY + alias, _compact(kept))
 
     # -- artifacts ------------------------------------------------------------------------------------------
     def fetch(self, resolved: ResolvedModel, dest: Path) -> tuple[Path, ModelMetadata]:
