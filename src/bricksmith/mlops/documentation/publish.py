@@ -3,8 +3,9 @@
 ``collect_run`` downloads whatever of the artifact layout (:data:`PATHS`) a tracking run carries; a missing file
 is skipped and renders as "not recorded". ``publish_document`` renders the document, logs the Markdown and HTML
 files to the same run and, given a registered model version, sets the version tag ``bricksmith_documentation``
-to JSON holding the run id and the run-relative paths of both files. The client is any object with the ``MlflowClient`` methods used here
-(``download_artifacts``, ``log_text``, ``set_model_version_tag``); tests pass an in-memory fake.
+to JSON holding the run id and the run-relative paths of both files. The client is any object with the
+``MlflowClient`` methods used here (``download_artifacts``, ``log_text``, ``set_model_version_tag``); tests pass
+an in-memory fake.
 """
 
 from __future__ import annotations
