@@ -50,7 +50,7 @@ dev = [
 # Heavy integrations for tests/remote; deliberately not a default group (see docs/project/specifications.md).
 remote = [
   "databricks-bundles",
-  "databricks-connect>=17.3,<18",
+  "databricks-connect>=17.3,<20",
   "databricks-sdk",
   "mlflow",
   "scikit-learn",
