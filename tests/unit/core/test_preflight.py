@@ -131,3 +131,19 @@ def test_cli_offline_reports_configuration_only(tmp_path: Path, capsys: pytest.C
     payload = json.loads(capsys.readouterr().out)
     assert payload["stages"][0]["state"] == "failed"
     assert [s["stage"] for s in payload["stages"]][-1] == "deployment-tested"
+
+
+def test_compute_failure_carries_a_redacted_bounded_message(tmp_path: Path) -> None:
+    class RefusingSpark:
+        def sql(self, _: str) -> RefusingSpark:
+            msg = "Can't set both cluster id and serverless_compute_id token=synthetic-secret-value " + "x" * 600
+            raise ValueError(msg)
+
+    environ = {**ENVIRON, **_profile_file(tmp_path)}
+    context = resolve_context(environ=ENVIRON)
+    clients = Clients(context, {"workspace": lambda _: FakeWorkspace(), "spark": lambda _: RefusingSpark()})
+    report = run_preflight(context, environ=environ, clients=clients, run_id="r1")
+    detail = next(s.detail for s in report.stages if s.stage == "compute-tested")
+    assert detail.startswith("ValueError: Can't set both cluster id and serverless_compute_id")
+    assert "synthetic-secret-value" not in detail
+    assert len(detail) < 400

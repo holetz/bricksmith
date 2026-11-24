@@ -1,6 +1,6 @@
 ---
 type: decision
-title: "0020. Limit rules pick limits by selector and specificity and mark segments informational"
+title: "0021. Limit rules pick limits by selector and specificity and mark segments informational"
 description: "Why monitors read reviewable limit rules with selectors, validity dates and informational segments, and report the rule on every result row."
 resource: "src/bricksmith/monitor/**"
 timestamp: "2026-11-24T16:20:00-03:00"
@@ -8,7 +8,7 @@ audience: both
 authority: current
 ---
 
-# 0020. Limit rules pick limits by selector and specificity and mark segments informational
+# 0021. Limit rules pick limits by selector and specificity and mark segments informational
 
 - Status: accepted
 - Date: 2026-11-24

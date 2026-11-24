@@ -154,7 +154,7 @@ informational_segments = ["channel=pilot"]   # or controlled_segments = [...]: e
 - Stability rules use `absolute` limits only, like `limits`. A table created before the rule columns gains them
   through the `evolution` write option.
 
-See [decision 0020](../decisions/0020-limit-rules-selectors.md).
+See [decision 0021](../decisions/0021-limit-rules-selectors.md).
 
 ## Tables
 

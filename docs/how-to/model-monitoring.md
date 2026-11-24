@@ -141,7 +141,7 @@ A model rule may use any limit kind. A `control` rule adds its metric to the one
 measured. Every result carries `rule_id` and `rule_version`, and `replay_alerts` with a declaration recolors stored
 rows with the current rules (an informational segment keeps its value but no light, alert or gate count). Tables
 created before the columns gain them through the `evolution` write option. See
-[decision 0020](../decisions/0020-limit-rules-selectors.md).
+[decision 0021](../decisions/0021-limit-rules-selectors.md).
 
 ## Trend and persistence
 
@@ -185,7 +185,7 @@ for discrimination and calibration, no lag otherwise):
 ```
 
 A calendar lag subtracts whole months from the monitoring period and writes the result in the period's own text
-format (`YYYY-MM`, `YYYY-MM-DD`, `YYYYMM` or `YYYYMMDD`; the day clamps to the month's end). If that month was not
+format (`YYYY-MM`, `YYYY-MM-DD`, `YYYYMM` or `YYYYMMDD`; the day clamps to the month's end, and a period that is the last day of its month maps to the last day of the target month, so month-end closings keep resolving their data period). If that month was not
 loaded, the result has no value and the reason `data_period_unavailable`: it never falls back to a neighbouring
 period, so immature data is not shown as mature. Each result carries `lag` and `lag_unit` (`periods` or `months`)
 beside `data_period`, and series, alerts and reprocessing stay keyed on the monitoring period. See

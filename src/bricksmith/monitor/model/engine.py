@@ -383,7 +383,8 @@ _PERIOD_FORMATS = (
 def shift_months(text: str, months: int) -> str | None:
     """Return the period text ``months`` calendar months before ``text``, in the same format.
 
-    Understands ``YYYY-MM-DD``, ``YYYY-MM``, ``YYYYMMDD`` and ``YYYYMM``; the day clamps to the month's last day.
+    Understands ``YYYY-MM-DD``, ``YYYY-MM``, ``YYYYMMDD`` and ``YYYYMM``; the day clamps to the month's last day,
+    and the last day of a month maps to the last day of the target month.
     Any other text (or an impossible date) is ``None``.
     """
     for pattern, template in _PERIOD_FORMATS:
@@ -402,7 +403,8 @@ def shift_months(text: str, months: int) -> str | None:
         except ValueError:
             return None
         last = calendar.monthrange(target_year, target_month + 1)[1]
-        return template.format(target_year, target_month + 1, min(rest[0], last))
+        closing = rest[0] == calendar.monthrange(year, month)[1]
+        return template.format(target_year, target_month + 1, last if closing else min(rest[0], last))
     return None
 
 
