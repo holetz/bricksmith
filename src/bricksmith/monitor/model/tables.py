@@ -272,7 +272,7 @@ def _governance_summaries(scope: str, prefix: str, declared: Sequence[str]) -> l
         _view(
             table_name(scope, prefix, "coverage_summary"),
             "SELECT latest_closing, count(*) AS declared, sum(monitored) AS monitored,",
-            "  sum(monitored) * 1.0 / count(*) AS share_monitored,",
+            "  cast(sum(monitored) AS DOUBLE) / count(*) AS share_monitored,",
             "  max(days_since_run) AS max_days_since_run",
             f"FROM {coverage} GROUP BY latest_closing",
         ),
