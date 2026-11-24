@@ -15,6 +15,9 @@ authority: current
 - Specification: 77 (epic 85)
 - Extends: [0009](0009-one-library-shared-task-scopes.md) and
   [0010](0010-behavior-derived-independent-development.md)
+- Amended: the default-engine clauses ("Native Spark is the default engine" and the `DEFAULT_ENGINES` routing)
+  are superseded by [0019](0019-jvm-array-kernel-default-engine.md) on 2026-11-24. The JVM kernel is the default,
+  native Spark is its recorded fallback, and Arrow runs only on request.
 
 ## Context
 

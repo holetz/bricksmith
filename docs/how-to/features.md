@@ -1,9 +1,9 @@
 ---
 type: how-to
 title: "Windowed feature engineering"
-description: "How to declare windowed features over a long table and compute them with the numpy, native Spark or Arrow engine."
+description: "How to declare windowed features over a long table and compute them with the JVM kernel, native Spark, Arrow or the numpy reference."
 resource: "src/bricksmith/features/**"
-timestamp: "2026-11-23T09:30:00-03:00"
+timestamp: "2026-11-24T17:30:00-03:00"
 audience: both
 authority: current
 ---
@@ -14,13 +14,16 @@ authority: current
 with named windowed aggregates: the mean of the last 6 months, the slope of the last 12, the longest run of
 missing values, and so on. You declare what to compute once. Every engine computes exactly the same values:
 
+- A compiled JVM kernel (`engine="jvm"`, the default under `engine="auto"`). One Scala pass per entity covers
+  its whole closing history. The JAR ships inside the bricksmith wheel.
+- Native Spark expressions (`engine="spark"`). These are the kernel's fallback when it cannot run on the
+  current compute, and the fallback is always recorded.
+- An Arrow engine (`engine="arrow"`), which runs the numpy reference per entity on the cluster. It runs only
+  when you ask for it. It is proven locally only; its Databricks proof waits for an on-demand corporate run.
 - A numpy reference (`compute_rows`) over Python rows. It is the oracle of every test.
-- Native Spark expressions (`engine="spark"`, the default).
-- An Arrow engine (`engine="arrow"`) that runs the numpy reference per entity on the cluster. It is proven
-  locally only; its Databricks proof is pending an on-demand corporate run (see below).
 
-Install the extra for the numpy and Arrow engines: `pip install 'bricksmith[feature-engines]'`. Importing
-`bricksmith.features` loads none of numpy, pyarrow or pyspark.
+Install the extra for the numpy and Arrow engines: `pip install 'bricksmith[feature-engines]'`. The JVM and native
+engines need no extra. Importing `bricksmith.features` loads none of numpy, pyarrow or pyspark.
 
 ## Declare the features
 
@@ -73,13 +76,19 @@ spec = parse_spec(
 from bricksmith.features import compute_features, compute_rows
 
 rows = compute_rows(records, spec)  # numpy, a list of dicts
-frame = compute_features(df, spec)  # Spark, the default engine per family
+frame = compute_features(df, spec)  # auto: the JVM kernel, native Spark if it cannot run
+frame = compute_features(df, spec, kernel_function="main.features.bricksmith_kernel")  # an installed UC function
+frame = compute_features(df, spec, engine="jvm")  # the kernel or an error, never a fallback
+frame = compute_features(df, spec, engine="spark")  # native Spark expressions only
 frame = compute_features(df, spec, engine="arrow")  # every window output on the Arrow engine
 frame = compute_features(df, spec, engines={"trend": "arrow"})  # one family moved to Arrow
 frame = compute_features(df, spec, as_of="2026-06-30")  # one closing, point in time
 ```
 
-The native engine builds Spark SQL expressions from the spec over one shared window per spec. It uses no Python
+Category counts, ratios and differences are computed natively whichever engine computes the window outputs.
+
+The JVM kernel groups each entity's history into one array, calls the kernel once per entity, and explodes the
+result into one row per closing. With `as_of` it returns only that closing. The native engine builds Spark SQL expressions from the spec over one shared window per spec. It uses no Python
 UDF, is ANSI-safe, and runs on serverless. The Arrow engine groups by the keys and uses `applyInArrow`, falling
 back to `applyInPandas` on runtimes without it. The cluster needs numpy and pyarrow; bricksmith ships with the
 function.
@@ -87,17 +96,65 @@ function.
 **Arrow support is locally proven only.** It matches the numpy reference on a local Spark session, through both
 `applyInArrow` and `applyInPandas`. On Databricks it is **Unsupported on Free Edition**: the free workspace
 refuses Python UDFs (`ISOLATION_STARTUP_FAILURE.SANDBOX_STARTUP`). Its proof on a workspace that allows Python
-UDFs waits for an on-demand corporate run. Use native Spark wherever you need a Databricks-proven engine.
+UDFs waits for an on-demand corporate run. Use the JVM kernel or native Spark wherever you need a
+Databricks-proven engine.
+
+## Make the JVM kernel available
+
+The kernel reaches a Spark session in one of two ways. `auto` probes them once per session, in this order, and
+caches what it found:
+
+1. **A Unity Catalog Scala function**, tried when you pass `kernel_function=`. This is the path serverless runs:
+   it is proven on Free Edition serverless, where it matched the reference on every output. Install it once per
+   bricksmith version, with permission to create functions in the schema and write to the volume:
+
+   ```bash
+   bricksmith features install-kernel --volume main.features.jars --function main.features.bricksmith_kernel
+   ```
+
+   The command uploads the packaged JAR to the volume as `bricksmith-kernel-<version>-<sha12>.jar`, only when that
+   file is missing. It then creates or replaces the function (`LANGUAGE SCALA`, `environment_version = '4'`). From a
+   bundle task or a notebook, `bricksmith.features.cli.install_kernel(Clients(ctx.execution), volume, function)`
+   does the same. Grant `EXECUTE` on the function to whoever computes features. The function runs in a sandbox, so
+   the first call of a session pays a cold start (about 9 s on the free workspace).
+2. **Session registration**, with no installation. The JAR is added to the session (`addArtifacts` on Spark
+   Connect, `ADD JAR` on a classic session) and registered with `registerJavaFunction`. A classic session with
+   dedicated access registers it directly. **Classic compute with standard access** also needs the JAR's
+   location on the metastore's artifact allowlist (Catalog Explorer > metastore > Allowed JARs/Init Scripts),
+   and only a metastore admin can add it. Serverless refuses this path with
+   `ISOLATION_STARTUP_FAILURE.SANDBOX_STARTUP`.
+
+## The engine record
+
+Every `compute_features` call records its choice: the requested engine, the engine that computed the window
+outputs (`mixed` when `engines=` split them), the registration path and, after a fallback, the reason for every
+path that failed:
+
+- The `bricksmith.features` logger writes the choice: a fallback as a warning, any other choice at info.
+- In a task run by bricksmith, the task result in the run report carries the list under `feature_engines`:
+
+  ```json
+  {"requested": "auto", "engine": "spark", "path": "", "outputs": 540,
+   "reason": "session: SparkRuntimeException: [ISOLATION_STARTUP_FAILURE.SANDBOX_STARTUP] ..."}
+  ```
+
+When a run is slower than you expect, read this record first: `engine: "spark"` with a reason means the kernel
+did not run. `engine="jvm"` turns that silent slowdown into `KernelUnavailableError`.
 
 ## Default engine per family
 
-`DEFAULT_ENGINES` in `bricksmith.features.engines` maps every family to native Spark. The
-[recorded benchmark](../project/evidence/features-free.md) chose it: native Spark is the only engine proven on
-serverless. On the local benchmark, Arrow is never faster by enough to justify a Python UDF whose Databricks proof is pending. Measure your own sizes with:
+`DEFAULT_ENGINES` in `bricksmith.features.engines` maps every family to the JVM kernel
+([decision 0019](../decisions/0019-jvm-array-kernel-default-engine.md)). The
+[recorded benchmark](../project/evidence/features-free.md) measured the kernel at about twice the speed of native
+Spark for the whole catalog, on Free Edition serverless and locally, for every closing and for one closing. Measure
+your own sizes with:
 
 ```bash
-uv run --group remote python scripts/features_benchmark.py --sizes 2000x24x4 --engines reference,spark,arrow
+uv run --group remote python scripts/features_benchmark.py --sizes 2000x24x4 --engines reference,jvm,spark,arrow
 ```
+
+In the benchmark, `jvm` runs with `engine="jvm"`, so on a compute where the kernel cannot register, the benchmark
+fails rather than timing native Spark under the kernel's name.
 
 The script reads its context from `BRICKSMITH_*` variables in the process environment, and from a `.env` file only
 when one exists, so a CI runner or a borrowed workstation needs no file. It prints one progress line per measurement
@@ -109,8 +166,8 @@ to stderr and the markdown report to stdout. Two options help with long runs:
 - `--single-closing` times the last closing of each size instead of every closing. Engine rankings can differ
   between the two modes, so measure the one your pipeline uses.
 
-`--engines` takes any of `reference` and the engines this build ships (`spark`, `arrow`); a name it does not know is
-refused with the list it does.
+`--engines` takes any of `reference` and the engines this build ships (`spark`, `arrow`, `jvm`); a name it does
+not know is refused with the list it does.
 
 ## Catalog
 
@@ -172,4 +229,23 @@ Definitions that differ from naive positional-array code, each covered by a gold
 - Terciles are null below three positions instead of dividing by zero.
 - Percentiles never index past the window.
 
-See [decision 0014](../decisions/0014-feature-engineering-engines.md) for why there are three engines.
+## Coming from a positional-array kernel
+
+Code that packs each entity's history into an array indexed by lag (index 0 is the current closing) and computes
+features row by row reports different numbers for some definitions. bricksmith regresses and differences in
+chronological order and counts periods from the current closing. Five small entities, given lag first as such
+code stores them, are golden cases that every engine must reproduce:
+
+| Lag-ordered input | bricksmith | What differs |
+|---|---|---|
+| `[3, 2, 1]` (rising over time) | `slope` 1, `delta` 2, `delta_mean` 1, `since_max` 0 | the trend is chronological, so a series rising over time has a positive slope, not the slope over the lag index (-1) |
+| `[4, null, 1]` | `count` 2, `mean` 2.5, `delta` 3, `delta_mean` 1.5 | `delta_mean` divides by the periods between the oldest and newest non-null values (2), not by the number of values minus one |
+| `[5, null, null]` | `count` 1, `delta` null, `slope` null | one value has no change and no trend: null, not 0 |
+| `[null, null, null]` | `count` 0, `sum` null, `since_max` null | an all-null window counts 0; every value aggregate is null |
+| `[2, 9, 4]` | `since_max` 1, `since_positive` 0 | periods since an event are 0-based lags (0 is the current closing), not 1-based indexes |
+
+`kurtosis` is the **excess** kurtosis (m4 / m2² − 3), so a normal series is near 0. A kernel that reports plain
+kurtosis (m4 / m2²) differs by exactly 3. Subtract 3 from its values before comparing.
+
+See [decision 0014](../decisions/0014-feature-engineering-engines.md) for the catalog and the oracle, and
+[decision 0019](../decisions/0019-jvm-array-kernel-default-engine.md) for the default engine.
