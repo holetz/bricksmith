@@ -10,6 +10,10 @@ the per-period values of the development and out-of-time references), checked ag
 series of lights is replayed into persistence and trend alerts with the shared core. The human actions stored for
 the model (analysis, closure, risk acceptance) are folded into the alerts at the run date, and an alert with an
 active risk acceptance no longer counts for the gate.
+
+The credit-model families (:mod:`bricksmith.monitor.model.credit`) reduce each frame to per-grade or per-horizon
+sums (:meth:`Frame.sums`); a per-grade result whose expected events fall below ``min_expected_events`` is
+``insufficient_volume`` whatever its observed count.
 """
 
 from __future__ import annotations
@@ -29,15 +33,33 @@ from typing import TYPE_CHECKING, Any, Protocol
 from bricksmith.monitor.adapter import is_rows, measure
 from bricksmith.monitor.bins import BinSpec, category_text, count_bins, fit_bins, is_null
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import COLORS, CONTROL, INFORMATIONAL, NO_RULE, RED, RELATIVE, YELLOW, Light, judge, rank
+from bricksmith.monitor.limits import (
+    COLORS,
+    CONTROL,
+    INFORMATIONAL,
+    INSUFFICIENT_VOLUME,
+    NO_RULE,
+    RED,
+    RELATIVE,
+    YELLOW,
+    Light,
+    judge,
+    rank,
+)
 from bricksmith.monitor.measure import OK, segment_name
 from bricksmith.monitor.model.actions import STATE_ACCEPTED, apply_actions
 from bricksmith.monitor.model.config import (
+    BAD_RATE_CHART,
     CALIBRATION,
     COMPLETENESS,
+    CREDIT_FAMILIES,
     DEVELOPMENT,
+    EARLY_WARNING,
+    EXCLUSION_MIX,
     FAMILY_METRICS,
     FEATURE_CSI,
+    GRADE_CALIBRATION,
+    GRADE_ORDER,
     GRADE_PSI,
     LABEL_FAMILIES,
     MONTHS,
@@ -73,6 +95,8 @@ WARNED = "warned"
 GATE_FAILED = "failed"
 ERROR = "error"
 VOLUME_METRICS = frozenset({"row_count", "volume_ratio"})
+#: Control-chart metrics centred on the median of the development per-period values (development only).
+DEVELOPMENT_CENTRED = frozenset({"bad_rate"})
 LIGHT = "light"
 PERSISTENCE = "persistence"
 TREND = "trend"
@@ -175,6 +199,7 @@ class Item:
     rows: int = 0
     reason: str = ""
     details: tuple[dict[str, Any], ...] = ()
+    expected: float | None = None
 
 
 class Frame(Protocol):
@@ -218,6 +243,14 @@ class Frame(Protocol):
         """Return the sorted distinct non-null texts of ``column``."""
         ...
 
+    def sums(self, score: str, label: str, exponent: float, by: str = "") -> dict[str, tuple[int, int, float]]:
+        """Return ``(rows, events, expected events)`` per text of ``by`` (``""`` for all rows).
+
+        Rows with a null score, label or ``by`` value are left out; an event is a label equal to 1; a row's expected
+        events are ``1 - (1 - p)^exponent`` with ``p`` its score clamped to ``[0, 1]``.
+        """
+        ...
+
 
 class _RowsFrame:
     """The pure engine over a list of mappings."""
@@ -258,6 +291,17 @@ class _RowsFrame:
 
     def texts(self, column: str) -> list[str]:
         return sorted({category_text(r[column]) for r in self.data if not is_null(r.get(column))})
+
+    def sums(self, score: str, label: str, exponent: float, by: str = "") -> dict[str, tuple[int, int, float]]:
+        out: dict[str, tuple[int, int, float]] = {}
+        for row in self.data:
+            if is_null(row.get(score)) or is_null(row.get(label)) or (by and is_null(row.get(by))):
+                continue
+            p, outcome = min(max(float(row[score]), 0.0), 1.0), row[label]
+            key = category_text(row[by]) if by else ""
+            rows, events, expected = out.get(key, (0, 0, 0.0))
+            out[key] = (rows + 1, events + int(float(outcome) == 1.0), expected + (1.0 - (1.0 - p) ** exponent))
+        return out
 
 
 class _SparkFrame:
@@ -323,6 +367,25 @@ class _SparkFrame:
 
         rows = self.data.select(period_column(self.data, column).alias("t")).where("t IS NOT NULL").distinct()
         return sorted(str(r["t"]) for r in rows.collect())
+
+    def sums(self, score: str, label: str, exponent: float, by: str = "") -> dict[str, tuple[int, int, float]]:
+        from bricksmith.monitor.stability.spark import period_column  # noqa: PLC0415
+
+        f = self._f()
+        value = f.col(score).cast("double")
+        outcome = f.col(label).cast("double")
+        df = self.data.where(value.isNotNull() & ~f.isnan(value) & outcome.isNotNull() & ~f.isnan(outcome))
+        key = f.lit("")
+        if by:
+            key = period_column(df, by)
+            df = df.where(key.isNotNull())
+        p = f.least(f.greatest(value, f.lit(0.0)), f.lit(1.0))
+        rows = df.groupBy(key.alias("k")).agg(
+            f.count(f.lit(1)).alias("n"),
+            f.sum(f.when(outcome == 1.0, 1).otherwise(0)).alias("d"),
+            f.sum(f.lit(1.0) - f.pow(f.lit(1.0) - p, f.lit(float(exponent)))).alias("e"),
+        )
+        return {str(r["k"]): (int(r["n"]), int(r["d"] or 0), float(r["e"] or 0.0)) for r in rows.collect()}
 
 
 def frame_of(data: Any) -> Frame:  # noqa: ANN401 - rows or DataFrame
@@ -590,11 +653,17 @@ _METRIC = {SCORE_PSI: "psi", GRADE_PSI: "grade_psi", FEATURE_CSI: "csi"}
 def jobs_of(config: ModelMonitorConfig) -> list[tuple[str, str]]:
     """Return the isolated measurements of a declaration as ``(family, column)`` pairs."""
     found: list[tuple[str, str]] = []
+    credit = config.credit_options
     for family in config.families():
         if family == FEATURE_CSI:
             found += [(family, c) for c in sorted(config.features) if c not in (config.score, config.grade)]
+        elif family == EARLY_WARNING:
+            found += [(family, h.label) for h in credit.early_warning]
         else:
-            column = {GRADE_PSI: config.grade, VOLUMETRY: "", COMPLETENESS: ""}.get(family, config.score)
+            column = {
+                GRADE_PSI: config.grade, VOLUMETRY: "", COMPLETENESS: "", GRADE_CALIBRATION: config.grade,
+                GRADE_ORDER: config.grade, EXCLUSION_MIX: credit.exclusion, BAD_RATE_CHART: "",
+            }.get(family, config.score)  # fmt: skip
             found.append((family, column))
     return found
 
@@ -606,9 +675,30 @@ class _Measurer:
     config: ModelMonitorConfig
     binning: Reference
     baseline: Mapping[str, float]
+    exclusion: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+
+    def _credit(self, family: str, column: str, frame: Frame) -> list[Item]:
+        from bricksmith.monitor.model import credit  # noqa: PLC0415 - imports this module
+
+        if family == GRADE_CALIBRATION:
+            return credit.grade_calibration(self.config, frame)
+        if family == GRADE_ORDER:
+            return credit.grade_inversions(self.config, frame)
+        if family == EXCLUSION_MIX:
+            return credit.exclusion_mix(self.config, self.exclusion, frame)
+        if family == BAD_RATE_CHART:
+            return credit.bad_rate(self.config, frame)
+        horizon = self.config.credit_options.horizon_of(column)
+        if horizon is None:
+            msg = f"model_monitoring: no early_warning horizon labelled {column!r}"
+            raise MonitorError(msg)
+        scored = _part(self.binning, [self.binning.score], label=True)
+        return credit.early_warning(self.config, scored, horizon, frame)
 
     def items(self, family: str, column: str, frame: Frame, periods: int) -> list[Item]:
         segmented = bool(self.config.segment)
+        if family in CREDIT_FAMILIES:
+            return self._credit(family, column, frame)
         if family in _METRIC:
             return _distribution(self.binning, column, _METRIC[family], frame, segmented=segmented)
         if family in LABEL_FAMILIES:
@@ -654,6 +744,27 @@ Key = tuple[str, str, str]
 Baseline = tuple[float | None, float | None, int]
 
 
+def _control_points(
+    measurer: _Measurer,
+    chosen: Sequence[tuple[str, str]],
+    frame: Frame,
+    accepted: frozenset[str],
+    points: dict[Key, list[float]],
+) -> int:
+    """Add each finite per-period value of the ``accepted`` metrics of one reference frame; return the errors."""
+    errors = 0
+    period_column = measurer.config.period
+    for period in frame.periods(period_column):
+        current = frame.select(column=period_column, keep={period})
+        for family, column in chosen:
+            items, failed = measurer.run(family, column, current, 1)
+            errors += failed
+            for item in items:
+                if item.metric in accepted and item.value is not None and math.isfinite(item.value):
+                    points.setdefault((item.segment, item.column, item.metric), []).append(item.value)
+    return errors
+
+
 def control_baselines(
     measurer: _Measurer, jobs: Sequence[tuple[str, str]], frames: Sequence[Frame | None]
 ) -> tuple[dict[Key, Baseline], int]:
@@ -661,7 +772,8 @@ def control_baselines(
 
     Every observed period of every reference (development, then out-of-time) is one point. Fewer than
     ``control_min_points`` finite points leave the mean and standard deviation unset (the light is then
-    ``no_baseline``).
+    ``no_baseline``). A metric of ``DEVELOPMENT_CENTRED`` reads the development periods only and is centred on their
+    median instead of their mean.
     """
     config = measurer.config
     wanted = config.control_metrics()
@@ -670,22 +782,25 @@ def control_baselines(
     points: dict[Key, list[float]] = {}
     errors = 0
     chosen = [(f, c) for f, c in jobs if set(FAMILY_METRICS[f]) & wanted]
-    for frame in (f for f in frames if f is not None):
-        for period in frame.periods(config.period):
-            current = frame.select(column=config.period, keep={period})
-            for family, column in chosen:
-                items, failed = measurer.run(family, column, current, 1)
-                errors += failed
-                for item in items:
-                    if item.metric in wanted and item.value is not None and math.isfinite(item.value):
-                        points.setdefault((item.segment, item.column, item.metric), []).append(item.value)
+    for index, frame in enumerate(frames):
+        if frame is not None:
+            accepted = wanted - DEVELOPMENT_CENTRED if index else wanted
+            errors += _control_points(measurer, chosen, frame, accepted, points)
     baselines: dict[Key, Baseline] = {}
     for key, values in points.items():
         if len(values) < config.control_min_points:
             baselines[key] = (None, None, len(values))
         else:
-            baselines[key] = (statistics.fmean(values), statistics.stdev(values), len(values))
+            centre = statistics.median(values) if key[2] in DEVELOPMENT_CENTRED else statistics.fmean(values)
+            baselines[key] = (centre, statistics.stdev(values), len(values))
     return baselines, errors
+
+
+def credit_exclusion_baseline(config: ModelMonitorConfig, development: Frame) -> dict[str, dict[str, int]]:
+    """Return the development exclusion mix per segment (``""`` for the whole population)."""
+    from bricksmith.monitor.model.credit import exclusion_baseline  # noqa: PLC0415 - imports this module
+
+    return exclusion_baseline(config, development)
 
 
 def _version(frame: Frame, config: ModelMonitorConfig) -> str:
@@ -712,7 +827,7 @@ def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[st
         column=item.column, segment=item.segment, metric=item.metric, period_date=period_date(monitoring)
     )
     limits = None if found.informational else config.limits_of(found, item.metric)
-    minimum = 0 if item.metric in VOLUME_METRICS else config.min_rows
+    minimum = 0 if item.metric in VOLUME_METRICS or item.expected is not None else config.min_rows
     key = (item.segment, item.column, item.metric)
     control = limits is not None and limits.kind == CONTROL
     mean, sd, points = ctx.control.get(key, (None, None, 0)) if control else (None, None, None)
@@ -722,6 +837,9 @@ def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[st
     light, compared = judge(
         item.value, limits, baseline=baseline, spread=sd, count=item.rows, min_count=minimum, reason=item.reason
     )
+    events = config.credit_options.min_expected_events
+    if item.expected is not None and item.value is not None and item.expected < events:
+        light = Light(INSUFFICIENT_VOLUME, f"expected events {item.expected:.4g} < min {events:g}")
     if found.informational and light.status == NO_RULE:
         light = Light(INFORMATIONAL, INFORMATIONAL_REASON)
     return {
@@ -904,7 +1022,7 @@ def _measure_family(  # noqa: PLR0913, PLR0917 - one argument per thing the fami
     observed, monitored = history
     by_data: dict[str | None, list[tuple[str, Lag]]] = {}
     for metric in FAMILY_METRICS[family]:
-        lag = ctx.config.lag_for(family, metric)
+        lag = ctx.config.lag_for(family, metric, column)
         by_data.setdefault(resolve_data_period(observed, period, lag), []).append((metric, lag))
     for lagged, metrics in by_data.items():
         names = {metric for metric, _ in metrics}
@@ -958,7 +1076,8 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     binning, binning_rows = active_binning(
         development, config, store, source=physical or config.model, run_id=run_id, now=started
     )
-    measurer = _Measurer(config, binning, _per_period(development, config))
+    exclusion = credit_exclusion_baseline(config, development) if EXCLUSION_MIX in config.families() else {}
+    measurer = _Measurer(config, binning, _per_period(development, config), exclusion)
     jobs = jobs_of(config)
     oot = reference_frame(frame, config, config.out_of_time) if config.out_of_time else None
     dev_values, errors = _reference_values(measurer, jobs, development)
