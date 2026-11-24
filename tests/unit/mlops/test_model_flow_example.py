@@ -27,6 +27,7 @@ TASK_OF = {
     "source.py": "accounts_monthly",
     "features.py": "account_features",
     "development.py": "attrition_population",
+    "model.py": "attrition_train",
 }
 
 
@@ -196,3 +197,106 @@ def test_the_development_chain_runs_on_the_row_engines() -> None:
     result = select_features(abt, module_function("development.py", "SELECTION"))
     assert result.selected and set(result.selected) <= candidates
     assert {v.variable for v in result.variables} == candidates
+
+
+MODEL_TASKS = ("attrition_train", "attrition_scores", "attrition_evaluation")
+
+
+def test_the_model_tasks_plan_and_their_declarations_parse() -> None:
+    from bricksmith.mlops.documentation import check_narrative  # noqa: PLC0415
+    from bricksmith.mlops.evaluation import parse_config as parse_evaluation  # noqa: PLC0415
+    from bricksmith.monitor.model.config import parse_config as parse_monitoring  # noqa: PLC0415
+
+    plan = build_plan(load_graph(ROOT))
+    assert not plan.errors, plan.errors
+    by_task = {entry.task_id: entry for entry in plan.entries}
+    assert {f"demo.flow.{t}" for t in MODEL_TASKS} <= set(by_task)
+    reads = {binding.reference for binding in by_task["demo.flow.attrition_scores"].reads}
+    assert {"account_features", "customer_features", "attrition_population", "attrition_labels"} <= reads
+    assert "attrition_population" in {b.reference for b in by_task["demo.flow.attrition_train"].reads}
+
+    declared = declaration_of(module_function("model.py", "attrition_scores"))
+    assert declared is not None
+    monitoring = parse_monitoring(declared.metadata["model_monitoring"])
+    assert monitoring.model == module_function("model.py", "MODEL") and monitoring.label == "attrited"
+    assert set(monitoring.features) == set(module_function("model.py", "MONITORED"))
+    development = module_function("development.py", "development")()
+    config = parse_evaluation(module_function("model.py", "EVALUATION"), development)
+    assert config.reference == "dev" and config.features == module_function("model.py", "MONITORED")
+    assert check_narrative(module_function("model.py", "NARRATIVE"))
+
+
+def test_model_inputs_drop_categorical_features_and_read_nulls_as_zero() -> None:
+    features = module_function("model.py", "model_features")(("balance_mean_3p", "segment", "open_accounts"))
+    assert features == ["balance_mean_3p", "open_accounts"]
+    rows = module_function("model.py", "model_rows")(
+        [{"balance_mean_3p": None, "open_accounts": 2, "x": "k"}], features
+    )
+    assert rows == [{"balance_mean_3p": 0.0, "open_accounts": 2.0, "x": "k"}]
+
+
+class FakeExecution:
+    def __init__(self, parameters: dict[str, str]) -> None:
+        self.parameters = parameters
+
+
+class FakeTarget:
+    physical = "dev_catalog.flow_schema.attrition_scores"
+
+
+class FakeEntry:
+    targets = (FakeTarget(),)
+
+
+class FakeContext:
+    def __init__(self, parameters: dict[str, str]) -> None:
+        self.execution = FakeExecution(parameters)
+        self.entry = FakeEntry()
+
+
+class FakeStore:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    def resolve(self, name: str, model: str, *, alias: str | None = None) -> Any:  # noqa: ANN401 - a resolved model
+        from bricksmith.mlops.store import ResolvedModel  # noqa: PLC0415
+
+        self.calls.append((name, model, alias))
+        return ResolvedModel(name, model, 4, "run-registered", (alias or "",), "active")
+
+
+def test_scoring_pins_an_explicit_run_or_alias_and_never_latest() -> None:
+    pin_of = module_function("model.py", "pin_of")
+    store = FakeStore()
+    by_run = pin_of(FakeContext({"model_run": "abc123"}), store)
+    assert (by_run.run_id, by_run.version, by_run.registered, by_run.alias) == ("abc123", "run:abc123", False, None)
+    assert store.calls == []
+    by_alias = pin_of(FakeContext({}), store)
+    assert store.calls == [("dev_catalog.flow_schema.attrition", "attrition", "champion")]
+    assert (by_alias.run_id, by_alias.version, by_alias.name, by_alias.alias) == (
+        "run-registered", "4", "dev_catalog.flow_schema.attrition", "champion",
+    )  # fmt: skip
+    pin_of(FakeContext({"model_alias": "challenger"}), store)
+    assert store.calls[-1][2] == "challenger"
+
+
+class FakeClient:
+    """Serves single-file downloads the way a workspace store does: the file lands under its own name."""
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = files
+
+    def download_artifacts(self, run_id: str, path: str, dst: str) -> str:
+        assert run_id == "abc123"
+        target = Path(dst) / path.rsplit("/", 1)[-1]
+        target.write_bytes(self.files[path])
+        return str(target)
+
+
+def test_a_run_model_downloads_file_by_file(tmp_path: Path) -> None:
+    pytest.importorskip("yaml")
+    mlmodel = b"flavors:\n  sklearn:\n    pickled_model: model.skops\n    serialization_format: skops\n"
+    files = {"model/MLmodel": mlmodel, "model/bricksmith_model.json": b"{}", "model/model.skops": b"fitted"}
+    path = module_function("model.py", "download_model")(FakeClient(files), "abc123", tmp_path)
+    assert path == tmp_path / "model"
+    assert {f"model/{p.name}": p.read_bytes() for p in path.iterdir()} == files
