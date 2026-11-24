@@ -38,7 +38,8 @@ def main(argv: list[str] | None = None) -> int:
         from bricksmith.context import resolve_context  # noqa: PLC0415
         from bricksmith.env import load_dotenv  # noqa: PLC0415
 
-        spark = Clients(resolve_context(dotenv=load_dotenv(ROOT / ".env"))).spark()
+        dotenv = ROOT / ".env"  # optional, as in the remote tests: the process environment alone may select the context
+        spark = Clients(resolve_context(dotenv=load_dotenv(dotenv) if dotenv.is_file() else {})).spark()
     timings = run_benchmark(spark, sizes, engines, _split(args.families))
     notes = [f"python {platform.python_version()}", f"engines: {', '.join(engines)}"]
     report = render_report(timings, notes)
