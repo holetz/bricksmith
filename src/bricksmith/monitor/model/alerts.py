@@ -12,11 +12,12 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
-from bricksmith.monitor.limits import CONTROL, RELATIVE, judge, rank
+from bricksmith.monitor.limits import CONTROL, INFORMATIONAL, NO_RULE, RELATIVE, Light, Limits, judge, rank
 from bricksmith.monitor.model.actions import apply_actions
 from bricksmith.monitor.model.config import OUT_OF_TIME
 from bricksmith.monitor.model.engine import VOLUME_METRICS, alert_rows, apply_trend
 from bricksmith.monitor.model.tables import FINISHED
+from bricksmith.monitor.rules import INFORMATIONAL_REASON
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -39,9 +40,10 @@ def trusted(results: Iterable[Mapping[str, Any]], runs: Iterable[Mapping[str, An
     ]
 
 
-def _baseline(row: Mapping[str, Any], config: ModelMonitorConfig) -> tuple[float | None, float | None, int | None]:
-    """Return ``(baseline, spread, points)`` for the current limits of ``row`` from its stored columns."""
-    limits = config.limits_for(str(row["metric"]))
+def _baseline(
+    row: Mapping[str, Any], config: ModelMonitorConfig, limits: Limits | None
+) -> tuple[float | None, float | None, int | None]:
+    """Return ``(baseline, spread, points)`` for the limits that apply to ``row`` from its stored columns."""
     if limits is not None and limits.kind == RELATIVE:
         column = "out_of_time_value" if limits.reference == OUT_OF_TIME else "development_value"
         return row.get(column), None, None
@@ -59,16 +61,26 @@ def relight(row: Mapping[str, Any], config: ModelMonitorConfig) -> dict[str, Any
     A control limit needs the baseline a run stored for that metric; a row measured before it was declared is
     ``no_baseline``.
     """
-    limits = config.limits_for(str(row["metric"]))
+    metric = str(row["metric"])
+    found = config.resolve(
+        column=str(row.get("column") or ""),
+        segment=str(row.get("segment") or ""),
+        metric=metric,
+        period_date=str(row.get("period_date") or "") or None,
+    )
+    limits = None if found.informational else config.limits_of(found, metric)
     minimum = 0 if row["metric"] in VOLUME_METRICS else config.min_rows
     reason = str(row.get("reason") or "")
+    reason = "" if reason == INFORMATIONAL_REASON else reason
     value = row.get("value")
-    baseline, spread, points = _baseline(row, config)
+    baseline, spread, points = _baseline(row, config, limits)
     control = limits is not None and limits.kind == CONTROL
     light, compared = judge(
         value, limits, baseline=baseline, spread=spread, count=int(row.get("rows") or 0), min_count=minimum,
         reason=reason,
     )  # fmt: skip
+    if found.informational and light.status == NO_RULE:
+        light = Light(INFORMATIONAL, INFORMATIONAL_REASON)
     return {
         **row,
         "limit_kind": limits.kind if limits else "",
@@ -80,6 +92,8 @@ def relight(row: Mapping[str, Any], config: ModelMonitorConfig) -> dict[str, Any
         "trend_status": "",
         "trend_expected": None,
         "trend_deviation": None,
+        "rule_id": found.rule_id,
+        "rule_version": found.rule_version,
         "light": light.status,
         "light_rank": rank(light.status),
         "reason": reason or light.reason,

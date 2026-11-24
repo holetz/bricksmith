@@ -53,7 +53,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "computed_at": "STRING", "limit_kind": "STRING", "limit_reference": "STRING", "compared_value": "DOUBLE",
         "baseline_mean": "DOUBLE", "baseline_sd": "DOUBLE", "baseline_points": "INT", "trend_status": "STRING",
         "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE",
-        "lag": "INT", "lag_unit": "STRING",
+        "lag": "INT", "lag_unit": "STRING", "rule_id": "STRING", "rule_version": "INT",
     },
     DETAILS: {
         "model": "STRING", "model_version": "STRING", "run_id": "STRING", **_PERIOD, "bin": "STRING",

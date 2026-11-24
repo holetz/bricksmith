@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import BOTH, CONTROL, HIGHER, RELATIVE, Limits
+from bricksmith.monitor.limits import BOTH, CONTROL, HIGHER, KINDS, RELATIVE, Limits
 from bricksmith.monitor.persistence import PersistencePolicy
+from bricksmith.monitor.rules import LimitRule, Resolution, parse_rules, resolve
 from bricksmith.monitor.trend import TrendPolicy
 
 KEY = "model_monitoring"
@@ -59,7 +60,7 @@ KEYS = frozenset({
     "output", "model", "model_version", "model_version_column", "period", "score", "label", "grade", "segment",
     "sample", "references", "features", "feature_binning", "critical_fields", "metrics", "label_lag", "limits",
     "gate", "min_rows", "max_periods", "score_bins", "calibration_bins", "scope", "prefix", "epsilon", "trend",
-    "trend_metrics", "persistence", "control_min_points", "lags",
+    "trend_metrics", "persistence", "control_min_points", "lags", "rules",
 })  # fmt: skip
 
 
@@ -172,6 +173,7 @@ class ModelMonitorConfig:
     scope: str = ""
     prefix: str = "model_monitoring_"
     epsilon: float = 1e-4
+    rules: tuple[LimitRule, ...] = ()
 
     @property
     def references(self) -> tuple[Sample, ...]:
@@ -200,9 +202,21 @@ class ModelMonitorConfig:
         """Return the limits of ``metric`` (``None``: no rule)."""
         return self.limits.get(metric)
 
+    def resolve(self, *, column: str, segment: str, metric: str, period_date: str | None) -> Resolution:
+        """Return the rules that apply to one result (the model is the rules' dataset)."""
+        return resolve(
+            self.rules, dataset=self.model, column=column, segment=segment, metric=metric, period_date=period_date
+        )
+
+    def limits_of(self, found: Resolution, metric: str) -> Limits | None:
+        """Return the limits of a result: its limits rule when one applies, else the declaration's."""
+        return found.limits_rule.limits if found.limits_rule else self.limits_for(metric)
+
     def control_metrics(self) -> frozenset[str]:
         """Return the metrics judged by control-chart limits (their baselines need per-period reference values)."""
-        return frozenset(m for m, lim in self.limits.items() if lim is not None and lim.kind == CONTROL)
+        declared = (m for m, lim in self.limits.items() if lim is not None and lim.kind == CONTROL)
+        ruled = (r.metric for r in self.rules if r.limits is not None and r.limits.kind == CONTROL)
+        return frozenset((*declared, *ruled))
 
     def binning_fingerprint(self) -> str:
         """Hash what decides the bins; limits, gate and lags never trigger a refit."""
@@ -219,7 +233,13 @@ class ModelMonitorConfig:
         return hashlib.sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form."""
+        """Return the serializable form (``rules`` only when declared, so existing fingerprints stay)."""
+        data = self._base_dict()
+        if self.rules:
+            data["rules"] = [r.to_dict() for r in self.rules]
+        return data
+
+    def _base_dict(self) -> dict[str, Any]:
         return {
             "calibration_bins": self.calibration_bins,
             "control_min_points": self.control_min_points,
@@ -375,6 +395,21 @@ def _limits(value: object, oot: Sample | None) -> dict[str, Limits | None]:
     return result
 
 
+def _rules(value: object, oot: Sample | None) -> tuple[LimitRule, ...]:
+    """Parse the rules, check their metrics and give relative limits their reference like declared limits get."""
+    found: list[LimitRule] = []
+    for rule in parse_rules(value, owner="model_monitoring", kinds=KINDS):
+        if rule.metric and rule.metric not in METRICS:
+            msg = f"rule {rule.id!r}: unknown metric {rule.metric!r}; known: {', '.join(METRICS)}"
+            raise _fail(msg)
+        limits = rule.limits
+        if limits is not None and limits.kind == RELATIVE:
+            limits = _limit(f"rule {rule.id}", {**limits.to_dict(), "reference": limits.reference}, oot)
+            rule = replace(rule, limits=limits)  # noqa: PLW2901 - the rule with its reference settled
+        found.append(rule)
+    return tuple(found)
+
+
 def _trend(data: dict[str, Any]) -> tuple[TrendPolicy | None, tuple[str, ...]]:
     value = data.get("trend", {})
     metrics = data.get("trend_metrics", list(DEFAULT_TREND_METRICS))
@@ -465,6 +500,7 @@ def parse_config(data: object) -> ModelMonitorConfig:
             scope=str(data.get("scope", "")),
             prefix=_prefix(data.get("prefix", "model_monitoring_")),
             epsilon=float(data.get("epsilon", 1e-4)),
+            rules=_rules(data.get("rules"), oot),
         )
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
