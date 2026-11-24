@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from quenching.codex.config import CHOICES as CODEX_CHOICES, DEFAULTS as CODEX
 from quenching.config.autonomy import COMPLEXITY, DEFAULTS as AUTONOMY, MERGE
+from quenching.config.ci import DEFAULTS as CI, ENFORCE as CI_ENFORCE
 from quenching.config.host import DEFAULTS as WORK_HOST
 from quenching.session.commands.context import BUDGETS
 from quenching.session.cachebar import COST_STYLES, DEFAULTS as CACHE_BAR, TTL_CHOICES
@@ -143,6 +144,14 @@ _k("shared.contextBudgets.worker", "integer", BUDGETS["worker"], "autonomy", "ma
 _k("shared.contextBudgets.conductor", "integer", BUDGETS["conductor"], "autonomy", "machine",
    "cq components session context", ("Conductor budget", "Tokens the orchestrating session plans around."),
    ("Orçamento do condutor", "Tokens que a sessão que orquestra considera."), minimum=1)
+_k("shared.ci.enforce", "enum", CI["enforce"], "git", "project",
+   "cq git pr merge, /release, the autopilot and the orchestrator",
+   ("Require green CI", "required: every check green; when-present: a PR with no check may merge; "
+    "off: also with checks pending. A red check never merges, and a relaxed value needs the "
+    "local gate green (--gate-exit 0)."),
+   ("Exigir CI verde", "required: todo check verde; when-present: PR sem check pode mergear; "
+    "off: também com checks pendentes. Check vermelho nunca mergeia, e um valor relaxado exige "
+    "o gate local verde (--gate-exit 0)."), choices=list(CI_ENFORCE))
 # — Prompt cache (the quenching-cache bar) —
 _k("shared.cache.rebuildLimitUsd", "number", CACHE_BAR["rebuildLimitUsd"], "cache", "either",
    "quenching-cache plugin",
@@ -217,6 +226,11 @@ for _name, _en, _pt in (
     _k(f"shared.gitConventions.{_name}", "prose", None, "git", "project", "cq git conventions",
        (_en, "A prose directive the git pillar follows, never a template."),
        (_pt, "Uma diretiva em prosa que o pilar git segue, nunca um template."))
+for _name in ("autopilot", "improve", "develop", "execute", "review"):
+    _k(f"shared.guidance.{_name}", "prose", None, "specs", "project",
+       "/quenching-specs autopilot" if _name == "autopilot" else "declared, not yet read",
+       (f"Guidance: {_name}", "The project's focus and cautions for this flow, in prose; never widens a grant."),
+       (f"Contexto: {_name}", "O foco e os cuidados do projeto para este fluxo, em prosa; nunca amplia grant."))
 _k("shared.gitIdentity.allowedEmails", "strings", None, "git", "project",
    "cq git commit, the identity gate",
    ("Allowed emails", "Who may author or commit here: exact addresses or patterns."),

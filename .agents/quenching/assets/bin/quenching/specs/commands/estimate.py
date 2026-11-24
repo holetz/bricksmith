@@ -71,6 +71,8 @@ def _is_generated_mirror(root: Path, entry: str) -> bool:
     resolved = (root / raw).resolve()
     if not resolved.is_relative_to(root):
         return False
+    if resolved.name == ".quenching-deploy.json":
+        return True     # the deploy's own manifest: written whole by `cq deploy`, never read to build
     for directory in resolved.parents:
         if directory == root:
             break
@@ -146,8 +148,15 @@ def estimate_build(info: dict, root: str | Path, budget: int = WORKER_BUDGET_TOK
         byte_count = common_bytes + sum(row["bytes"] or 0 for row in files.values()
                                         if not row.get("writeOnly"))
         tokens = (byte_count + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN
+        sources = [(str(preamble), preamble_bytes), ("spec build sections", build_bytes)]
+        sources += [(row["path"], row["bytes"] or 0) for row in files.values()
+                    if not row.get("writeOnly")]
+        top = sorted((s for s in sources if s[1] > 0), key=lambda s: (-s[1], s[0]))[:3]
         rows.append({"section": section, "tasks": [task["id"] for task in tasks],
                      "taskCount": len(tasks), "files": sorted(files.values(), key=lambda r: r["path"]),
+                     "topContributors": [{"source": name, "bytes": size,
+                                          "tokens": (size + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN}
+                                         for name, size in top],
                      "bytes": byte_count, "estimatedTokens": tokens, "unresolved": unresolved,
                      "complete": not unresolved, "overBudget": tokens > budget})
     peak = max((row["estimatedTokens"] for row in rows), default=0)
@@ -271,6 +280,9 @@ def cmd_estimate(args, root: str, out: Emitter) -> int:
     for row in payload["sections"]:
         human += (f"  section {row['section']}: {row['estimatedTokens']} estimated tokens; "
                   f"{row['taskCount']} tasks; {len(row['unresolved'])} unresolved inputs\n")
+        if row["topContributors"]:
+            human += "    top: " + "; ".join(f"{c['source']} ({c['tokens']})"
+                                             for c in row["topContributors"]) + "\n"
     human += ("  Known reading exceeds budget: propose epic decomposition before approval.\n"
               if payload["overBudget"] else "  No known-reading excess; this is NOT a build-fit verdict.\n")
     if not payload["complete"]:

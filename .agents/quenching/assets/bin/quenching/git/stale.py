@@ -13,6 +13,7 @@ import subprocess
 from quenching.common.config import detect_provider, load_config
 from quenching.common.git import _git, _git_run
 from quenching.common.output import emit
+from quenching.common.paths import native_path
 from quenching.common.tools import spawn_argv
 from quenching.git.audit import _reflog
 from quenching.git.base import resolve_base
@@ -103,7 +104,7 @@ def _orphan_worktrees(cwd: str) -> list[dict]:
     path = branch = None
     for line in out.splitlines() + [""]:
         if line.startswith("worktree "):
-            path = line[len("worktree "):]
+            path = native_path(line[len("worktree "):])
         elif line.startswith("branch "):
             branch = line[len("branch "):].removeprefix("refs/heads/")
         elif not line and path is not None:
@@ -217,7 +218,7 @@ def _registered_worktrees(cwd: str) -> list[dict]:
     rows, row = [], None
     for line in out.splitlines() + [""]:
         if line.startswith("worktree "):
-            row = {"path": line[len("worktree "):], "head": None, "branch": None,
+            row = {"path": native_path(line[len("worktree "):]), "head": None, "branch": None,
                    "locked": False}
         elif row is None:
             continue
@@ -407,7 +408,7 @@ def _groups(entries: list[dict]) -> list[dict]:
 
 def stale_report(cwd: str, remote: str = "origin") -> dict:
     """The report `cq git stale` prints, and the one `cq git prune` re-reads before it acts."""
-    base, _is_default = resolve_base(cwd)
+    base, _is_default = resolve_base(cwd, host_default=False)
     current = _git(cwd, "branch", "--show-current").strip()
     # `base` is permanent by convention, not "safe to delete just because its tip is an
     # ancestor of base". `current` is excluded because you cannot delete the branch you are

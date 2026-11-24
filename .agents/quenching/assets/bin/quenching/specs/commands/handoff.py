@@ -83,6 +83,36 @@ def _branch(root: str) -> str | None:
     return (run.stdout.strip() or None) if run.returncode == 0 else None
 
 
+def _git(root: str, *argv: str) -> list[str] | None:
+    run = subprocess.run(["git", *argv], cwd=root, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", check=False)
+    return run.stdout.splitlines() if run.returncode == 0 else None
+
+
+def inflight(root: str) -> dict:
+    """The git state a transcript cannot prove: dirt, unsent commits, stashes, other worktrees.
+
+    A failed read leaves that field at its empty value; it never fails `facts`."""
+    status = _git(root, "status", "--porcelain=v1", "-b") or []
+    head = status[0] if status and status[0].startswith("## ") else ""
+    dirty = [line for line in status if not line.startswith("## ")]
+    upstream, ahead = None, 0
+    if "..." in head:
+        upstream = head[3:].split("...", 1)[1].split(" [", 1)[0]
+        found = re.search(r"ahead (\d+)", head)
+        ahead = int(found[1]) if found else 0
+    elif head:
+        count = _git(root, "rev-list", "--count", "HEAD", "--not", "--remotes")
+        ahead = int(count[0]) if count and count[0].isdigit() else 0
+    stashes = len(_git(root, "stash", "list") or [])
+    here = str(Path(root).resolve())
+    trees = [line[9:] for line in _git(root, "worktree", "list", "--porcelain") or []
+             if line.startswith("worktree ")]
+    others = [t for t in trees if str(Path(t).resolve()) != here]
+    return {"dirty": dirty, "upstream": upstream, "ahead": ahead, "stashes": stashes,
+            "worktrees": others}
+
+
 def _spec_for(backend, branch: str | None) -> int | str | None:
     if backend is None or not branch:
         return None
@@ -163,8 +193,11 @@ def _facts(args, root: str, out: Emitter) -> int:
     facts = transcript_facts(path, root)
     spec = _spec_for(backend, branch)
     obj = {"ok": True, "transcript": str(path), "resolvedBy": how, "branch": branch, "spec": spec,
-           **facts}
-    human = "\n".join([f"branch: {branch or '-'}", f"spec: {spec if spec is not None else '-'}",
+           **facts, "inFlight": (live := inflight(root))}
+    state = [f"in flight: {len(live['dirty'])} uncommitted, {live['ahead']} unsent "
+             f"({live['upstream'] or 'no upstream'}), {live['stashes']} stash, "
+             f"{len(live['worktrees'])} other worktrees"]
+    human = "\n".join([f"branch: {branch or '-'}", f"spec: {spec if spec is not None else '-'}", *state,
                        "files modified:", *[f"  {f}" for f in facts["filesModified"] or ["none"]],
                        "commits:", *[f"  {c}" for c in facts["commits"] or ["none"]],
                        f"last user message: {(facts['lastUserMessage'] or '-')[:200]}"])

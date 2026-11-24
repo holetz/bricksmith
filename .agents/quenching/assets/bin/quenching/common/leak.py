@@ -65,6 +65,11 @@ _SCRATCHPAD = re.compile(
     r"(?:/private)?/tmp/claude-\d+/[^/\s`'\")\]]+(?:/[0-9a-fA-F-]{36})?(?:/scratchpad)?")
 
 
+# A slug starts a path segment, so it never follows a word character, a dot or a dash: for a root
+# home it would otherwise match a `--root` flag or the tail of `temp-root`.
+_SLUG_LEFT = r"(?<![\w.-])"
+
+
 class DenylistMissing(Exception):
     """The denylist the caller requires is not on disk."""
 
@@ -123,7 +128,7 @@ def path_patterns() -> dict[str, re.Pattern[str]]:
         return {}
     return {
         "home-path": re.compile(re.escape(home) + r"(?![\w.-])"),
-        "home-slug": re.compile(re.escape(_home_slug(home)) + r"(?![\w.])"),
+        "home-slug": re.compile(_SLUG_LEFT + re.escape(_home_slug(home)) + r"(?![\w.])"),
     }
 
 
@@ -173,14 +178,20 @@ def normalize_paths(text: str, root: str | None = None) -> str:
     home slug of a Claude Code project directory to `<project>`."""
     text = _SCRATCHPAD.sub("<scratchpad>", text)
     if root:
-        top = os.path.abspath(root).rstrip("/\\")
-        if len(top) > 1:
-            text = re.sub(re.escape(top) + r"/", "", text)
-            text = re.sub(re.escape(top) + r"(?![\w./-])", ".", text)
+        # The root as given and as `abspath` spells it (`/r` is `C:\r` on Windows), each with
+        # either separator: a Windows path reaches a text as `C:\r\x` or as `C:/r/x`.
+        tops = set()
+        for top in (root, os.path.abspath(root)):
+            top = top.rstrip("/\\")
+            if len(top) > 1:
+                tops |= {top, top.replace("\\", "/"), top.replace("/", "\\")}
+        for top in sorted(tops, key=len, reverse=True):
+            text = re.sub(re.escape(top) + r"[/\\]", "", text)
+            text = re.sub(re.escape(top) + r"(?![\w./\\-])", ".", text)
     home = _home()
     if home:
         text = re.sub(re.escape(home) + r"(?![\w.-])", "~", text)
-        text = re.sub(re.escape(_home_slug(home)) + r"(?:-[^/\s`'\")\]]*)?(?![\w.])", "<project>", text)
+        text = re.sub(_SLUG_LEFT + re.escape(_home_slug(home)) + r"(?:-[^/\s`'\")\]]*)?(?![\w.])", "<project>", text)
     return text
 
 

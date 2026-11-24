@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import subprocess
 
+from quenching.common.paths import native_path
+
 BYPASS = "--dangerously-bypass-approvals-and-sandbox"
 SECRET_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")
 SECRET_PREFIXES = ("AWS_", "AZURE_", "GOOGLE_")
@@ -116,8 +118,8 @@ def _primary(worktree: str, base: str) -> str:
 def base_state(worktree: str, primary: str | None = None) -> dict:
     """The base checkout's `HEAD` and branch and the primary branch ref's value. Fails closed."""
     listing = git_strict(worktree, "worktree", "list", "--porcelain")
-    base = next((line[len("worktree "):] for line in listing.splitlines()
-                 if line.startswith("worktree ")), "")
+    base = native_path(next((line[len("worktree "):] for line in listing.splitlines()
+                             if line.startswith("worktree ")), ""))
     if not base:
         raise GuardError("git worktree list names no base checkout")
     primary = primary if primary is not None else _primary(worktree, base)

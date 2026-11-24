@@ -10,25 +10,24 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import subprocess
 
+from quenching.common.cache import cache_path
 from quenching.common.config import find_repo_root
 from quenching.specs.backends.base import BackendRefusal
-from quenching.specs.backends.git import DEFAULT_REMOTE, GIT_TIMEOUT_S, NO_FETCH_ENV, GitBackend
+from quenching.specs.backends.git import NO_FETCH_ENV, GitBackend
+from quenching.specs.backends.git import origin_url as _origin_url
 from quenching.specs.parse.epics import local_key, split_ref
 
-# `<owner>/<repo>[.git][/]` at the end of a URL, after `/` or the scp-like `:`.
-_TAIL_RE = re.compile(r"(?P<sep>[/:])(?P<owner>[^/:]+)/(?P<repo>[^/]+?)(?P<git>\.git)?/?$")
+# `<owner>/<repo>[.git][/]` at the end of a URL, after `/` or the scp-like `:`; a local-path
+# remote on Windows (`C:\stores\owner\repo.git`) separates with `\`.
+_TAIL_RE = re.compile(
+    r"(?P<sep>[/:\\])(?P<owner>[^/:\\]+)(?P<mid>[/\\])(?P<repo>[^/\\]+?)(?P<git>\.git)?[/\\]?$")
 
 _FOREIGN: dict[str, GitBackend] = {}
 
 
 def origin_url(root: str | None) -> str | None:
-    repo = find_repo_root(root or os.getcwd())
-    run = subprocess.run(["git", "-C", repo, "remote", "get-url", DEFAULT_REMOTE],
-                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S, check=False) \
-        if os.path.isdir(repo) else None
-    return (run.stdout.strip() or None) if run is not None and run.returncode == 0 else None
+    return _origin_url(find_repo_root(root or os.getcwd()))
 
 
 def own_repo(url: str | None) -> str | None:
@@ -44,7 +43,8 @@ def sibling_url(url: str | None, repo: str) -> str | None:
     if own_repo(url) is None:
         return None
     m = _TAIL_RE.search(url)
-    return f"{url[:m.start()]}{m.group('sep')}{repo}{m.group('git') or ''}"
+    swapped = repo.replace("/", m.group("mid"))
+    return f"{url[:m.start()]}{m.group('sep')}{swapped}{m.group('git') or ''}"
 
 
 _STORE_BACKENDS = ("git", "memory")
@@ -52,9 +52,8 @@ _STORE_BACKENDS = ("git", "memory")
 
 def _foreign(root: str, url: str) -> GitBackend:
     if url not in _FOREIGN:
-        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
         digest = hashlib.sha256(url.encode()).hexdigest()[:32]
-        mirror = os.path.join(base, "quenching", "mirrors", f"{digest}.git")
+        mirror = cache_path("mirrors", f"{digest}.git")
         _FOREIGN[url] = GitBackend(root, mirror_dir=mirror, remote_url=url)
     return _FOREIGN[url]
 

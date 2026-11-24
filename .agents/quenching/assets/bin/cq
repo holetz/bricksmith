@@ -258,6 +258,9 @@ def build_doctor_parser() -> argparse.ArgumentParser:
                    help="preview a minimal .claude/quenching.json from detected provider/fronts")
     p.add_argument("--write", action="store_true",
                    help="confirm writing the setup preview (requires --setup)")
+    p.add_argument("--antivirus", action="store_true",
+                   help="print the paths and processes to exclude from an on-access antivirus; "
+                        "applies nothing")
     return p
 
 
@@ -286,7 +289,7 @@ def _run_top_doctor(argv: list[str], command_index: int) -> int:
     args = argv[:command_index] + argv[command_index + 1:]
     parsed = build_doctor_parser().parse_args(args)
     return run_doctor(parsed.json, os.path.abspath(parsed.root), setup=parsed.setup,
-                      write=parsed.write)
+                      write=parsed.write, antivirus=parsed.antivirus)
 
 
 def _provider_refusal() -> int | None:

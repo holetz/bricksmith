@@ -133,7 +133,7 @@ def parse_tasks(text: str) -> list[dict]:
     `state` is `" "` (open), `"x"` (done) or `"!"` (blocked). The blocked marker is
     deliberately IN THE FILE rather than in sidecar state: it is what a human reads when
     they come to unblock it, and v1's hidden attempt counter was read by nobody."""
-    sections = parse_sections(mask_comments(text))
+    sections = parse_sections(mask_comments(text), compute_filled=False)
     if "Tasks" not in sections:
         return []
     base = sections["Tasks"]["lineno"] + 1

@@ -30,10 +30,13 @@ import time
 from datetime import datetime
 
 from quenching.common import identity
+from quenching.common.cache import cache_path
 from quenching.common.config import find_repo_root
+from quenching.common.git import remember_remote_url, remembered_remote_url
 from quenching.common.leak import guard_store_write, patterns, scan_text, store_refusal
 from quenching.specs.backends.base import (BackendRefusal, SpecBackend, artifact_owner,
                                            check_artifact)
+from quenching.specs.backends.lean_cache import LeanCache, lean_key
 from quenching.specs.parse import PHASES, derive_info, derive_labels, resolve_one
 
 
@@ -142,9 +145,8 @@ class _Blob(str):
 
 
 def _cache_path(key: str) -> str:
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
     digest = hashlib.sha256(key.encode()).hexdigest()[:32]
-    return os.path.join(base, "quenching", "git", f"{digest}.json")
+    return cache_path("git", f"{digest}.json")
 
 
 _UNSET = object()
@@ -172,6 +174,8 @@ class GitBackend(SpecBackend):
         self._fetched_at: float | None = None
         self._snapshots: dict[str, dict[str, str]] = {}
         self._blob_text: dict[str, str] = {}
+        self._parents: dict[str, str | None] = {}
+        self._seen_pending: tuple[str | None] | None = None
         cache_key = f"{self.mirror_dir or self.repo_root}\0{remote}\0{branch}"
         self._cache_file = _cache_path(cache_key)
         # The card client: `_UNSET` resolves it from the configuration on first use, `None`
@@ -272,9 +276,10 @@ class GitBackend(SpecBackend):
                            capture_output=True, timeout=GIT_TIMEOUT_S, check=False)
         return self.remote_url
 
-    def _fetch(self) -> str | None:
+    def _fetch(self, resolve: bool = True) -> str | None:
         """One fetch of the store branch into the tracking ref; the tip, or None when the
-        remote has no store branch yet."""
+        remote has no store branch yet. `resolve=False` skips reading the tip back, for a
+        caller that resolves it together with the pending ref."""
         source = self._fetch_source()
         code, _, err = self._git("fetch", "--quiet", "--no-tags", "--no-write-fetch-head",
                                  source, f"+refs/heads/{self.branch}:{self.tracking_ref}")
@@ -288,12 +293,34 @@ class GitBackend(SpecBackend):
                            f"could not fetch branch '{self.branch}' from '{self.remote}': "
                            f"{err.strip() or code}", remote=self.remote)
         self._touch_cache()
-        return self._local_tip()
+        return self._local_tip() if resolve else None
 
     def _local_tip(self) -> str | None:
-        code, out, _ = self._git("rev-parse", "--verify", "--quiet",
-                                 f"{self.tracking_ref}^{{commit}}")
-        return (out.decode().strip() or None) if code == 0 else None
+        """The tracking tip. ONE `for-each-ref` also reads the pending ref beside it, kept in
+        `_seen_pending` for `_heads`, and memoizes the pending commit's parent; a ref that is
+        not a commit falls back to the peeling `rev-parse`."""
+        refs = [self.tracking_ref] + ([] if self.read_only else [self.pending_ref])
+        code, out, _ = self._git("for-each-ref",
+                                 "--format=%(objectname) %(objecttype) %(refname) %(parent)",
+                                 *refs)
+        found: dict[str, str] = {}
+        for line in out.decode().splitlines() if code == 0 else ():
+            sha, kind, name, *parents = line.split(" ")
+            if name not in refs:
+                continue
+            if kind != "commit":
+                code = 1
+                break
+            found[name] = sha
+            if name == self.pending_ref:
+                self._parents[sha] = parents[0] if parents and parents[0] else None
+        if code != 0:
+            code, out, _ = self._git("rev-parse", "--verify", "--quiet",
+                                     f"{self.tracking_ref}^{{commit}}")
+            return (out.decode().strip() or None) if code == 0 else None
+        if not self.read_only:
+            self._seen_pending = (found.get(self.pending_ref),)
+        return found.get(self.tracking_ref)
 
     def has_local_ref(self) -> bool:
         return self._local_tip() is not None or self._pending() is not None
@@ -307,8 +334,11 @@ class GitBackend(SpecBackend):
         return (out.decode().strip() or None) if code == 0 else None
 
     def _parent(self, commit: str) -> str | None:
-        code, out, _ = self._git("rev-parse", "--verify", "--quiet", f"{commit}^1")
-        return (out.decode().strip() or None) if code == 0 else None
+        """A commit's first parent, memoized: a commit never changes, so it is asked once."""
+        if commit not in self._parents:
+            code, out, _ = self._git("rev-parse", "--verify", "--quiet", f"{commit}^1")
+            self._parents[commit] = (out.decode().strip() or None) if code == 0 else None
+        return self._parents[commit]
 
     def _ops(self, commit: str | None) -> list[str]:
         """The operations a pending commit accumulated, from its message."""
@@ -353,12 +383,12 @@ class GitBackend(SpecBackend):
         memo = getattr(self, "_tip_memo", None)
         if memo is not None and time.monotonic() - memo[0] <= TIP_MEMO_S:
             return memo[1], memo[2]
-        if self._fetched_fresh() or os.environ.get(NO_FETCH_ENV, "") not in ("", "0") \
-                or self._cache_fresh():
-            tip = self._local_tip()
-        else:
-            tip = self._fetch()
-        pending = self._pending()
+        if not (self._fetched_fresh() or os.environ.get(NO_FETCH_ENV, "") not in ("", "0")
+                or self._cache_fresh()):
+            self._fetch(resolve=False)
+        self._seen_pending = None
+        tip = self._local_tip()
+        pending = self._seen_pending[0] if self._seen_pending else self._pending()
         self._tip_memo = (time.monotonic(), tip, pending)
         return tip, pending
 
@@ -479,22 +509,48 @@ class GitBackend(SpecBackend):
     # -- the five primitives --------------------------------------------------- #
     def list_specs(self, phase: str | None = None, lean: bool = False) -> list[dict]:
         snapshot = self._view()
+        index = self._index(snapshot)
+        cache = None
         if lean:
-            snapshot.preload()
+            cache = LeanCache(self._lean_cache_dir())
+            # Only blobs the cache has not derived yet are read: a warm listing loads no text.
+            cold = [snapshot.blobs[path] for spec_phase, path in index.values()
+                    if cache.get(lean_key(spec_phase, snapshot.blobs[path])) is None]
+            if cold:
+                self._texts(cold)
         rows = []
-        for spec_id, (spec_phase, path) in self._index(snapshot).items():
+        for spec_id, (spec_phase, path) in index.items():
             if phase is not None and spec_phase != phase:
                 continue
             row = self._descriptor(spec_id, spec_phase, path)
             if lean:
-                info = derive_info(row, snapshot[path][1])
-                row.update({"title": info["frontmatter"].get("title", ""),
+                blob = snapshot.blobs[path]
+                key = lean_key(spec_phase, blob)
+                fields = cache.get(key)
+                if fields is None:
+                    info = derive_info(row, snapshot[path][1])
+                    fields = {"title": info["frontmatter"].get("title", ""),
+                              "records": derive_labels(info),
+                              "epic": info["frontmatter"].get("epic"),
+                              "workItemType": info["frontmatter"].get("workItemType")}
+                    cache.put(key, fields)
+                row.update({"title": fields["title"],
                             "state": "closed" if spec_phase == "archive" else "open",
-                            "records": derive_labels(info),
-                            "epic": info["frontmatter"].get("epic"),
-                            "workItemType": info["frontmatter"].get("workItemType")})
+                            "records": list(fields["records"]),
+                            "epic": fields["epic"],
+                            "workItemType": fields["workItemType"]})
             rows.append(row)
+        if cache is not None:
+            cache.save({lean_key(ph, snapshot.blobs[p]) for ph, p in index.values()})
         return sorted(rows, key=lambda r: (PHASES.index(r["phase"]), r["id"]))
+
+    def _lean_cache_dir(self) -> str | None:
+        """The git directory the `list --lean` cache sits in: untracked, shared by worktrees."""
+        if self.mirror_dir:
+            return self.mirror_dir if os.path.isdir(self.mirror_dir) else None
+        code, out, _ = self._git("rev-parse", "--path-format=absolute", "--git-common-dir")
+        path = out.decode("utf-8", "replace").strip()
+        return path if code == 0 and os.path.isdir(path) else None
 
     def read_spec(self, spec_id: str | int) -> tuple[dict | None, dict]:
         snapshot = self._view()
@@ -565,14 +621,19 @@ class GitBackend(SpecBackend):
                     info["_git_blob"] = blob
 
     def create_spec(self, phase: str, text: str, spec_id: int | str | None = None,
-                    card: int | None = None) -> str:
+                    card: int | None = None, push: bool = True) -> str:
         """Store a new spec.
 
         With a card provider and no explicit ID, the card is created FIRST (one request) and
         its native number becomes the spec's ID. `card=<n>` adopts an existing tracker item
         instead: the document is written under that number, then the item is rewritten to the
         thin card. `spec_id` alone is the hook for an ID the caller already owns; with none of
-        them the branch counter allocates one under the same compare-and-swap."""
+        them the branch counter allocates one under the same compare-and-swap.
+
+        `push=False` is the capture path: the document lands in the clone's local pending commit
+        and the sync (`cq specs push`, `cq git push`, `cq git pr create`) sends it, so a creation
+        costs no push. The default keeps the write-through contract the migration and the tests'
+        fixtures rely on."""
         from quenching.specs import cards
         text = guard_store_write(text, self.repo_root, None, BackendRefusal)
         client = self.card()
@@ -595,7 +656,7 @@ class GitBackend(SpecBackend):
                 raise
             created_card = True
         try:
-            locator = self._create(phase, text, spec_id)
+            locator = self._create(phase, text, spec_id, push)
         except BackendRefusal as exc:
             if created_card:
                 exc.err["message"] = (f"{exc.err.get('message', '')}; the card #{spec_id} was "
@@ -610,7 +671,7 @@ class GitBackend(SpecBackend):
                 raise cards.card_refusal(spec_id, "rewritten as a thin card", exc.err)
         return locator
 
-    def _create(self, phase: str, text: str, spec_id: int | str | None) -> str:
+    def _create(self, phase: str, text: str, spec_id: int | str | None, push: bool = True) -> str:
         allocated: dict[str, int] = {}
 
         def apply(snapshot):
@@ -631,7 +692,16 @@ class GitBackend(SpecBackend):
             return {self._path(phase, new_id): text,
                     COUNTER_PATH: f"{max(counter, new_id + 1)}\n"}, None
 
-        self._store(apply, lambda: f"create {allocated['id']}")
+        if push:
+            self._store(apply, lambda: f"create {allocated['id']}")
+        else:
+            # A local pending write, like `write_specs`. `_store_local` never fetches, so the tip
+            # is brought up to date here through the same TTL cache as any read: the id is
+            # allocated over the remote's counter, and a clone that raced inside the cache window
+            # is refused at the push, never overwritten.
+            if not self.read_only:
+                self._tip()
+            self._store(apply, lambda: f"create {allocated['id']}", sync=False)
         return LOCATOR_PREFIX + self._path(phase, allocated["id"])
 
     def import_specs(self, items: list[tuple[int, str, str]],
@@ -1269,6 +1339,18 @@ class _Tree:
 _STORES: dict[tuple[str, str], GitBackend] = {}
 
 
+def origin_url(repo: str) -> str | None:
+    """The `origin` URL of `repo`: the one this process already read, else one `remote get-url`."""
+    url = remembered_remote_url(repo, DEFAULT_REMOTE)
+    if url is None and os.path.isdir(repo):
+        run = subprocess.run(["git", "-C", repo, "remote", "get-url", DEFAULT_REMOTE],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=GIT_TIMEOUT_S, check=False)
+        url = run.stdout.strip() if run.returncode == 0 else ""
+        remember_remote_url(repo, DEFAULT_REMOTE, url)
+    return url or None
+
+
 def open_git_backend(root: str, mirror_dir: str | None = None) -> tuple[SpecBackend | None, dict]:
     """The `git` store for this repository — one instance per repository and process, so the
     config loader and the commands share the one fetch."""
@@ -1276,14 +1358,12 @@ def open_git_backend(root: str, mirror_dir: str | None = None) -> tuple[SpecBack
     key = (os.path.abspath(repo), mirror_dir or "")
     if key in _STORES:
         return _STORES[key], {}
-    run = subprocess.run(["git", "-C", repo, "remote", "get-url", DEFAULT_REMOTE],
-                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S, check=False) \
-        if os.path.isdir(repo) else None
-    if run is None or run.returncode != 0 or not run.stdout.strip():
+    url = origin_url(repo)
+    if not url:
         return None, {"code": "sp-git-no-remote", "exit": 2,
                       "message": f"the git store needs a '{DEFAULT_REMOTE}' remote in {repo}; "
                                  "no spec was read or written"}
-    backend = GitBackend(repo, mirror_dir=mirror_dir, remote_url=run.stdout.strip())
+    backend = GitBackend(repo, mirror_dir=mirror_dir, remote_url=url)
     _STORES[key] = backend
     return backend, {}
 

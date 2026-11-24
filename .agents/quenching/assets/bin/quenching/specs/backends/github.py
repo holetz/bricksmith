@@ -10,6 +10,7 @@ import re
 import sys
 import time
 
+from quenching.common.cache import cache_path
 from quenching.common.git import COMMAND_TIMEOUT_S, _git
 from quenching.common.remote import github_slug, normalize_remote
 from quenching.common.config import CONFIG_FILE, find_repo_root
@@ -50,8 +51,7 @@ def github_cache_path(remote: str) -> str:
     """Return the per-user cache path for one normalized GitHub remote."""
     normalized = normalize_github_remote(remote)
     key = hashlib.sha256(normalized.encode()).hexdigest()[:32]
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    return os.path.join(base, "quenching", "github", f"{key}.json")
+    return cache_path("github", f"{key}.json")
 
 
 def github_cache_read(remote: str) -> dict:

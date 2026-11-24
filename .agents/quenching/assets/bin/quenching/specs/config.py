@@ -12,7 +12,7 @@ from quenching.common.config import (CONFIG_FILE, LEGACY_CONFIG_FILE,
                                      detect_provider as _common_detect_provider,
                                      find_repo_root as _common_find_repo_root,
                                      infer_base_branch,
-                                     load_config as load_envelope, namespace)
+                                     load_config as load_envelope, namespace, posix_path)
 from quenching.common.git import _git
 from quenching.common.remote import remote_host as _remote_host
 from quenching.specs.parse.spec import PHASE_DIRS, PHASES
@@ -382,7 +382,7 @@ def load_config(root: str, *, detect_provider_info: bool = True) -> dict:
         values.update(namespace(envelope, name))
     provider = envelope["provider"]
     provider_host = envelope["providerHost"]
-    out = {"path": path, "present": envelope["present"], "unparseable": None,
+    out = {"path": posix_path(path), "present": envelope["present"], "unparseable": None,
            "configSource": envelope["source"], "configProviderRefusal": envelope["providerRefusal"],
            "unknownKeys": envelope["unknownKeys"],
            "unknownNamespaces": envelope["unknownNamespaces"],

@@ -22,6 +22,7 @@ import json
 import os
 import time
 
+from quenching.common.cache import cache_path
 from quenching.common.io import write_text
 from quenching.specs.backends.base import SpecBackend
 from quenching.specs.parse import FIELD_KEYS, PHASES, derive_info
@@ -52,9 +53,8 @@ def reconcile_ttl() -> float:
 
 def cache_dir(org: str, project: str) -> str:
     """Per machine and per user, outside the repository, keyed by organisation and project."""
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
     key = hashlib.sha256(f"{org}\n{project}".encode()).hexdigest()[:16]
-    return os.path.join(base, "quenching", "azure-sync", key)
+    return cache_path("azure-sync", key)
 
 
 class SyncCache:

@@ -23,6 +23,21 @@ merge anything into a target's `.claude/settings.json` to make a tool resolve.
 Branch on the **exit code** (0 ok · 1 findings · 2 refusal) and the `--json` payload, never on
 prose.
 
+**With the `quenching` MCP server connected, a body must call the tool, never the shell.** The
+map is mechanical: `cq <pillar> <verb…>` is the tool `<pillar>_<verb…>`, words joined by `_` and
+`-` read as `_` — `cq specs status` is `specs_status`, `cq git worktree acquire` is
+`git_worktree_acquire`, `cq components read` is `components_read`; each flag is the argument of the
+same name, without `--root` and `--json`, which the server owns. Claude Code names the tool
+`mcp__quenching__<tool>`, OpenCode `quenching_<tool>`; `cq deploy` grants each agent and skill
+exactly the tools its `Bash(cq …)` grants cover. One long-lived process keeps the store read, where
+each shell call starts a Python (0.58 s against 0.024 s measured on `specs status`).
+
+**The CLI is the declared fallback, and only for two cases:** the verb has no tool (the server's
+`tools/list` does not name it), or the session has no `quenching` server. Either way the call runs
+`cq` as above and **the run's report says so** — `MCP: fallback cq <pillar> <verb> — <no tool | no
+server>` — so a fallback is never silent. The bodies keep writing `cq …`: the map above turns any
+citation into its tool.
+
 ### Deploy mode: the target-local payload
 
 quenching reaches a repository only through `cq deploy`. The target carries the tool at

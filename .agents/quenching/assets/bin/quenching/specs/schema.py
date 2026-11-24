@@ -426,7 +426,20 @@ verification: <VERIFICATION>
 """
 
 
+_SCHEMA_MEMO: dict[str, dict] = {}
+
+
 def load_schema() -> dict:
+    """The schema, parsed once per process and path: a listing derives ~1000 documents and
+    each used to re-read and re-parse `schema.json`. Callers treat it as read-only."""
+    p = os.path.join(ASSET_DIR, "schema.json")
+    hit = _SCHEMA_MEMO.get(p)
+    if hit is None:
+        hit = _SCHEMA_MEMO[p] = _load_schema_uncached()
+    return hit
+
+
+def _load_schema_uncached() -> dict:
     p = os.path.join(ASSET_DIR, "schema.json")
     txt = read_text(p)
     if txt:

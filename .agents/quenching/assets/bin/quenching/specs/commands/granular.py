@@ -13,12 +13,13 @@ from quenching.specs.backends import open_backend
 from quenching.specs.commands.output import Emitter, display_locator, read_one
 from quenching.specs.commands.task import _find_task
 from quenching.specs.parse import derive_info
-from quenching.specs.parse.edit import (_match_heading, fold_stray_heading,
-                                        resolve_heading_name, split_section_stream,
+from quenching.specs.parse.edit import (MOJIBAKE_THRESHOLD, _match_heading, fold_stray_heading,
+                                        mojibake_words, resolve_heading_name, split_section_stream,
                                         unclosed_fence, upsert_section, whole_body,
                                         write_handoff_block)
 from quenching.specs.parse.handoff import current_handoff_section, parse_handoff
 from quenching.specs.parse.sections import section_state, stray_headings
+from quenching.specs.parse.tasks import TAIL_RE
 from quenching.specs.parse.text import body_after_frontmatter
 from quenching.specs.schema import canonical_headings, headings_for_moment, section_guidance
 
@@ -198,6 +199,18 @@ def _refuse_unclosed_fence(args, out: Emitter, heading: str, line: str) -> int:
     return 2
 
 
+def refuse_mojibake(args, out: Emitter, words: list[str]) -> int:
+    shown = words[:3]
+    msg = (f"the body carries {len(words)} words with a `?` between letters ({', '.join(shown)}) — "
+           "the signature of a non-ASCII character lost in the pipe, so nothing was written. In "
+           "PowerShell 5 run `$OutputEncoding=[Text.UTF8Encoding]::new($false)` before the pipe, "
+           "or write through the MCP tool `specs_section_write`; a `?` that is meant goes in a "
+           "code span")
+    out.emit(args.json, {"ok": False, "code": "sp-write-mojibake", "words": shown,
+                         "count": len(words), "message": msg}, f"error: {msg}")
+    return 2
+
+
 def _refuse_empty_body(args, out: Emitter, empty: list[str]) -> int:
     names = ", ".join(f"## {h}" for h in empty)
     msg = (f"the body of {names} is empty — written, it would replace the section with the "
@@ -268,7 +281,33 @@ def _splice_stream(args, out: Emitter, info: dict, headings: list[str],
         new_text, action = upsert_section(cur, heading, block)
         results.append({"heading": heading, "action": action})
         cur = derive_info(cur, new_text)
+    if info["frontmatter"].get("approved") and any(h == "Tasks" for h, _ in pairs):
+        if changed := _frozen_task_changes(info["tasks"], cur["tasks"]):
+            return _refuse_frozen_tasks(args, out, changed)
     return new_text, results
+
+
+def _task_contract(t: dict) -> tuple:
+    """What an approved task promises: its words, its proof and its scope. State and `subject:`
+    are the task verbs' to write, so they are not part of it."""
+    return (TAIL_RE.sub("", t["text"]).strip(), t["verify"], t["files"], t["operational"],
+            t["cwd"])
+
+
+def _frozen_task_changes(old: list[dict], new: list[dict]) -> list[str]:
+    """Ids of approved tasks the new `## Tasks` dropped or rewrote; appending is not one."""
+    now = {t["id"]: t for t in new if t["id"]}
+    return [t["id"] for t in old if t["id"]
+            and (t["id"] not in now or _task_contract(t) != _task_contract(now[t["id"]]))]
+
+
+def _refuse_frozen_tasks(args, out: Emitter, ids: list[str]) -> int:
+    msg = (f"## Tasks is append-only after `approved`: task(s) {', '.join(ids)} were removed or "
+           "had their text, `verify:`, `files:` or `cwd:` changed — retire scope with "
+           "`task --descope --reason`, or add a task instead")
+    out.emit(args.json, {"ok": False, "code": "sp-tasks-frozen", "tasks": ids, "message": msg},
+             f"error: {msg}")
+    return 2
 
 
 def cmd_section(args, root: str, out: Emitter) -> int:
@@ -319,6 +358,8 @@ def cmd_section(args, root: str, out: Emitter) -> int:
         return _refuse_scope(args, out, headings)
 
     content = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if len(garbled := mojibake_words(content)) >= MOJIBAKE_THRESHOLD:
+        return refuse_mojibake(args, out, garbled)
     if scope or (len(headings) == 1
                  and not split_section_stream(content, canonical_headings())):
         # A body written whole (scoped, or the raw singular form) is spliced under `## <heading>`
