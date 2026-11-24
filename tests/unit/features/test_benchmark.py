@@ -7,6 +7,7 @@ import pytest
 from bricksmith.features import CATALOG, FeatureError
 from bricksmith.features.benchmark import (
     ALL,
+    BENCH_ENGINES,
     REFERENCE,
     Budget,
     Size,
@@ -126,5 +127,8 @@ def test_a_budget_that_holds_leaves_no_note() -> None:
 
 
 def test_engine_names_come_from_the_known_engines() -> None:
-    with pytest.raises(FeatureError, match="reference, spark, arrow"):
+    assert BENCH_ENGINES == ("reference", "jvm", "spark", "arrow")
+    with pytest.raises(FeatureError, match=r"reference, spark, arrow, jvm; .*\['gpu'\]"):
+        run_benchmark(None, [Size(2, 2, 1)], ["gpu"])
+    with pytest.raises(FeatureError, match="need a session"):
         run_benchmark(None, [Size(2, 2, 1)], ["jvm"])

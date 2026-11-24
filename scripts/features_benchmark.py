@@ -1,6 +1,6 @@
 """Time the feature engines per aggregate family and print a markdown report.
 
-Usage: ``python scripts/features_benchmark.py [--sizes 200x24x4,2000x24x4] [--engines reference,spark,arrow]
+Usage: ``python scripts/features_benchmark.py [--sizes 200x24x4,2000x24x4] [--engines reference,jvm,spark,arrow]
 [--families sequence,trend,all] [--single-closing] [--budget SECONDS] [--output report.md]``. The Spark engines run on
 the context selected the usual way (``BRICKSMITH_*`` variables in the process environment, or in an optional ``.env``
 file; see the test setup guide); ``--engines reference`` needs no workspace. Progress goes to stderr and the report to

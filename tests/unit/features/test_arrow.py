@@ -13,7 +13,16 @@ import pytest
 from bricksmith.features import CATALOG, CategoricalCount, FeatureError, FeatureSpec, Ratio, WindowFeature, compute_rows
 from bricksmith.features.arrow import group_function, output_schema, pandas_function, period_indexes
 from bricksmith.features.catalog import FAMILIES
-from bricksmith.features.engines import ARROW, DEFAULT_ENGINES, ENGINES, NATIVE, compute_features, route, subset_spec
+from bricksmith.features.engines import (
+    ARROW,
+    DEFAULT_ENGINES,
+    ENGINES,
+    JVM,
+    NATIVE,
+    compute_features,
+    route,
+    subset_spec,
+)
 from bricksmith.features.history import period_index
 
 SPEC = FeatureSpec(
@@ -107,7 +116,7 @@ def test_output_schema() -> None:
 def test_routing_by_family() -> None:
     assert set(DEFAULT_ENGINES) == set(FAMILIES)
     assert set(DEFAULT_ENGINES.values()) <= set(ENGINES)
-    assert set(DEFAULT_ENGINES.values()) == {NATIVE}  # the recorded benchmark's choice
+    assert set(DEFAULT_ENGINES.values()) == {JVM}  # decision 0019: the JVM kernel, native as its fallback
     routed = route(SPEC, dict.fromkeys(FAMILIES, NATIVE) | {"trend": ARROW})
     assert routed[ARROW] == [
         f"x_{a}_{w}p" for w in (1, 3, 6) for a in ("slope", "intercept", "r2", "resid_std", "trend_distance")
