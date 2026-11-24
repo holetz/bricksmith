@@ -5,6 +5,9 @@ time: the numpy reference over Python rows, and on Spark the native and Arrow en
 remotely from the same size (Spark's own hash, so the two data sets are alike in shape, not identical). Spark
 results are materialized with one ``max(hash(...))`` aggregate; one warm-up run per engine is excluded, and the time to
 materialize the source alone is reported as the ``source`` row. :func:`render_report` writes a markdown table.
+
+A run can report ``progress`` (one line per event), stop cleanly at a time :class:`Budget` (checked between
+measurements, never inside one) and time one closing (``as_of``) instead of every closing.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from datetime import date
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.features.catalog import CATALOG, FAMILIES
+from bricksmith.features.engines import ENGINES
 from bricksmith.features.errors import FeatureError
 from bricksmith.features.spec import FeatureSpec, WindowFeature
 
@@ -47,6 +51,11 @@ class Size:
         return f"{self.entities}x{self.closings}x{self.columns}"
 
     @property
+    def last_closing(self) -> date:
+        """Return the latest closing of the synthetic table (``as_of`` of a single-closing run)."""
+        return date(2000 + (self.closings - 1) // 12, (self.closings - 1) % 12 + 1, 1)
+
+    @property
     def rows(self) -> int:
         """Return the number of input rows."""
         return self.entities * self.closings
@@ -60,6 +69,39 @@ class Size:
             msg = f"a size is <entities>x<closings>x<columns>, got {text!r}"
             raise FeatureError(msg) from None
         return cls(entities, closings, columns)
+
+
+class Budget:
+    """A time budget for a run: ``expired`` is true once ``seconds`` have passed since it was created.
+
+    The run checks it before each measurement and records the cells it skipped, so the report can say what is
+    missing. A measurement already started always finishes.
+    """
+
+    def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
+        """Start the budget now; ``clock`` is injectable for tests."""
+        if seconds <= 0:
+            msg = f"a time budget is a positive number of seconds, got {seconds}"
+            raise FeatureError(msg)
+        self.seconds = seconds
+        self.skipped: list[str] = []
+        self._clock = clock
+        self._start = clock()
+
+    @property
+    def expired(self) -> bool:
+        """Return whether the budget is spent."""
+        return self._clock() - self._start >= self.seconds
+
+    def skip(self, cell: str) -> None:
+        """Record a measurement that was not run."""
+        self.skipped.append(cell)
+
+    def note(self) -> str | None:
+        """Return the report note of a partial run, or ``None`` when every measurement ran."""
+        if not self.skipped:
+            return None
+        return f"partial: the {self.seconds:g} s time budget ran out; {len(self.skipped)} measurement(s) not run"
 
 
 @dataclass(frozen=True)
@@ -131,43 +173,85 @@ def _timed(run: Callable[..., object], *args: object, **kwargs: object) -> float
     return time.perf_counter() - start
 
 
-def _run_spark(frame: Any, spec: FeatureSpec, engine: str) -> None:  # noqa: ANN401 - pyspark objects
+def _run_spark(frame: Any, spec: FeatureSpec, engine: str, as_of: date | None) -> None:  # noqa: ANN401 - pyspark
     from bricksmith.features.engines import compute_features  # noqa: PLC0415 - loads pyspark
 
-    materialize(compute_features(frame, spec, engine=engine))
+    materialize(compute_features(frame, spec, engine=engine, as_of=as_of))
 
 
-def run_benchmark(
+def _measure(  # noqa: PLR0913, PLR0917
+    engine: str,
+    spec: FeatureSpec,
+    rows: list[dict[str, Any]],
+    frame: Any,  # noqa: ANN401 - pyspark objects
+    as_of: date | None,
+    warmed: set[str],
+) -> float:
+    """Time one engine on one spec; a Spark engine runs once unmeasured the first time it is seen."""
+    if engine == REFERENCE:
+        from bricksmith.features.engine import compute_rows  # noqa: PLC0415 - loads numpy
+
+        return _timed(compute_rows, rows, spec, as_of)
+    if engine not in warmed:
+        _run_spark(frame, spec, engine, as_of)
+        warmed.add(engine)
+    return _timed(_run_spark, frame, spec, engine, as_of)
+
+
+def run_benchmark(  # noqa: PLR0913 - one option per way of running
     spark: Any,  # noqa: ANN401 - a pyspark session, or None for the reference engine alone
     sizes: Iterable[Size],
     engines: Sequence[str] = BENCH_ENGINES,
     families: Sequence[str] = (*FAMILIES, ALL),
+    *,
+    single_closing: bool = False,
+    budget: Budget | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> list[Timing]:
-    """Time every engine on every family and size; Spark engines need ``spark``."""
-    from bricksmith.features.engine import compute_rows  # noqa: PLC0415 - loads numpy
+    """Time every engine on every family and size; Spark engines need ``spark``.
 
-    unknown = set(engines) - set(BENCH_ENGINES)
+    ``single_closing`` times one closing (the last of each size) instead of all of them. ``budget`` stops the run
+    cleanly between measurements, keeping what ran and recording what did not; ``progress`` gets one line per
+    event.
+    """
+    known = (REFERENCE, *ENGINES)
+    unknown = set(engines) - set(known)
     if unknown or (spark is None and set(engines) - {REFERENCE}):
-        msg = f"engines are {', '.join(BENCH_ENGINES)}; Spark engines need a session (unknown: {sorted(unknown)})"
+        msg = f"engines are {', '.join(known)}; Spark engines need a session (unknown: {sorted(unknown)})"
         raise FeatureError(msg)
+    say = progress or (lambda _line: None)
+    sizes = list(sizes)
+    total = len(sizes) * len(families) * len(engines)
+    done = 0
     timings: list[Timing] = []
     warmed: set[str] = set()
     for size in sizes:
+        as_of = size.last_closing if single_closing else None
+        cells = [(family, engine) for family in families for engine in engines]
+        if budget and budget.expired:
+            for family, engine in cells:
+                budget.skip(f"{engine}/{family}/{size.label}")
+            say(f"[budget] {size.label}: not started, {len(cells)} measurement(s) skipped")
+            continue
+        say(f"[{size.label}] preparing data ({size.rows} rows{f', as_of {as_of}' if as_of else ''})")
         rows = synthetic_rows(size) if REFERENCE in engines else []
         frame: Any = synthetic_frame(spark, size) if spark is not None else None
         if frame is not None:
-            timings.append(Timing(SOURCE, ALL, size.label, _timed(materialize, frame), 0))
-        for family in families:
+            seconds = _timed(materialize, frame)
+            timings.append(Timing(SOURCE, ALL, size.label, seconds, 0))
+            say(f"[{size.label}] source {seconds:.2f}s")
+        for family, engine in cells:
+            done += 1
+            if budget and budget.expired:
+                budget.skip(f"{engine}/{family}/{size.label}")
+                continue
             spec = benchmark_spec(value_columns(size), family)
-            for engine in engines:
-                if engine == REFERENCE:
-                    seconds = _timed(compute_rows, rows, spec)
-                else:
-                    if engine not in warmed:
-                        _run_spark(frame, spec, engine)
-                        warmed.add(engine)
-                    seconds = _timed(_run_spark, frame, spec, engine)
-                timings.append(Timing(engine, family, size.label, seconds, len(spec.outputs)))
+            say(f"[{done}/{total}] {size.label} {family} {engine} ...")
+            seconds = _measure(engine, spec, rows, frame, as_of, warmed)
+            timings.append(Timing(engine, family, size.label, seconds, len(spec.outputs)))
+            say(f"[{done}/{total}] {size.label} {family} {engine} {seconds:.2f}s")
+    if budget and (note := budget.note()):
+        say(f"[budget] {note}")
     return timings
 
 
