@@ -53,6 +53,9 @@ def _spark(context: ExecutionContext) -> Client:
     if context.compute == "serverless":
         config.serverless_compute_id = "auto"
     else:
+        # A profile may set serverless_compute_id=auto, which Connect refuses next to a cluster id. Assigning
+        # None would store the string "None", so the key is dropped the way Connect itself does.
+        config.as_dict().pop("serverless_compute_id", None)
         config.cluster_id = context.compute.removeprefix("cluster:")
     builder = connect.DatabricksSession.builder.sdkConfig(config)
     return builder.getOrCreate()
