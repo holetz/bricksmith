@@ -3,7 +3,7 @@ type: how-to
 title: "Model monitoring on tasks"
 description: "How to declare model monitoring on the task that writes predictions and read its dashboard-ready results."
 resource: "src/bricksmith/monitor/model/**"
-timestamp: "2026-11-24T16:20:00-03:00"
+timestamp: "2026-11-24T22:30:00-03:00"
 audience: both
 authority: current
 ---
@@ -74,6 +74,7 @@ def churn_scores(ctx):
 | `gate` | `fail_on` (`red`, `yellow`, `critical`, `alert`) and `on_error` (`warn`, the default, or `fail`). |
 | `min_rows`, `max_periods`, `score_bins`, `calibration_bins`, `epsilon` | Volume floor for a light, monitored periods kept (default 24), score bins (default 10), calibration bins, PSI smoothing. |
 | `scope`, `prefix` | Where the tables live (default: the output's schema) and their name prefix (default `model_monitoring_`). |
+| `credit` | Enables the [credit-model performance checks](#credit-model-performance-checks): probability horizons, grade order, the expected-events gate, early-warning labels and the exclusion column. |
 
 Unknown keys and invalid values are plan errors (`invalid_model_monitoring`), so a typo fails `bricksmith plan`
 instead of silently watching nothing.
@@ -95,6 +96,70 @@ Default limits color `psi`, `csi` and `grade_psi` (green below 0.10, red from 0.
 metrics carry the light `no_rule` until you declare limits for them, for example
 `"limits": {"ks": {"green": 0.3, "red": 0.2, "direction": "lower"}}`. A result measured on fewer than `min_rows`
 rows is `insufficient_volume`.
+
+## Credit-model performance checks
+
+Rating and probability-of-default models need more than discrimination and a global calibration ratio: each grade
+must stay inside its predicted band, grades must stay in order, discrimination must hold on early horizons before
+the full target matures, and the mix of exclusions in the scored population must not move. A `credit` block turns
+on five families for that; a declaration without it keeps exactly the families above (listing a credit family in
+`metrics` also enables it, with the block's defaults).
+
+```python
+"credit": {
+    "horizon": 12,  # periods the score's probability covers
+    "label_horizon": 12,  # periods the calibration label covers (default: horizon)
+    "grades": ["A", "B", "C", "D"],  # best to worst (default: grade texts in order)
+    "min_expected_events": 5,  # expected-events gate per grade (default 5)
+    "correlation": 0.12,  # enables the correlation-adjusted binomial test
+    "early_warning": [  # shorter horizons, each with its own label column and lag
+        {"label": "bad_3", "periods": 3},  # lag defaults to 3 observed periods
+        {"label": "bad_6", "periods": 6, "lag": {"months": 6}},
+    ],
+    "exclusion": "exclusion_first",  # the stage cascade's first exclusion reason
+},
+```
+
+| Family | Metrics | Needs | Default limits |
+| --- | --- | --- | --- |
+| `grade_calibration` | `grade_oe`, `grade_jeffreys_p`, `grade_binomial_p`, `grade_binomial_adjusted_p` per grade | `grade`, `label` | `grade_oe` green within 0.7–1.3, yellow within 0.5–1.5; p-values green from 0.05, red below 0.01 |
+| `grade_order` | `grade_inversions` | `grade`, `label` | 0 green, 1 yellow, more red |
+| `early_warning` | `early_ks`, `early_gini`, `early_oe` per horizon | `credit.early_warning` | `early_oe` like `grade_oe` |
+| `exclusion_mix` | `exclusion_psi` | `credit.exclusion` | green below 0.10, red from 0.25 |
+| `bad_rate_chart` | `bad_rate` | `label` | control chart: \|z\| beyond 2 yellow, beyond 3 red |
+
+**Per grade.** A grade's predicted probability `PD` is the mean probability of its rows and its expected events
+are their sum. `grade_oe` is observed over expected events. `grade_jeffreys_p` is the Beta(D + 0.5, N - D + 0.5)
+CDF at `PD`, and `grade_binomial_p` is the exact binomial tail `P(X >= D)`, with `N` rows and `D` observed events.
+Both are one-sided, so a small p-value means significantly more events than predicted. With a `correlation`,
+`grade_binomial_adjusted_p` is the one-factor (Vasicek) large-portfolio tail of the observed rate. It is more lenient
+than the plain binomial test when events cluster. A per-grade result's `column` is `<grade column>=<grade>`, for
+example `grade=C`, so a [limit rule](#limit-rules) can target one grade.
+
+**Expected-events volume gate.** A grade whose expected events are below `min_expected_events` is
+`insufficient_volume` ("expected events 0.4 < min 5"), however many events it observed. `min_rows` does not apply to
+per-grade results, so a small grade cannot hide behind a low row count, and a large grade with few expected events
+is not judged by chance. `grade_inversions` counts the consecutive grades, best to worst, whose observed rate falls.
+It compares only the grades that pass the gate. Its details rows hold the calibration table of every grade: `count`,
+`mean_score` (mean expected probability) and `observed_rate`.
+
+**Horizons.** A label covering `k` periods compares with `1 - (1 - p)^(k/h)`, where `h` is `horizon`: a constant
+hazard spread over the horizon. Each early-warning horizon has its own label column and lag (default: its `periods`
+in observed periods, or `{"months": n}`). It writes `early_ks`, `early_gini` and `early_oe` with `column` set to that
+label, so each horizon is its own series with its own rules, trend and alerts.
+
+**Exclusion mix.** `exclusion_psi` is the PSI of the first exclusion reason between development and the period.
+Rows the cascade kept (a null reason) form the `(none)` category, so a change in the exclusion rate counts too. The
+details rows hold each reason's shares. The column is the cascade column of
+[model development stages](model-development.md).
+
+**Bad-rate chart.** `bad_rate` (observed events over rows, per segment) is judged by default as a control chart
+centred on the **median** of the development per-period bad rates, with their standard deviation as the spread.
+Only development periods count here, unlike other control limits. `baseline_mean` stores the median.
+
+The statistics run on small per-grade sums (rows, events, expected events), reduced on rows or on Spark with
+built-in functions, so Free Edition runs them. Rows and Spark give the same results. See
+[decision 0022](../decisions/0022-credit-model-performance-checks.md).
 
 ## Limit kinds
 
