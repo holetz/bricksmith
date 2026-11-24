@@ -2,7 +2,7 @@
 
 ``collect_run`` downloads whatever of the artifact layout (:data:`PATHS`) a tracking run carries; a missing file
 is skipped and renders as "not recorded". ``publish_document`` renders the document, logs the Markdown and HTML
-files to the same run and, given a registered model version, sets the version tag ``bricksmith.documentation``
+files to the same run and, given a registered model version, sets the version tag ``bricksmith_documentation``
 to the run-relative path of the HTML file. The client is any object with the ``MlflowClient`` methods used here
 (``download_artifacts``, ``log_text``, ``set_model_version_tag``); tests pass an in-memory fake.
 """
@@ -28,7 +28,7 @@ from bricksmith.mlops.documentation.render import Document, render_document
 if TYPE_CHECKING:
     from bricksmith.mlops.store import ModelStore
 
-TAG_DOCUMENTATION = "bricksmith.documentation"
+TAG_DOCUMENTATION = "bricksmith_documentation"
 
 
 @dataclass(frozen=True)
@@ -45,9 +45,16 @@ class Publication:
 
 def _missing(error: Exception) -> bool:
     text = f"{type(error).__name__} {error}".lower()
-    return any(
-        word in text for word in ("not found", "notfound", "does not exist", "no such file", "resource_does_not")
+    # On a Databricks workspace MLflow reports a missing artifact only as a failed download of its path.
+    words = (
+        "not found",
+        "notfound",
+        "does not exist",
+        "no such file",
+        "resource_does_not",
+        "failed to download artifacts",
     )
+    return any(word in text for word in words)
 
 
 def collect_run(client: Any, run_id: str, directory: Path | str | None = None) -> DocumentInputs:  # noqa: ANN401 - an MlflowClient
@@ -61,11 +68,18 @@ def collect_run(client: Any, run_id: str, directory: Path | str | None = None) -
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     for path in PATHS:
-        try:
-            client.download_artifacts(run_id, path, str(root))  # written to ``root / path``
-        except Exception as error:
-            if not _missing(error):
-                raise
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Where the file lands differs by artifact store (``dst/path`` locally, ``dst/<file name>`` on a Databricks
+        # workspace), so each download goes to its own directory and the returned file is moved to ``root / path``.
+        with tempfile.TemporaryDirectory(dir=root) as landing:
+            try:
+                downloaded = client.download_artifacts(run_id, path, landing)
+            except Exception as error:
+                if not _missing(error):
+                    raise
+                continue
+            Path(downloaded).replace(target)
     return read_directory(root, run_id)
 
 

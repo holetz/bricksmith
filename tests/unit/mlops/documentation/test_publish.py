@@ -78,6 +78,34 @@ def test_collect_run_propagates_other_errors(tmp_path: Path) -> None:
         collect_run(Broken(tmp_path), "run-1")
 
 
+def test_collect_run_skips_an_artifact_the_download_could_not_find(tmp_path: Path) -> None:
+    # Against a Databricks workspace, MLflow reports a missing artifact with this generic download message.
+    class Databricks(FakeClient):
+        def download_artifacts(self, run_id: str, path: str, dst_path: str) -> str:
+            try:
+                return super().download_artifacts(run_id, path, dst_path)
+            except NotFoundError:
+                msg = f"Failed to download artifacts from path '{path}', please ensure that the path is correct."
+                raise RuntimeError(msg) from None
+
+    write_directory(inputs(), tmp_path / "store" / "run-1")
+    assert collect_run(Databricks(tmp_path / "store"), "run-1") == inputs()
+
+
+def test_collect_run_places_files_by_artifact_path_when_the_download_flattens_them(tmp_path: Path) -> None:
+    # A Databricks workspace downloads a nested artifact file as ``dst_path/<file name>`` and returns that path.
+    class Flattening(FakeClient):
+        def download_artifacts(self, run_id: str, path: str, dst_path: str) -> str:
+            source = self.root / run_id / path
+            if not source.is_file():
+                msg = f"RESOURCE_DOES_NOT_EXIST: {path}"
+                raise NotFoundError(msg)
+            return str(shutil.copy(source, Path(dst_path) / Path(path).name))
+
+    write_directory(inputs(), tmp_path / "store" / "run-1")
+    assert collect_run(Flattening(tmp_path / "store"), "run-1") == inputs()
+
+
 def test_publish_logs_both_files_and_tags_the_version(tmp_path: Path) -> None:
     client = FakeClient(tmp_path)
     done = publish_document(client, inputs(), generated_at="t", store=ModelStore(client), model="m.s.attrition",
@@ -102,3 +130,8 @@ def test_publish_refuses_half_a_version(tmp_path: Path) -> None:
     client: Any = FakeClient(tmp_path)
     with pytest.raises(DocumentationError, match="needs both model and version"):
         publish_document(client, inputs(), generated_at="t", model="m")
+
+
+def test_documentation_tag_key_is_valid_on_unity_catalog() -> None:
+    # Unity Catalog rejects tag keys holding any of . = > < % & ? \ (and bricksmith's other tags use underscores).
+    assert not set(TAG_DOCUMENTATION) & set(".=><%&?\\")
