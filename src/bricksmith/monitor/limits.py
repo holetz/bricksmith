@@ -1,7 +1,8 @@
 """Traffic-light limits: green, yellow and red bands plus explicit states for values that cannot be judged.
 
 Shared by data stability and model monitoring. ``classify`` never invents a color: a missing value, too few
-rows, a missing baseline or a missing rule each have their own suppressed state, ranked below green.
+rows, a missing baseline, a missing rule or an informational segment each have their own suppressed state, ranked
+below green.
 
 A limit has a kind that decides which number its bands judge: ``absolute`` judges the value itself,
 ``relative`` the relative change ``(value - baseline) / |baseline|`` against a named reference, and
@@ -23,8 +24,9 @@ NO_DATA = "no_data"
 INSUFFICIENT_VOLUME = "insufficient_volume"
 NO_BASELINE = "no_baseline"
 NO_RULE = "no_rule"
+INFORMATIONAL = "informational"
 COLORS = (GREEN, YELLOW, RED)
-SUPPRESSED = (NO_DATA, INSUFFICIENT_VOLUME, NO_BASELINE, NO_RULE)
+SUPPRESSED = (NO_DATA, INSUFFICIENT_VOLUME, NO_BASELINE, NO_RULE, INFORMATIONAL)
 RANK: dict[str, int] = {GREEN: 0, YELLOW: 1, RED: 2}
 HIGHER = "higher"
 LOWER = "lower"
@@ -230,6 +232,7 @@ __all__ = [
     "CONTROL",
     "GREEN",
     "HIGHER",
+    "INFORMATIONAL",
     "INSUFFICIENT_VOLUME",
     "KINDS",
     "LOWER",

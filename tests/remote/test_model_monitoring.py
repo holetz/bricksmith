@@ -53,7 +53,7 @@ JUDGED: dict[str, Any] = {
 #: Columns added after the first model monitoring release; tables created before them gain them on write.
 ADDED = {
     RESULTS: ("limit_kind", "limit_reference", "compared_value", "baseline_mean", "baseline_sd", "baseline_points",
-              "trend_status", "trend_expected", "trend_deviation", "lag", "lag_unit"),
+              "trend_status", "trend_expected", "trend_deviation", "lag", "lag_unit", "rule_id", "rule_version"),
     ALERTS: ("kind", "state", "opened_period", "escalated_period", "closed_period", "last_period", "flagged_periods",
              "recurrence", "action", "action_reason", "action_author", "action_at", "valid_until"),
     RUNS: ("open_alerts", "critical_alerts"),
@@ -170,6 +170,30 @@ def test_lags_read_the_same_data_period_in_spark_and_in_the_pure_engine(
     assert (by_metric["gini"]["data_period"], by_metric["gini"]["lag_unit"]) == ("2025-04", "periods")
     assert by_metric["ks"]["data_period"] == "2025-05" and by_metric["ks"]["lag"] == 0
     assert by_metric["brier"]["reason"] == "data_period_unavailable" and by_metric["brier"]["lag"] == 9
+
+
+def test_rules_resolve_the_same_in_spark_and_in_the_pure_engine(
+    remote_clients: Clients, remote_context: ExecutionContext, test_schema: str
+) -> None:
+    spark = remote_clients.spark()
+    table = f"{remote_context.catalog}.{test_schema}.model_rules_input"
+    spark.createDataFrame(synthetic(), DDL).write.saveAsTable(table)
+    rules = [
+        {"id": "psi-lenient", "version": 2, "metric": "psi", "column": "score", "limits": {"green": 50, "red": 99}},
+        {"id": "info-south", "informational_segments": ["s"]},
+    ]
+    ruled = parse_config({**DECLARATION, "rules": rules})
+    pure = check(as_dicts(synthetic()), ruled, MemoryStore(), run_id="r", now="t")
+    remote = check(spark.table(table), ruled, MemoryStore(), run_id="r", now="t")
+    keys = ("monitoring_period", "segment", "column", "metric")
+    assert_rows_equal(pure.tables["results"], remote.tables["results"], keys)
+    rows = remote.tables["results"]
+    psi = next(r for r in rows if (r["segment"], r["metric"], r["column"]) == ("", "psi", "score"))
+    assert (psi["rule_id"], psi["rule_version"], psi["light"]) == ("psi-lenient", 2, "green")
+    south = [r for r in rows if r["segment"] == "s"]
+    assert south and all(r["light"] in ("informational", "no_data", "insufficient_volume") for r in south)
+    assert any(r["light"] == "informational" and r["rule_id"] == "info-south" for r in south)
+    assert not any(r["light"] == "informational" for r in rows if r["segment"] != "s")
 
 
 def test_declared_task_writes_the_tables_and_the_views_read_them(

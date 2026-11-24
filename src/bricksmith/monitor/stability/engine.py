@@ -111,6 +111,8 @@ def judgment_fingerprint(config: StabilityConfig) -> str:
     data = config.to_dict()
     content = {k: data[k] for k in ("baseline", "column_limits", "limits", "min_rows", "persistence", "trend")}
     content |= {"epsilon": config.epsilon, "trend_metrics": data["trend_metrics"], "weight": config.weight}
+    if "rules" in data:
+        content["rules"] = data["rules"]
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 

@@ -3,7 +3,7 @@ type: how-to
 title: "Model monitoring on tasks"
 description: "How to declare model monitoring on the task that writes predictions and read its dashboard-ready results."
 resource: "src/bricksmith/monitor/model/**"
-timestamp: "2026-11-23T20:00:00-03:00"
+timestamp: "2026-11-24T16:20:00-03:00"
 audience: both
 authority: current
 ---
@@ -121,6 +121,27 @@ per reference period, for the metrics declared with control limits only.
     "calibration_ratio": {"green": 0.3, "red": 0.5, "direction": "both", "center": 1.0},
 }
 ```
+
+## Limit rules
+
+A `rules` list (or the path of a TOML or JSON file) refines `limits` per column, segment, metric and date, and marks
+segments informational. The syntax, the specificity (dataset 4, segment 2, column 1, then highest `version`, then
+smallest `id`), the validity dates and the informational states are the ones of
+[data stability](stability.md#limit-rules); here the dataset selector is the `model`, the segment is the segment
+value (`n`, not `region=n`), and the validity is compared with the monitoring period.
+
+```python
+"rules": [
+    {"id": "ks-drop", "metric": "ks", "limits": {"kind": "relative", "green": -0.10, "red": -0.25, "direction": "lower"}},
+    {"id": "pilot-regions", "informational_segments": ["pilot"]},
+]
+```
+
+A model rule may use any limit kind. A `control` rule adds its metric to the ones whose per-period baselines are
+measured. Every result carries `rule_id` and `rule_version`, and `replay_alerts` with a declaration recolors stored
+rows with the current rules (an informational segment keeps its value but no light, alert or gate count). Tables
+created before the columns gain them through the `evolution` write option. See
+[decision 0021](../decisions/0021-limit-rules-selectors.md).
 
 ## Trend and persistence
 

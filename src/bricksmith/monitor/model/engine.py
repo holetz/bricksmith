@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from bricksmith.monitor.adapter import is_rows, measure
 from bricksmith.monitor.bins import BinSpec, category_text, count_bins, fit_bins, is_null
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import COLORS, CONTROL, RED, RELATIVE, YELLOW, judge, rank
+from bricksmith.monitor.limits import COLORS, CONTROL, INFORMATIONAL, NO_RULE, RED, RELATIVE, YELLOW, Light, judge, rank
 from bricksmith.monitor.measure import OK, segment_name
 from bricksmith.monitor.model.actions import STATE_ACCEPTED, apply_actions
 from bricksmith.monitor.model.config import (
@@ -58,6 +58,7 @@ from bricksmith.monitor.model.tables import (
 )
 from bricksmith.monitor.persistence import CRITICAL, OPEN, PersistencePolicy, alert_spans
 from bricksmith.monitor.reference import Reference
+from bricksmith.monitor.rules import INFORMATIONAL_REASON
 from bricksmith.monitor.stability.profile import period_date, period_text
 from bricksmith.monitor.trend import trend_check
 
@@ -707,7 +708,10 @@ class _Context:
 def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[str, str, Lag]) -> dict[str, Any]:
     monitoring, data, lag = when
     config = ctx.config
-    limits = config.limits_for(item.metric)
+    found = config.resolve(
+        column=item.column, segment=item.segment, metric=item.metric, period_date=period_date(monitoring)
+    )
+    limits = None if found.informational else config.limits_of(found, item.metric)
     minimum = 0 if item.metric in VOLUME_METRICS else config.min_rows
     key = (item.segment, item.column, item.metric)
     control = limits is not None and limits.kind == CONTROL
@@ -718,6 +722,8 @@ def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[st
     light, compared = judge(
         item.value, limits, baseline=baseline, spread=sd, count=item.rows, min_count=minimum, reason=item.reason
     )
+    if found.informational and light.status == NO_RULE:
+        light = Light(INFORMATIONAL, INFORMATIONAL_REASON)
     return {
         "model": config.model, "model_version": version, "run_id": ctx.run_id, "monitoring_period": monitoring,
         "data_period": data, "lag": lag.amount, "lag_unit": lag.unit, "period_date": period_date(monitoring),
@@ -731,6 +737,7 @@ def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[st
         "limit_kind": limits.kind if limits else "", "limit_reference": limits.reference if limits else "",
         "compared_value": _finite(compared), "baseline_mean": mean, "baseline_sd": sd, "baseline_points": points,
         "trend_status": "", "trend_expected": None, "trend_deviation": None,
+        "rule_id": found.rule_id, "rule_version": found.rule_version,
     }  # fmt: skip
 
 

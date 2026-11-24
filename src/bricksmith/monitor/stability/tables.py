@@ -42,7 +42,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "green_limit": "DOUBLE", "red_limit": "DOUBLE", "direction": "STRING", "rows": "BIGINT",
         "baseline_rows": "DOUBLE", "in_baseline": "BOOLEAN", "baseline_kind": "STRING", "baseline_label": "STRING",
         "trend_status": "STRING", "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE", "run_id": "STRING",
-        "computed_at": "STRING",
+        "computed_at": "STRING", "rule_id": "STRING", "rule_version": "INT",
     },
     ALERTS: {
         "dataset": "STRING", "alert_id": "STRING", "version": "INT", "kind": "STRING", "metric": "STRING",
@@ -71,8 +71,17 @@ _PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
 
 
 def write_options(kind: str) -> dict[str, object]:
-    """Return the write metadata of a stability table: ``merge`` on its key; an empty write creates the table."""
-    return {"write": "merge", "keys": list(KEYS[kind]), "on_empty": "allow_empty", "stability_table": kind}
+    """Return the write metadata of a stability table.
+
+    ``merge`` on its key; an empty write creates it; ``evolution`` adds columns introduced after the table existed.
+    """
+    return {
+        "write": "merge",
+        "keys": list(KEYS[kind]),
+        "on_empty": "allow_empty",
+        "evolution": {},
+        "stability_table": kind,
+    }
 
 
 def key_of(kind: str, row: Mapping[str, Any]) -> tuple[Any, ...]:
