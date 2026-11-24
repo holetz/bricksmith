@@ -60,6 +60,25 @@ class WindowKernelSuite extends AnyFunSuite {
     assert(error.getMessage.contains("more than one row at one closing"))
     intercept[IllegalArgumentException](WindowKernel.parsePlan("0:nope:3"))
   }
+
+  test("the Unity Catalog handler returns what the session UDF returns, null as None") {
+    val plan = "0:count:3|0:mean:3|1:sum:2|0:since_max:3"
+    val rows = Seq(Row(10, 100, Seq(1.0, null)), Row(11, 131, Seq(null, 3.0)), Row(13, 190, Seq(4.0, 5.0)))
+    val points = Seq(
+      Point(10, 100, Seq(Some(1.0), None)),
+      Point(11, 131, Seq(None, Some(3.0))),
+      Point(13, 190, Seq(Some(4.0), Some(5.0)))
+    )
+    for (target <- Seq(None, Some(11))) {
+      val session = WindowKernel.compute(rows, plan, target.map(Integer.valueOf).orNull)
+      val handled = WindowKernel.handle(points, plan, target)
+      assert(handled.map(p => (p.p, p.d)) == session.map(r => (r.getInt(0), r.getInt(1))))
+      val unboxed = session.map(_.getSeq[java.lang.Double](2).map(v => Option(v).map(_.doubleValue)))
+      assert(handled.map(_.v) == unboxed)
+    }
+    assert(WindowKernel.handle(points, "0:sum:1", None).head.v == Seq(Some(1.0)))
+    assert(WindowKernel.handle(Seq(Point(1, 1, Seq(None))), "0:sum:1", None).head.v == Seq(None))
+  }
 }
 
 /** A minimal JSON reader for the fixture: objects, arrays, strings, numbers (as Double), booleans and null. */

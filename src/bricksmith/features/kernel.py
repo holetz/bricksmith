@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 JVM = "jvm"
 #: The Scala class implementing the kernel (``UDF3``) and its Unity Catalog handler.
 KERNEL_CLASS = "bricksmith.features.WindowKernel"
-UC_HANDLER = f"{KERNEL_CLASS}.compute"
+UC_HANDLER = f"{KERNEL_CLASS}.handle"
 #: The packaged JAR, under ``bricksmith/features/_jars``.
 JAR_NAME = "bricksmith-kernel.jar"
 #: The default name of the session-scoped function.
@@ -197,7 +197,7 @@ def uc_function_sql(function: str, jar_path: str) -> str:
     sql_type = "ARRAY<STRUCT<p: INT, d: INT, v: ARRAY<DOUBLE>>>"
     return (
         f"CREATE OR REPLACE FUNCTION {_function_name(function)}(history {sql_type}, plan STRING, target INT) "
-        f"RETURNS {sql_type} LANGUAGE SCALA "
+        f"RETURNS {sql_type} LANGUAGE SCALA DETERMINISTIC "
         f"ENVIRONMENT (java_dependencies = '[\"{jar_path}\"]', environment_version = '{ENVIRONMENT_VERSION}') "
         f"HANDLER '{UC_HANDLER}'"
     )

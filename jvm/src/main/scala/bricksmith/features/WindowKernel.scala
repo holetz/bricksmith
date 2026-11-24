@@ -21,6 +21,9 @@ class WindowKernel extends UDF3[scala.collection.Seq[Row], String, Integer, scal
     WindowKernel.compute(history, plan, target)
 }
 
+/** One history or result row of the Unity Catalog handler: STRUCT<p INT, d INT, v ARRAY<DOUBLE>>, null as None. */
+final case class Point(p: Int, d: Int, v: Seq[Option[Double]])
+
 object WindowKernel {
   /** One requested output: a column index, an aggregate and a window in periods. */
   final case class Output(column: Int, aggregate: String, window: Int)
@@ -48,25 +51,20 @@ object WindowKernel {
     }
   }
 
-  /** The Unity Catalog handler and the UDF body. */
+  /** The session UDF body: rows of (p, d, v). Spark Row values in and out. */
   def compute(history: scala.collection.Seq[Row], plan: String, target: Integer): scala.collection.Seq[Row] = {
     if (history == null) return Seq.empty
     val outputs = parsePlan(plan)
+    val columns = width(outputs)
     val size = history.length
     val periods = new Array[Int](size)
     val days = new Array[Int](size)
-    val columns = if (outputs.isEmpty) 0 else outputs.map(_.column).max + 1
     val values = Array.fill(columns)(new Array[Double](size))
     var i = 0
     while (i < size) {
       val row = history(i)
       periods(i) = row.getInt(0)
       days(i) = row.getInt(1)
-      if (i > 0 && periods(i) <= periods(i - 1)) {
-        if (periods(i) == periods(i - 1))
-          throw new IllegalArgumentException("an entity has more than one row at one closing")
-        throw new IllegalArgumentException("the kernel history must be sorted by period")
-      }
       val v = row.get(2).asInstanceOf[scala.collection.Seq[Any]]
       var c = 0
       while (c < columns) {
@@ -75,17 +73,68 @@ object WindowKernel {
       }
       i += 1
     }
-    val groups = outputs.zipWithIndex.groupBy { case (o, _) => (o.column, o.window) }.toArray
-    val result = Seq.newBuilder[Row]
-    i = 0
+    run(periods, days, values, outputs, if (target == null) None else Some(target.intValue)).map {
+      case (period, day, out) => Row(period, day, out.toSeq.map(boxed))
+    }
+  }
+
+  /** The Unity Catalog handler: the same kernel over plain Scala values (the sandbox matches no Spark Row). */
+  def handle(history: Seq[Point], plan: String, target: Option[Int]): Seq[Point] = {
+    if (history == null) return Seq.empty
+    val outputs = parsePlan(plan)
+    val columns = width(outputs)
+    val size = history.length
+    val periods = new Array[Int](size)
+    val days = new Array[Int](size)
+    val values = Array.fill(columns)(new Array[Double](size))
+    var i = 0
     while (i < size) {
-      if (target == null || periods(i) == target.intValue) {
-        val out = new Array[Any](outputs.length)
+      val point = history(i)
+      periods(i) = point.p
+      days(i) = point.d
+      val v = point.v
+      var c = 0
+      while (c < columns) {
+        values(c)(i) = if (v == null || c >= v.length) Double.NaN else v(c).getOrElse(Double.NaN)
+        c += 1
+      }
+      i += 1
+    }
+    run(periods, days, values, outputs, target).map {
+      case (period, day, out) => Point(period, day, out.toSeq.map(x => if (x.isNaN) None else Some(x)))
+    }
+  }
+
+  private def width(outputs: Array[Output]): Int = if (outputs.isEmpty) 0 else outputs.map(_.column).max + 1
+
+  /** The kernel: each closing (or only `target`) with its outputs in plan order, NaN where the catalog says null. */
+  def run(
+      periods: Array[Int],
+      days: Array[Int],
+      values: Array[Array[Double]],
+      outputs: Array[Output],
+      target: Option[Int]
+  ): Seq[(Int, Int, Array[Double])] = {
+    var i = 1
+    while (i < periods.length) {
+      if (periods(i) <= periods(i - 1)) {
+        if (periods(i) == periods(i - 1))
+          throw new IllegalArgumentException("an entity has more than one row at one closing")
+        throw new IllegalArgumentException("the kernel history must be sorted by period")
+      }
+      i += 1
+    }
+    val groups = outputs.zipWithIndex.groupBy { case (o, _) => (o.column, o.window) }.toArray
+    val result = Seq.newBuilder[(Int, Int, Array[Double])]
+    i = 0
+    while (i < periods.length) {
+      if (target.forall(_ == periods(i))) {
+        val out = new Array[Double](outputs.length)
         for (((column, window), members) <- groups) {
           val stats = new Stats(chronological(periods, values(column), i, window))
-          for ((o, j) <- members) out(j) = boxed(Catalog.value(o.aggregate, stats))
+          for ((o, j) <- members) out(j) = Catalog.value(o.aggregate, stats)
         }
-        result += Row(periods(i), days(i), out.toSeq)
+        result += ((periods(i), days(i), out))
       }
       i += 1
     }
