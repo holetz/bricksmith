@@ -108,6 +108,19 @@ def attrition_training(ctx):
     ctx.write("attrition_training", abt.withColumn("feature_reads", f.lit(reads)))
 
 
+def selection_table(ctx, kind, output):
+    """Run the selection funnel on the training ABT and write table ``kind`` of its result to ``output``.
+
+    Declarations are literal, so each task spells out ``write_options(kind)`` of ``bricksmith.mlops.selection``
+    (a unit test keeps them equal). The funnel is deterministic, so the ledger and the variables tasks agree on the same training ABT.
+    """
+    from bricksmith.mlops.selection import select_features, table_rows, to_frame  # noqa: PLC0415
+
+    result = select_features(ctx.read("attrition_training"), SELECTION)
+    rows = table_rows(result, kind, run_id=str(development().as_of), now=datetime.now(UTC).isoformat())
+    ctx.write(output, to_frame(ctx.io.spark, kind, rows))
+
+
 @task(
     kind="table",
     outputs="attrition_selection_ledger",
@@ -118,10 +131,15 @@ def attrition_training(ctx):
     },
 )
 def attrition_selection_ledger(ctx):
-    """Run the selection funnel on the training ABT and store why every candidate was kept or dropped."""
-    from bricksmith.mlops.selection import select_features, table_rows, to_frame  # noqa: PLC0415
+    """Store why every candidate was kept or dropped, step by step."""
+    selection_table(ctx, "ledger", "attrition_selection_ledger")
 
-    training = ctx.read("attrition_training")
-    result = select_features(training, SELECTION)
-    rows = table_rows(result, "ledger", run_id=development().as_of.isoformat(), now=datetime.now(UTC).isoformat())
-    ctx.write("attrition_selection_ledger", to_frame(ctx.io.spark, "ledger", rows))
+
+@task(
+    kind="table",
+    outputs="attrition_selection_variables",
+    metadata={"write": "merge", "keys": ["selection", "run_id", "variable"], "on_empty": "allow_empty"},
+)
+def attrition_selection_variables(ctx):
+    """Store one outcome per candidate; training reads the selected ones from here."""
+    selection_table(ctx, "variables", "attrition_selection_variables")
