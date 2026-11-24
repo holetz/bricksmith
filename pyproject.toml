@@ -35,6 +35,10 @@ bricksmith-run = "bricksmith.runner.entrypoint:run_entrypoint"
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+# The JVM feature kernel is built by scripts/build_kernel.py into an ignored path; ship it when present.
+artifacts = ["src/bricksmith/features/_jars/*.jar"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/bricksmith"]
 

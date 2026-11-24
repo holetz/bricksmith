@@ -1,8 +1,9 @@
 """Install the built wheel and sdist into clean environments and import every bricksmith module.
 
-Usage: ``python scripts/verify_dist.py [--dist DIR]``. Without ``--dist`` the distributions are built
-into a temporary directory. Each artifact is installed alone, so heavy integrations (Databricks SDK,
-Connect, bundles, MLflow, scikit-learn) are absent; every module must still import.
+Usage: ``python scripts/verify_dist.py [--dist DIR] [--require-kernel]``. Without ``--dist`` the distributions
+are built into a temporary directory. ``--require-kernel`` fails when the wheel or the sdist lacks the JVM feature
+kernel JAR (CI builds it first with ``scripts/build_kernel.py``). Each artifact is installed alone, so heavy
+integrations (Databricks SDK, Connect, bundles, MLflow, scikit-learn) are absent; every module must still import.
 """
 
 from __future__ import annotations
@@ -10,11 +11,14 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HEAVY = ("databricks", "pyspark", "mlflow", "sklearn")
+KERNEL = "bricksmith/features/_jars/bricksmith-kernel.jar"
 PROBE = """
 import importlib, importlib.util, pkgutil, sys
 import bricksmith
@@ -60,10 +64,23 @@ def verify(artifact: Path, workdir: Path) -> None:
     run(venv_executable(env, "bricksmith"), "context", "show")
 
 
+def require_kernel(wheel: Path, sdist: Path) -> None:
+    """Fail unless the wheel and the sdist both package the JVM feature kernel JAR."""
+    with zipfile.ZipFile(wheel) as archive:
+        in_wheel = KERNEL in archive.namelist()
+    with tarfile.open(sdist) as archive:
+        in_sdist = any(name.endswith(f"/src/{KERNEL}") for name in archive.getnames())
+    missing = [a.name for a, present in ((wheel, in_wheel), (sdist, in_sdist)) if not present]
+    if missing:
+        sys.exit(f"{', '.join(missing)} do not package {KERNEL} (run scripts/build_kernel.py before building)")
+    sys.stdout.write(f"{wheel.name} and {sdist.name}: package {KERNEL}\n")
+
+
 def main() -> int:
     """Build (unless ``--dist`` is given) and verify the wheel and the source archive."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dist", type=Path, help="directory that already holds one wheel and one sdist")
+    parser.add_argument("--require-kernel", action="store_true", help="fail when the wheel lacks the kernel JAR")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -73,6 +90,8 @@ def main() -> int:
         wheels, sdists = sorted(dist.glob("*.whl")), sorted(dist.glob("*.tar.gz"))
         if len(wheels) != 1 or len(sdists) != 1:
             sys.exit(f"expected one wheel and one sdist in {dist}, found {len(wheels)} and {len(sdists)}")
+        if args.require_kernel:
+            require_kernel(wheels[0], sdists[0])
         for artifact in (*wheels, *sdists):
             verify(artifact, work)
     return 0
