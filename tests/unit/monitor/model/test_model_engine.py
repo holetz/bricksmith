@@ -9,8 +9,16 @@ import pytest
 
 from bricksmith.monitor.bins import BinSpec
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.model.config import parse_config
-from bricksmith.monitor.model.engine import MemoryStore, check, data_period, jobs_of
+from bricksmith.monitor.model.actions import action_row
+from bricksmith.monitor.model.config import Lag, parse_config
+from bricksmith.monitor.model.engine import (
+    MemoryStore,
+    check,
+    data_period,
+    jobs_of,
+    resolve_data_period,
+    shift_months,
+)
 from bricksmith.monitor.reference import Reference
 
 DEV = ["2025-01", "2025-02", "2025-03"]
@@ -18,17 +26,25 @@ OOT = ["2025-04", "2025-05"]
 PROD = ["2025-06", "2025-07", "2025-08", "2025-09"]
 
 
-def predictions(*, drift: bool = False, per_month: int = 200) -> list[dict[str, Any]]:
-    """Return scored rows: score and label agree, grade buckets the score, the last month drifts on request."""
+def predictions(
+    *, drift: bool = False, per_month: int = 200, drifted: tuple[str, ...] = (), noisy: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
+    """Return scored rows: score and label agree, grade buckets the score, the last month drifts on request.
+
+    ``drifted`` months shift the score and age; ``noisy`` months draw labels unrelated to the score.
+    """
     rows: list[dict[str, Any]] = []
+    shifted_months = set(drifted) | ({PROD[-1]} if drift else set())
     for sample, months in (("dev", DEV), ("oot", OOT), ("prod", PROD)):
         for month in months:
-            shifted = drift and month == PROD[-1]
+            shifted = month in shifted_months
             for i in range(per_month):
                 score = ((i * 37) % per_month) / per_month
                 if shifted:
                     score = min(score + 0.4, 0.999)
                 label = 1 if ((i * 61) % 100) / 100 < score else 0
+                if month in noisy:
+                    label = (i * 7 // 3) % 2
                 rows.append({
                     "month": month, "sample": sample, "score": score, "label": label,
                     "grade": "A" if score < 0.3 else "B" if score < 0.7 else "C",
@@ -56,8 +72,14 @@ DECLARATION: dict[str, Any] = {
 }
 
 
-def run(rows: list[dict[str, Any]], store: MemoryStore | None = None, run_id: str = "r1", **changes: Any) -> Any:  # noqa: ANN401
-    return check(rows, parse_config({**DECLARATION, **changes}), store or MemoryStore(), run_id=run_id, now="t0")
+def run(
+    rows: list[dict[str, Any]],
+    store: MemoryStore | None = None,
+    run_id: str = "r1",
+    now: str = "t0",
+    **changes: Any,  # noqa: ANN401
+) -> Any:  # noqa: ANN401
+    return check(rows, parse_config({**DECLARATION, **changes}), store or MemoryStore(), run_id=run_id, now=now)
 
 
 def pick(results: list[dict[str, Any]], **where: object) -> list[dict[str, Any]]:
@@ -191,3 +213,175 @@ def test_jobs_follow_the_declared_roles() -> None:
     assert jobs_of(minimal) == [("score_psi", "score"), ("volumetry", "")]
     full = jobs_of(parse_config(DECLARATION))
     assert ("feature_csi", "age") in full and ("grade_psi", "grade") in full and ("completeness", "") in full
+
+
+def test_relative_limits_judge_the_change_against_a_reference() -> None:
+    ks = {"kind": "relative", "green": -0.15, "red": -0.30, "direction": "lower"}
+    result = run(predictions(noisy=(PROD[-1],)), limits={"ks": ks, "auc": {**ks, "reference": "out_of_time"}})
+    stable = pick(result.tables["results"], metric="ks", segment="", monitoring_period=PROD[0])[0]
+    assert stable["light"] == "green" and stable["compared_value"] == pytest.approx(0.0, abs=1e-9)
+    assert stable["limit_kind"] == "relative" and stable["limit_reference"] == "development"
+    noisy = pick(result.tables["results"], metric="ks", segment="", monitoring_period=PROD[-1])[0]
+    expected = (noisy["value"] - noisy["development_value"]) / abs(noisy["development_value"])
+    assert noisy["compared_value"] == pytest.approx(expected) and expected < -0.30 and noisy["light"] == "red"
+    assert noisy["green_limit"] == -0.15 and noisy["baseline_mean"] is None
+    auc = pick(result.tables["results"], metric="auc", segment="", monitoring_period=PROD[-1])[0]
+    assert auc["limit_reference"] == "out_of_time" and auc["light"] == "red"
+    assert auc["compared_value"] == pytest.approx((auc["value"] - auc["out_of_time_value"]) / auc["out_of_time_value"])
+
+
+def test_control_limits_use_development_and_out_of_time_periods() -> None:
+    chart = {"kind": "control", "green": -2, "red": -3, "direction": "lower"}
+    result = run(predictions(noisy=(PROD[-1],)), limits={"ks": chart})
+    stable = pick(result.tables["results"], metric="ks", segment="", monitoring_period=PROD[0])[0]
+    assert stable["baseline_points"] == len(DEV) + len(OOT) and stable["limit_kind"] == "control"
+    assert stable["baseline_mean"] == pytest.approx(stable["development_value"]) and stable["baseline_sd"] == 0.0
+    assert stable["light"] == "green" and stable["compared_value"] == 0.0
+    noisy = pick(result.tables["results"], metric="ks", segment="", monitoring_period=PROD[-1])[0]
+    assert noisy["light"] == "red" and noisy["compared_value"] is None  # an infinite distance is not stored
+    short = run(predictions(), limits={"ks": chart}, control_min_points=6)
+    row = pick(short.tables["results"], metric="ks", segment="", monitoring_period=PROD[0])[0]
+    assert row["light"] == "no_baseline" and row["baseline_points"] == 5 and row["baseline_mean"] is None
+
+
+def test_calibration_ratio_is_colored_by_default() -> None:
+    results = run(predictions()).tables["results"]
+    ratio = pick(results, metric="calibration_ratio", segment="", monitoring_period=PROD[0])[0]
+    assert ratio["light"] in ("green", "yellow", "red") and ratio["direction"] == "both"
+    assert ratio["green_limit"] == 0.3 and ratio["red_limit"] == 0.5
+
+
+def test_persistent_drift_opens_a_critical_alert_and_fails_the_gate() -> None:
+    result = run(predictions(drifted=tuple(PROD[-2:])), gate={"fail_on": ["critical"]}, trend=None)
+    spans = [a for a in result.tables["alerts"] if a["kind"] == "persistence"]
+    psi = next(a for a in spans if a["metric"] == "psi" and a["segment"] == "" and a["model_version"] == "2")
+    assert psi["severity"] == "critical" and psi["state"] == "open" and psi["opened_period"] == PROD[-1]
+    assert psi["monitoring_period"] == PROD[-1] and psi["flagged_periods"] == 1
+    lights = [a for a in result.tables["alerts"] if a["kind"] == "light"]
+    assert lights and all(a["state"] == "open" and a["opened_period"] == a["monitoring_period"] for a in lights)
+    assert result.outcome.critical_alerts > 0 and result.outcome.status == "failed"
+    assert "open critical alert(s)" in result.outcome.message
+    assert result.tables["runs"][0]["critical_alerts"] == result.outcome.critical_alerts
+    quiet = run(predictions(drifted=tuple(PROD[-2:])), persistence={"red": 3}, trend=None)
+    assert not [a for a in quiet.tables["alerts"] if a["kind"] == "persistence"]
+
+
+def test_trend_check_flags_a_departure_from_the_series() -> None:
+    result = run(predictions(drift=True), trend={"window": 3, "min_points": 3}, model_version_column=None,
+                 model_version="1", gate={"fail_on": "alert"})  # fmt: skip
+    psi = pick(result.tables["results"], metric="psi", segment="", monitoring_period=PROD[-1])[0]
+    assert psi["trend_status"] == "red" and psi["trend_expected"] is not None
+    early = pick(result.tables["results"], metric="psi", segment="", monitoring_period=PROD[0])[0]
+    assert early["trend_status"] == "insufficient_history"
+    trends = [a for a in result.tables["alerts"] if a["kind"] == "trend" and a["metric"] == "psi"]
+    assert trends and trends[0]["severity"] == "critical" and trends[0]["state"] == "open"
+    assert result.outcome.open_alerts >= len(trends) and result.outcome.status == "failed"
+    untrended = run(predictions(drift=True), trend=None)
+    assert {r["trend_status"] for r in untrended.tables["results"]} == {""}
+
+
+def test_default_rows_carry_lag_zero_and_label_lag_is_stamped() -> None:
+    plain = run(predictions()).tables["results"]
+    assert {(r["lag"], r["lag_unit"]) for r in plain} == {(0, "periods")}
+    lagged = run(predictions(), label_lag=1).tables["results"]
+    assert {r["lag"] for r in pick(lagged, family="discrimination")} == {1}
+    assert {r["lag"] for r in pick(lagged, family="score_psi")} == {0}
+
+
+def test_lags_are_per_metric_and_calendar_lags_never_shift_over_a_gap() -> None:
+    rows = [r for r in predictions() if r["month"] != "2025-07"]
+    results = run(rows, lags={"auc": {"months": 1}, "gini": 1, "calibration": {"months": 2}}).tables["results"]
+    ks = pick(results, metric="ks", segment="", monitoring_period="2025-08")[0]
+    assert ks["data_period"] == "2025-08" and ks["lag"] == 0 and ks["value"] is not None
+    gini = pick(results, metric="gini", segment="", monitoring_period="2025-08")[0]
+    assert gini["data_period"] == "2025-06" and gini["lag"] == 1 and gini["lag_unit"] == "periods"
+    auc = pick(results, metric="auc", segment="", monitoring_period="2025-08")[0]
+    assert auc["data_period"] == "" and auc["value"] is None and auc["reason"] == "data_period_unavailable"
+    assert (auc["lag"], auc["lag_unit"]) == (1, "months")
+    auc_next = pick(results, metric="auc", segment="", monitoring_period="2025-09")[0]
+    assert auc_next["data_period"] == "2025-08" and auc_next["value"] is not None
+    brier = pick(results, metric="brier", segment="", monitoring_period="2025-09")[0]
+    assert brier["data_period"] == "" and brier["value"] is None and brier["lag"] == 2
+
+
+def test_calendar_lag_equals_the_observed_lag_when_nothing_is_missing() -> None:
+    observed = run(predictions(), lags={"discrimination": 1}).tables["results"]
+    calendar = run(predictions(), lags={"discrimination": {"months": 1}}).tables["results"]
+    for metric in ("ks", "auc", "gini"):
+        for period in PROD:
+            a = pick(observed, metric=metric, segment="", monitoring_period=period)[0]
+            b = pick(calendar, metric=metric, segment="", monitoring_period=period)[0]
+            assert (a["data_period"], a["value"]) == (b["data_period"], b["value"])
+
+
+def test_shift_months_keeps_the_period_format() -> None:
+    assert shift_months("2025-03", 12) == "2024-03" and shift_months("2025-01", 1) == "2024-12"
+    assert shift_months("202503", 3) == "202412" and shift_months("2025-03", 0) == "2025-03"
+    assert shift_months("2025-03-31", 1) == "2025-02-28" and shift_months("20240331", 1) == "20240229"
+    assert shift_months("2025-02-30", 1) is None and shift_months("2025-13", 1) is None
+    assert shift_months("Q1-2025", 1) is None and shift_months("", 1) is None
+
+
+def test_resolve_data_period_by_unit() -> None:
+    periods = ["2025-01", "2025-03", "2025-04"]
+    assert resolve_data_period(periods, "2025-04", Lag(1, "periods")) == "2025-03"
+    assert resolve_data_period(periods, "2025-04", Lag(1, "months")) == "2025-03"
+    assert resolve_data_period(periods, "2025-03", Lag(1, "months")) is None
+    assert resolve_data_period(["a", "b"], "b", Lag(1, "months")) is None
+    assert resolve_data_period(periods, "2025-03", Lag(0, "months")) == "2025-03"
+
+
+NOW = "2026-02-01T00:00:00+00:00"
+
+
+def _act(alert_id: str, action: str, at: str, **extra: Any) -> dict[str, Any]:  # noqa: ANN401
+    return action_row(model="churn", alert_id=alert_id, action=action, reason="reviewed", author="ana",
+                      created_at=at, **extra)  # fmt: skip
+
+
+def _stored(actions: list[dict[str, Any]]) -> MemoryStore:
+    return MemoryStore(tables={"actions": actions})
+
+
+def test_accepted_spans_stop_failing_the_critical_gate_until_they_expire() -> None:
+    rows = predictions(drifted=tuple(PROD[-2:]))
+    gate = {"gate": {"fail_on": ["critical"]}, "trend": None}
+    first = run(rows, **gate)
+    spans = [a for a in first.tables["alerts"] if a["kind"] == "persistence" and a["severity"] == "critical"]
+    assert first.outcome.status == "failed" and spans[0]["action"] is None
+    accept = [_act(a["alert_id"], "risk_accepted", "2026-01-01T00:00:00", valid_until="2999-01-01") for a in spans]
+    held = run(rows, _stored(accept), run_id="r2", now=NOW, **gate)
+    same = next(a for a in held.tables["alerts"] if a["alert_id"] == spans[0]["alert_id"])
+    assert same["state"] == "accepted" and same["action"] == "risk_accepted" and same["valid_until"] == "2999-01-01"
+    assert held.outcome.critical_alerts == 0 and held.outcome.status != "failed"
+    assert f"{len(spans)} accepted" in held.outcome.message
+    lapsed = [_act(a["alert_id"], "risk_accepted", "2026-01-01T00:00:00", valid_until="2026-01-31") for a in spans]
+    again = run(rows, _stored(lapsed), run_id="r3", now=NOW, **gate)
+    assert again.outcome.status == "failed" and again.outcome.critical_alerts == first.outcome.critical_alerts
+
+
+def test_closed_spans_leave_the_open_counts_and_analysis_keeps_them() -> None:
+    rows = predictions(drifted=tuple(PROD[-2:]))
+    first = run(rows, trend=None)
+    spans = [a for a in first.tables["alerts"] if a["kind"] == "persistence"]
+    closed = _act(spans[0]["alert_id"], "closed", "2026-01-01T00:00:00")
+    analysed = [_act(s["alert_id"], "analysis", "2026-01-01T00:00:00") for s in spans[1:]]
+    after = run(rows, _stored([closed, *analysed]), run_id="r2", now=NOW, trend=None)
+    states = {a["alert_id"]: a["state"] for a in after.tables["alerts"] if a["kind"] == "persistence"}
+    assert states[spans[0]["alert_id"]] == "closed" and all(states[s["alert_id"]] == "open" for s in spans[1:])
+    assert after.outcome.open_alerts == first.outcome.open_alerts - 1
+    assert after.tables["actions"] == []  # a run never writes actions
+
+
+def test_an_accepted_light_alert_is_not_counted_by_the_red_gate() -> None:
+    rows = predictions(drift=True)
+    first = run(rows, gate={"fail_on": ["red"]}, trend=None)
+    reds = [a for a in first.tables["alerts"] if a["kind"] == "light" and a["light"] == "red"
+            and a["monitoring_period"] == PROD[-1]]  # fmt: skip
+    assert first.outcome.status == "failed" and len(reds) == first.outcome.red
+    every = [_act(a["alert_id"], "risk_accepted", "2026-01-01T00:00:00", valid_until="2999-01-01") for a in reds]
+    held = run(rows, _stored(every), run_id="r2", now=NOW, gate={"fail_on": ["red"]}, trend=None)
+    assert held.outcome.red == 0 and held.outcome.status != "failed"
+    closed = [_act(a["alert_id"], "closed", "2026-01-01T00:00:00") for a in reds]
+    still = run(rows, _stored(closed), run_id="r3", now=NOW, gate={"fail_on": ["red"]}, trend=None)
+    assert still.outcome.status == "failed"  # closing a light alert is bookkeeping, not suppression

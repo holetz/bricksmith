@@ -8,6 +8,9 @@ import pytest
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import Limits
 from bricksmith.monitor.model import FAMILIES, parse_config, parse_declarations
+from bricksmith.monitor.model.config import Lag
+from bricksmith.monitor.persistence import PersistencePolicy
+from bricksmith.monitor.trend import TrendPolicy
 
 BASE = {
     "model": "churn",
@@ -26,6 +29,33 @@ def test_minimal_declaration_has_defaults() -> None:
     assert config.families() == ("score_psi", "volumetry")  # no label, features, grade or critical fields
     assert config.limits_for("psi") == Limits(0.10, 0.25) and config.limits_for("ks") is None
     assert config.gate.fail_on == () and config.gate.on_error == "warn"
+    assert config.limits_for("calibration_ratio") == Limits(0.3, 0.5, "both", center=1.0)
+    assert config.trend == TrendPolicy() and config.trend_metrics == ("psi", "ks", "auc", "calibration_ratio")
+    assert config.persistence == PersistencePolicy() and config.control_min_points == 3
+    assert config.control_metrics() == frozenset()
+
+
+def test_limit_kinds_trend_and_persistence() -> None:
+    config = parse_config({
+        **BASE,
+        "limits": {
+            "ks": {"kind": "relative", "green": -0.15, "red": -0.30, "direction": "lower"},
+            "auc": {"kind": "relative", "green": -0.05, "red": -0.10, "direction": "lower", "reference": "out_of_time"},
+            "gini": {"kind": "control", "green": 2, "red": 3, "direction": "both"},
+        },
+        "trend": {"window": 6, "min_points": 4}, "trend_metrics": ["ks"], "control_min_points": 4,
+        "persistence": {"yellow": 2, "immediate_red": True}, "gate": {"fail_on": ["critical", "alert"]},
+    })  # fmt: skip
+    assert config.limits_for("ks") == Limits(-0.15, -0.30, "lower", kind="relative", reference="development")
+    assert config.limits_for("auc").reference == "out_of_time"  # type: ignore[union-attr]
+    assert config.control_metrics() == frozenset({"gini"}) and config.control_min_points == 4
+    assert config.trend == TrendPolicy(window=6, min_points=4) and config.trend_metrics == ("ks",)
+    assert config.persistence == PersistencePolicy(yellow=2, immediate_red=True)
+    assert config.gate.fail_on == ("critical", "alert")
+    data = config.to_dict()
+    assert data["limits"]["ks"]["kind"] == "relative" and data["trend"]["window"] == 6
+    assert data["persistence"]["yellow"] == 2 and data["control_min_points"] == 4
+    assert parse_config({**BASE, "trend": None}).trend is None
 
 
 def test_full_declaration() -> None:
@@ -60,7 +90,20 @@ def test_binning_fingerprint_ignores_judgment() -> None:
         ({"sample": None}, "declare the sample column"),
         ({"metrics": ["psi"]}, "metrics must be a non-empty list"),
         ({"limits": {"wobble": {"green": 1, "red": 2}}}, "unknown metric 'wobble'"),
-        ({"gate": {"fail_on": ["critical"]}}, "gate fail_on takes red, yellow"),
+        ({"gate": {"fail_on": ["purple"]}}, "gate fail_on takes red, yellow, critical, alert"),
+        ({"limits": {"ks": {"green": 1, "red": 2, "kind": "relative", "reference": "later"}}}, "reference must be"),
+        (
+            {
+                "references": {"development": {"sample": "dev"}},
+                "limits": {"ks": {"green": 1, "red": 2, "kind": "relative", "reference": "out_of_time"}},
+            },
+            "declare that reference",
+        ),
+        ({"limits": {"ks": {"green": 2, "red": 3, "kind": "chart"}}}, "kind must be"),
+        ({"trend_metrics": ["wobble"]}, "trend_metrics must be"),
+        ({"trend": {"window": 2}}, "trend needs"),
+        ({"persistence": {"close_after": 0}}, "close_after"),
+        ({"control_min_points": 1}, "control_min_points must be an integer >= 2"),
         ({"label_lag": -1}, "label_lag must be an integer >= 0"),
         ({"model_version": "1", "model_version_column": "v"}, "not both"),
         ({"feature_binning": {"stability": ""}}, "feature_binning stability must be"),
@@ -82,3 +125,38 @@ def test_missing_required_keys_and_duplicate_outputs() -> None:
     assert len(parse_declarations([{**BASE, "output": "a"}, {**BASE, "output": "b"}])) == 2
     with pytest.raises(MonitorError, match="distinct output"):
         parse_declarations([BASE, BASE])
+
+
+def test_lags_resolve_metric_then_family_then_label_lag() -> None:
+    config = parse_config({
+        **BASE, "label": "churned", "label_lag": 2,
+        "lags": {"auc": {"months": 12}, "discrimination": 3, "volumetry": {"periods": 1}},
+    })  # fmt: skip
+    assert config.lag_for("discrimination", "auc") == Lag(12, "months")
+    assert config.lag_for("discrimination", "ks") == Lag(3, "periods")
+    assert config.lag_for("calibration", "brier") == Lag(2, "periods")
+    assert config.lag_for("volumetry", "row_count") == Lag(1, "periods")
+    assert config.lag_for("score_psi", "psi") == Lag(0, "periods")
+    assert config.to_dict()["lags"]["auc"] == {"amount": 12, "unit": "months"}
+    assert parse_config(BASE).lags == {} and parse_config(BASE).to_dict()["lags"] == {}
+
+
+@pytest.mark.parametrize(
+    ("lags", "message"),
+    [
+        ({"wobble": 1}, "unknown metric or family 'wobble'"),
+        ({"auc": -1}, "a lag must be an integer >= 0"),
+        ({"auc": True}, "a lag must be an integer >= 0"),
+        ({"auc": {"weeks": 2}}, "one of periods or months"),
+        ({"auc": {"months": 1, "periods": 1}}, "one of periods or months"),
+        ({"auc": {"months": "x"}}, "a lag must be an integer >= 0"),
+        (["auc"], "lags must map"),
+    ],
+)
+def test_bad_lags_are_refused(lags: object, message: str) -> None:
+    with pytest.raises(MonitorError, match=message):
+        parse_config({**BASE, "lags": lags})
+
+
+def test_lags_never_trigger_a_refit() -> None:
+    assert parse_config(BASE).binning_fingerprint() == parse_config({**BASE, "lags": {"auc": 1}}).binning_fingerprint()

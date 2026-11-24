@@ -56,6 +56,10 @@ def test_declaration_errors_are_specific() -> None:
         parse_config({"period": "p", "colour": 1})
     with pytest.raises(MonitorError, match="unknown metric"):
         parse_config({"period": "p", "limits": {"ks": {"green": 1, "red": 2}}})
+    with pytest.raises(MonitorError, match="not supported by stability"):
+        parse_config({"period": "p", "limits": {"psi": {"green": 0.1, "red": 0.2, "kind": "relative"}}})
+    with pytest.raises(MonitorError, match="not supported by stability"):
+        parse_config({"period": "p", "column_limits": {"x": {"psi": {"green": 2, "red": 3, "kind": "control"}}}})
     with pytest.raises(MonitorError, match="baseline kind"):
         parse_config({"period": "p", "baseline": "moving"})
     with pytest.raises(MonitorError, match="start <= end"):

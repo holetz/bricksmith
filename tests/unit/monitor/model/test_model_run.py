@@ -81,17 +81,18 @@ def test_plan_lists_the_model_monitoring_targets(tmp_path: Path) -> None:
     entry = plan.entry("main.risk.scores")
     assert [t.physical for t in entry.targets] == [
         "main.risk.scores",
+        "main.risk.model_monitoring_actions",
         "main.risk.model_monitoring_alerts",
         "main.risk.model_monitoring_binnings",
         "main.risk.model_monitoring_details",
         "main.risk.model_monitoring_results",
         "main.risk.model_monitoring_runs",
     ]
-    runs = entry.targets[5]
+    runs = entry.targets[6]
     assert runs.operations == ("merge",) and runs.options["keys"] == ["run_id", "model"]
     assert Plan.from_json(plan.to_json()).fingerprint == plan.fingerprint
     scoped = build_plan(load_graph(project(tmp_path / "s", {**MONITORING, "scope": "other.audit"}), context=ctx()))
-    assert scoped.entry("main.risk.scores").targets[1].physical == "other.audit.model_monitoring_alerts"
+    assert scoped.entry("main.risk.scores").targets[2].physical == "other.audit.model_monitoring_alerts"
 
 
 def test_invalid_declaration_is_a_plan_error(tmp_path: Path) -> None:
@@ -107,8 +108,9 @@ def test_stable_run_writes_every_table_with_the_run_record_last(tmp_path: Path) 
     assert report.ok
     outcome = report.results[0].model_monitoring[0]
     assert outcome["status"] == "passed" and outcome["run_status"] == "success" and outcome["periods"] == 2
+    assert outcome["open_alerts"] == 0 and outcome["critical_alerts"] == 0
     writes = [w for w in report.results[0].writes if "model_monitoring" in w[0]]
-    assert writes[-1] == ("main.risk.model_monitoring_runs", "merge") and len(writes) == 5
+    assert writes[-1] == ("main.risk.model_monitoring_runs", "merge") and len(writes) == 6
     results = io.tables["main.risk.model_monitoring_results"]
     assert isinstance(results, list) and {r["monitoring_period"] for r in results} == {"2025-04", "2025-05"}
     assert "model monitoring passed (success): churn 2025-05" in run_summary(report)
@@ -128,6 +130,7 @@ def test_red_gate_fails_the_task_and_blocks_dependents(tmp_path: Path) -> None:
     assert ("main.risk.scores", "write") in scores.writes and summary.state == "blocked"
     alerts = io.tables["main.risk.model_monitoring_alerts"]
     assert any(a["severity"] == "critical" for a in alerts)  # type: ignore[union-attr]
+    assert {a["kind"] for a in alerts} >= {"light"}  # type: ignore[union-attr]
     restored = RunReport.from_json(report.to_json())
     assert restored == report and restored.results[0].model_monitoring[0]["status"] == "failed"
 
