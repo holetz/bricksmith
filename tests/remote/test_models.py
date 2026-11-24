@@ -100,15 +100,17 @@ def test_train_register_alias_predict_evaluate_retire(  # noqa: PLR0915 - one en
         apply_alias_plan(store, promote)
         assert store.aliases(name) == {"champion": 1}
 
-        # Predict and evaluate tasks follow the alias; the persisted table carries the exact version.
-        run_tasks(project, context, spark, ["demo.ml.churn_predict", "demo.ml.churn_evaluate"], upstream=False)
+        # Predict and evaluate tasks follow the alias; the persisted table carries the exact version. The prediction
+        # dataset is not upstream of training, so it is built here from the population and features already written.
+        roots = ["demo.ml.churn_prediction", "demo.ml.churn_predict", "demo.ml.churn_evaluate"]
+        run_tasks(project, context, spark, roots, upstream=False)
         scores = [r.asDict() for r in spark.table(table("churn_scores")).orderBy("customer_id").collect()]
         assert [r["customer_id"] for r in scores] == [1, 4, 5, 7, 8]
         assert all(r["model"] == "churn_v1" and r["model_version"] == 1 and 0 <= r["score"] <= 1 for r in scores)
         measured = {r["metric"]: r["value"] for r in spark.table(table("churn_evaluation")).collect()}
         assert (
             measured["rows"] == 5.0
-            and measured["positive_rate"] == 0.6
+            and measured["positive_rate"] == 0.4  # eligible customers 1, 4, 5, 7 and 8 of the example: two churned
             and measured["accuracy"] == pytest.approx(metrics["evaluation"]["accuracy"])
         )
 
@@ -159,6 +161,8 @@ def test_train_register_alias_predict_evaluate_retire(  # noqa: PLR0915 - one en
         assert store.aliases(name) == {} and run.data.tags["bricksmith_model"] == "churn_v1"
         assert store.client.get_run(record["run_id"]).info.status == "FINISHED"  # training artifacts stay protected
     finally:
-        store.delete_model(name)
-        store.delete_experiment(experiment)
+        try:
+            store.delete_model(name)
+        finally:  # independent cleanup: a failing model deletion still removes the experiment
+            store.delete_experiment(experiment)
     assert store.registered(name) is None

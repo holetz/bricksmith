@@ -15,6 +15,7 @@ User guides that answer "how do I do X" with bricksmith, one capability per page
 * [Governance](governance.md) — How to declare, plan and apply tags, grants and metadata for managed resources.
 * [Model datasets](model-datasets.md) — How to build population, feature, label and training or prediction datasets as ordinary tasks.
 * [Model development stages](model-development.md) — How to declare named samples, labels and an exclusion cascade, and build training and scoring ABTs and predictions from one spine.
+* [Model evaluation and technical documentation](model-evaluation.md) — How to evaluate a model on every sample and closing and render its technical document from a run's persisted artifacts.
 * [Model monitoring on tasks](model-monitoring.md) — How to declare model monitoring on the task that writes predictions and read its dashboard-ready results.
 * [Models: training, registry and lifecycle](models.md) — How to train, evaluate, register and promote models with ordinary tasks.
 * [Monitoring: references, drift, model quality and alerts](monitoring.md) — How to monitor references, drift, model quality and alerts from tables.

@@ -164,7 +164,7 @@ for discrimination and calibration, no lag otherwise):
 ```
 
 A calendar lag subtracts whole months from the monitoring period and writes the result in the period's own text
-format (`YYYY-MM`, `YYYY-MM-DD`, `YYYYMM` or `YYYYMMDD`; the day clamps to the month's end). If that month was not
+format (`YYYY-MM`, `YYYY-MM-DD`, `YYYYMM` or `YYYYMMDD`; the day clamps to the month's end, and a period that is the last day of its month maps to the last day of the target month, so month-end closings keep resolving their data period). If that month was not
 loaded, the result has no value and the reason `data_period_unavailable`: it never falls back to a neighbouring
 period, so immature data is not shown as mature. Each result carries `lag` and `lag_unit` (`periods` or `months`)
 beside `data_period`, and series, alerts and reprocessing stay keyed on the monitoring period. See

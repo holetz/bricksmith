@@ -138,3 +138,6 @@ parity is not promised.
 - Correlation and VIF cover numeric variables only. A categorical variable is judged by quality, stability,
   univariate power and judgment.
 - There is no automated stepwise search over model families, and SHAP is not used.
+
+The ledger, the selected features and the WoE tables feed the technical model document; see
+[model evaluation and technical documentation](model-evaluation.md).

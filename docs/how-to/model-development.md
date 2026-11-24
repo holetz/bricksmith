@@ -153,4 +153,7 @@ runs where Python UDFs are refused. Both are proved equal on the free workspace,
 is read by model monitoring ([evidence](../project/evidence/model-stages-free.md)). Importing
 `bricksmith.mlops.stages` loads only the standard library.
 
+Evaluate the scored samples and render the technical model document with
+[model evaluation and technical documentation](model-evaluation.md).
+
 The older [model datasets](model-datasets.md) API (snapshot dates, day-based maturity) is unchanged.
