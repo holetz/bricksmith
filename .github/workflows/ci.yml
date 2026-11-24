@@ -28,6 +28,13 @@ jobs:
       - uses: sbt/setup-sbt@v1.5.16
       - name: Build and test the kernel
         run: python3 scripts/build_kernel.py
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - name: Kernel parity on a classic local Spark session
+        run: uv run --isolated --with pyspark==4.0.1 pytest tests/jvm -q -rs
+        env:
+          BRICKSMITH_REQUIRE_KERNEL: "true"
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: kernel-jar
