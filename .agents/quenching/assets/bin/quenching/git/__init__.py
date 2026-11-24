@@ -198,7 +198,8 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--number", required=True, type=int, metavar="N", help="the PR's id")
     pp.add_argument("--url", required=True, metavar="URL", help="the PR's webUrl")
     pp.add_argument("--json", action="store_true", help="machine-readable output")
-    pp = pr.add_parser("merge", help="merge on GitHub or Azure with a merge commit, only on green CI")
+    pp = pr.add_parser("merge", help="merge on GitHub or Azure with a merge commit, on green CI unless "
+                                       "`shared.ci.enforce` relaxes it (then the local gate proves)")
     pp.add_argument("--url", required=True, metavar="URL", help="the PR's URL")
     pp.add_argument("--wait", type=int, default=0, metavar="SECONDS",
                     help="re-read pending checks every 20s for up to this long (max 540); "
@@ -206,8 +207,12 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--spec", metavar="ID",
                     help="stamp this spec's `merge` record once the PR is merged")
     pp.add_argument("--allow-no-checks", action="store_true",
-                    help="accept a PR with no CI check or build policy at all (a repository "
-                         "without a PR gate); red, pending, skipped and unreadable still refuse")
+                    help="deprecated, no effect: declare `shared.ci.enforce` in the project "
+                         "layer instead (required | when-present | off)")
+    pp.add_argument("--gate-exit", type=int, metavar="N",
+                    help="the exit code of the repository gate just run; `shared.ci.enforce` "
+                         "other than `required` accepts a PR without green CI only with 0. A red, "
+                         "skipped or unreadable check refuses under every value")
     pp.add_argument("--json", action="store_true", help="machine-readable output")
 
     sp = sub.add_parser("refresh", help="fast-forward the local base branch to <remote>/<base> — "

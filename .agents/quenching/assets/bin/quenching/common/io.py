@@ -31,7 +31,9 @@ def write_text(path: str, text: str) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f".{p.name}.tmp-", dir=str(p.parent))
     owned_fd: int | None = fd
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        # `newline=""`: the text lands as given; text mode on Windows would turn every `\n`
+        # into `\r\n` and a `\r\n` into `\r\r\n`.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             owned_fd = None
             handle.write(text)
             handle.flush()

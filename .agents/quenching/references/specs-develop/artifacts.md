@@ -205,7 +205,7 @@ less often already fixed *when* the resend happened; this fixes *how much* each 
 
 The implementation checklist `.agents/quenching/bin/cq specs` parses: checkboxes `- [ ] <id> <text>` grouped under
 `### N. <Section>` headings. `.agents/quenching/bin/cq specs task --spec <id> --check <id>` flips a box mechanically —
-never hand-edit the checkbox character.
+never hand-edit the checkbox character. After `approved`, `.agents/quenching/bin/cq specs section <id> Tasks --write` is append-only: it refuses (`sp-tasks-frozen`) when an existing id disappears or its text, `verify:`, `files:` or `cwd:` changes; scope leaves only through `task --descope --reason`.
 
 Shape it so `/quenching-specs execute` can walk it top to bottom:
 
@@ -228,7 +228,9 @@ Shape it so `/quenching-specs execute` can walk it top to bottom:
   `authority`-graded when it lands. This is the pairing `sp-impact-uncovered` checks: **name the
   path in the task text** so the match is findable.
 - **Verification belongs in the list** — a task whose completion is "tests pass" or "the standard
-  is written and self-checks clean" is a task, not an implicit hope.
+  is written and self-checks clean" is a task, not an implicit hope. Each `### N.` that delivers
+  behavior a user observes carries at least one `verify:` that exercises it through the real surface
+  (the `cq <verb>` itself, the HTTP call, the browser where the target has one).
 - **What the merge owns is never written here.**
   A version bump, a changelog entry, a manifest re-stamp; the `/docs/` the work *revealed* rather
   than declared; and the cycle's own closing actions — all three belong to
@@ -288,15 +290,11 @@ readers that hand a task on carry `operational: true` beside `files: []` (`.agen
 `.agents/quenching/bin/cq specs show --task`), and that flag — never the empty list — is what excuses the sha: a task with
 no `files:` line parses to the same `[]`, and only the flag tells the two apart.
 
-**Declare every generated mirror the diff changes.** A task that edits a translated source also
-rewrites what the generator emits from it. List each such derived output in the task's `files:`
-beside the source, whichever of these the diff changes: the surface a repository deploys into
-itself (`.agents/quenching/**`, `.agents/skills/**`, `.claude/skills/**`, `.opencode/agents/**`,
-`.agents/.quenching-deploy.json`), any other generated bundle with its `.generated-files.json` and
-`.generated-from.json`, `plugins/README.md`, and the goldens. The verifier executes nothing from the branch and discounts only the paths its audit
-proved a byte-for-byte copy of their source in a manifest-declared module: an undeclared derived
-output that is no such copy (a manifest, a hash index, a rewritten `plugin.json`, a golden) is an
-out-of-scope diff. Run the generators in the task, read what changed, and declare exactly that set.
+**Declare the source, not the mirror.** A task lists in `files:` what it edits. What the deploy
+regenerates from it (the mirrors under `.agents/`, `.claude/`, `.opencode/` and the deploy manifest)
+is implicit in the verifier's scope check when a path under `quenching/` changed; run the
+generators in the task, but do not list their outputs. A derived output the deploy does not
+regenerate (a golden, a hand-written `plugin.json`) still has to be declared.
 
 **Scope each `verify:` to what its own task could break** — not to what the repo can check. A gate
 that re-runs a check whose inputs the section could not have touched is a `verify:` written too

@@ -10,12 +10,14 @@ import sys
 from quenching.common.dates import today
 from quenching.specs.backends import open_backend
 from quenching.specs.commands.fields import record_field_value_error
+from quenching.specs.commands.granular import refuse_mojibake
 from quenching.specs.commands.output import Emitter, display_locator
 from quenching.specs.commands.push import card_failures, card_warnings
 from quenching.specs.config import (azure_workitemtype_retirement, load_config,
                                     resolve_subject, resolve_type_key)
 from quenching.specs.parse import derive_info
-from quenching.specs.parse.edit import split_section_stream, upsert_section
+from quenching.specs.parse.edit import (MOJIBAKE_THRESHOLD, mojibake_words, split_section_stream,
+                                        upsert_section)
 from quenching.specs.parse.fields import (scalar_break, set_frontmatter_record,
                                           yaml_title_scalar)
 from quenching.specs.parse.sections import section_state
@@ -93,6 +95,8 @@ def cmd_new(args, root: str, out: Emitter) -> int:
     # The stdin stream — read once, decomposed and checked before the document exists at all.
     content = sys.stdin.read() if not sys.stdin.isatty() else ""
     blocks: list[tuple[str | None, str]] = []
+    if len(garbled := mojibake_words(content)) >= MOJIBAKE_THRESHOLD:
+        return refuse_mojibake(args, out, garbled)
     if content.strip():
         blocks = split_section_stream(content, canonical_headings(schema))
         if not blocks:
@@ -186,6 +190,9 @@ def cmd_new(args, root: str, out: Emitter) -> int:
         if item["body"].strip() and section_state(cur["sections"], "Problem") != "filled":
             body, _ = upsert_section(cur, "Problem", f"## Problem\n\n{item['body'].strip()}\n")
         card_args = {"card": args.card}
+    if backend.name == "git":
+        # A capture is a local pending write; the push belongs to the sync point, not to it.
+        card_args["push"] = False
     path = backend.create_spec("plans", body, **card_args)
     # The provider-native id is the locator's trailing number (issue or work-item URL); a
     # caller chaining `validate --spec <id>` must not have to parse the URL to get it.

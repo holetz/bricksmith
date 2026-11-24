@@ -1010,6 +1010,17 @@ def _generated(cwd: str, base: str, tip: str, changed: list[str], env: dict[str,
     return found
 
 
+def _codex_executor(worktree: str, errors: list[dict]) -> bool | None:
+    """The effective `shared.codex.executor.enabled` of the worktree, every layer merged — the
+    value `cq codex eligible` reads; a config that cannot load is an error and `None`."""
+    from quenching.codex.config import load_settings
+    try:
+        return load_settings(worktree)[0]["executor"]["enabled"]
+    except Exception as exc:  # noqa: BLE001 — any load failure makes the read inconclusive
+        errors.append({"read": "config", "code": None, "message": str(exc)})
+        return None
+
+
 def cmd_audit(args) -> int:
     cwd = os.getcwd()
     worktree = os.path.realpath(args.worktree)
@@ -1060,6 +1071,7 @@ def cmd_audit(args) -> int:
     payload["grants"] = _grants(worktree, base, tip, payload["changed"], env, errors,
                                 set(payload["generated"]))
     payload["lowered"] = _lowered(worktree, base, tip, env, errors)
+    payload["codexExecutor"] = _codex_executor(worktree, errors)
     payload["errors"] = errors
     payload["complete"] = not errors
 

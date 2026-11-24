@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 from quenching.common.config import find_repo_root
 from quenching.common.output import FINDINGS, OK, emit, refuse
@@ -40,6 +43,12 @@ def _tool(cwd: str, *argv: str) -> tuple[int, str, str]:
     except OSError as e:
         return 127, "", str(e)
     return done.returncode, done.stdout, done.stderr
+
+
+def _gh() -> str:
+    """The `gh` to run, resolved as `which` does: on Windows a bare name only reaches `gh.exe`,
+    so a `gh.cmd`/`gh.bat` shim on PATH would read as `gh unavailable`."""
+    return shutil.which("gh") or "gh"
 
 
 def _check(cid: str, status: str, message: str, **extra) -> dict:
@@ -133,40 +142,108 @@ def _gh_auth(cwd: str, provider: str | None) -> dict:
         return _check("ghAuth", "ok" if code == 0 else "fail",
                       "az reaches the Azure DevOps PRs" if code == 0
                       else f"az does not reach the Azure DevOps PRs: {err.strip()}".rstrip(": "))
-    code, _out, err = _tool(cwd, "gh", "auth", "status")
+    code, _out, err = _tool(cwd, _gh(), "auth", "status")
     if code in (124, 127):
         return _check("ghAuth", "unknown", err.strip() or "gh unavailable")
     return _check("ghAuth", "ok" if code == 0 else "fail",
                   "gh is authenticated" if code == 0 else "gh is not authenticated")
 
 
-def _ci(cwd: str, base: str, provider: str | None) -> dict:
+CI_CACHE_FILE = os.path.join(".quenching", "git-ci-cache.json")
+CI_CACHE_TTL_S = 24 * 3600
+
+
+def _ci_cache_path(cwd: str) -> str:
+    return os.path.join(find_repo_root(cwd) or cwd, CI_CACHE_FILE)
+
+
+def _ci_cache_read(cwd: str, run_id: str) -> str | None:
+    """The cached verdict (`ok` or `unavailable`) of one finished run: a completed run is
+    immutable, so its id is the whole key."""
+    try:
+        with open(_ci_cache_path(cwd), encoding="utf-8") as fh:
+            entry = json.load(fh).get(run_id)
+    except (OSError, ValueError, AttributeError):
+        return None
+    if (isinstance(entry, dict) and entry.get("status") in ("ok", "unavailable")
+            and time.time() - float(entry.get("at", 0)) <= CI_CACHE_TTL_S):
+        return entry["status"]
+    return None
+
+
+def _ci_cache_write(cwd: str, run_id: str, status: str) -> None:
+    path = _ci_cache_path(cwd)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    data = {k: v for k, v in data.items()
+            if isinstance(v, dict) and time.time() - float(v.get("at", 0)) <= CI_CACHE_TTL_S}
+    data[run_id] = {"status": status, "at": time.time()}
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _ci_verdict(base: str, status: str) -> dict:
+    if status == "unavailable":
+        return _check("ci", "unavailable",
+                      f"the latest finished run on {base} ran no steps: CI is not executing")
+    return _check("ci", "ok", f"CI on {base} ran steps in its latest finished run")
+
+
+def _ci_probe(cwd: str, base: str, provider: str | None) -> tuple[dict, bool]:
+    """The `ci` check, and whether `gh run list` answered (which also proves `gh` authenticated)."""
     if provider == "azure-boards":
         return _check("ci", "unknown", "the CI probe reads GitHub Actions; Azure Pipelines "
-                                       "is not read")
-    code, out, err = _tool(cwd, "gh", "run", "list", "--branch", base, "--limit", "3",
+                                       "is not read"), False
+    gh = _gh()
+    code, out, err = _tool(cwd, gh, "run", "list", "--branch", base, "--limit", "3",
                            "--json", "databaseId,status,conclusion")
     if code != 0:
-        return _check("ci", "unknown", err.strip() or "gh run list failed")
+        return _check("ci", "unknown", err.strip() or "gh run list failed"), False
     try:
         runs = json.loads(out or "[]")
         done = [r for r in runs if r.get("status") == "completed"]
     except (json.JSONDecodeError, AttributeError):
-        return _check("ci", "unknown", "gh run list returned an unreadable payload")
+        return _check("ci", "unknown", "gh run list returned an unreadable payload"), True
     if not done:
-        return _check("ci", "unknown", f"no finished run on {base}")
-    code, out, err = _tool(cwd, "gh", "run", "view", str(done[0].get("databaseId")),
-                           "--json", "jobs")
+        return _check("ci", "unknown", f"no finished run on {base}"), True
+    run_id = str(done[0].get("databaseId"))
+    cached = _ci_cache_read(cwd, run_id)
+    if cached:
+        return _ci_verdict(base, cached), True
+    code, out, err = _tool(cwd, gh, "run", "view", run_id, "--json", "jobs")
     try:
         jobs = json.loads(out)["jobs"] if code == 0 else None
     except (json.JSONDecodeError, KeyError, TypeError):
         jobs = None
     if not isinstance(jobs, list):
-        return _check("ci", "unknown", err.strip() or "gh run view returned no jobs")
-    if not any(isinstance(j, dict) and j.get("steps") for j in jobs):
-        return _check("ci", "unavailable",
-                      f"the latest finished run on {base} ran no steps: CI is not executing")
-    return _check("ci", "ok", f"CI on {base} ran steps in its latest finished run")
+        return _check("ci", "unknown", err.strip() or "gh run view returned no jobs"), True
+    verdict = "ok" if any(isinstance(j, dict) and j.get("steps") for j in jobs) else "unavailable"
+    _ci_cache_write(cwd, run_id, verdict)
+    return _ci_verdict(base, verdict), True
+
+
+def _ci(cwd: str, base: str, provider: str | None) -> dict:
+    return _ci_probe(cwd, base, provider)[0]
+
+
+def _ci_and_auth(cwd: str, base: str, provider: str | None) -> tuple[dict, dict]:
+    """`ci` and `ghAuth` from one `gh run list`: a list that answered proves `gh` is
+    authenticated, so `gh auth status` runs only when it did not."""
+    ci, listed = _ci_probe(cwd, base, provider)
+    if listed:
+        return ci, _check("ghAuth", "ok", "gh is authenticated")
+    return ci, _gh_auth(cwd, provider)
 
 
 def cmd_preflight(args) -> int:
@@ -176,15 +253,27 @@ def cmd_preflight(args) -> int:
                        "message": f"not a configured remote: {args.remote}"}, args.json)
     cfg = load_config(find_repo_root(cwd))
     backend = cfg.get("backend") or "git"
-    base, _default = resolve_base(cwd)
-    checks = [_store(cwd, args.remote, backend), _types(backend), _push(cwd, args.remote),
-              _gh_auth(cwd, cfg.get("provider")), _ci(cwd, base, cfg.get("provider"))]
+    base, _default = resolve_base(cwd, host_default=False)
+    provider = cfg.get("provider")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        store = pool.submit(_store, cwd, args.remote, backend)
+        push = pool.submit(_push, cwd, args.remote)
+        ci_auth = pool.submit(_ci_and_auth, cwd, base, provider)
+        ci, auth = ci_auth.result()
+        checks = [store.result(), _types(backend), push.result(), auth, ci]
     bad = [c["id"] for c in checks if c["status"] in BAD]
     ci = next(c for c in checks if c["id"] == "ci")
-    merges = ci["status"] != "unavailable"
+    from quenching.config.ci import read as read_ci_enforce
+
+    enforce, ci_warnings = read_ci_enforce(cwd)
+    # `off` merges on the local gate with checks pending, so a CI that executes no steps does not
+    # stop it; every other value needs the PR's own checks to run.
+    merges = ci["status"] != "unavailable" or enforce == "off"
     lines = [f"{c['id']}: {c['status']} — {c['message']}" for c in checks]
+    lines.append(f"ciEnforce: {enforce}")
     lines.append("merges: " + ("allowed" if merges else "none planned (CI unavailable)"))
     emit(args.json, {"ok": not bad, "base": base, "remote": args.remote, "checks": checks,
-                     "failed": bad, "mergesAllowed": merges, "plannedMerges": merges},
+                     "failed": bad, "mergesAllowed": merges, "plannedMerges": merges,
+                     "ciEnforce": enforce, "ciWarnings": ci_warnings},
          "\n".join(lines))
     return FINDINGS if bad else OK

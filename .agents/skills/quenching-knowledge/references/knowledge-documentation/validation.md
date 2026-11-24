@@ -93,11 +93,11 @@ SHA-256, and the rendered check requires a known term to appear inside `<abbr>`.
 site with no `site_url`, add `--local`: relative or empty sitemap locations are acceptable there,
 but malformed XML and missing page/assets still fail. A local run never proves public delivery.
 
-Catálogos e fontes externas não entram no build do Zensical. Se uma página allowlisted os resume,
-verifique a linhagem dessa página no ledger; não rode um verificador de publicação sobre os dumps
-brutos nem crie rotas de detalhe para eles.
+Catalogs and external sources do not enter the Zensical build. If an allowlisted page summarizes
+them, check that page's lineage in the ledger; do not run a publication checker over the raw dumps
+or create detail routes for them.
 
-Para cada capacidade habilitada no registro, inspecione o HTML renderizado com a fixture de efeitos:
+For each capability enabled in the registry, inspect the rendered HTML with the effects fixture:
 
 ```bash
 python3 <plugin>/assets/checks/zensical-capability-check.py \
@@ -108,21 +108,21 @@ The capability checker accepts either one HTML file or the built site directory;
 scans all rendered pages, so passing `.` or `site/` cannot fail merely because the argument is a
 directory.
 
-O verificador exige uma âncora de heading, assinatura de API, URL loopback, atributo de tags e
-bloco de proveniência conforme a lista habilitada. Capacidades desabilitadas não são incluídas no
-comando e não podem ser tratadas como sucesso implícito.
+The checker requires a heading anchor, an API signature, a loopback URL, a tags attribute and a
+provenance block, according to the enabled list. Disabled capabilities are left out of the
+command and must not be treated as an implicit success.
 
-Planos, ledgers, scorecards `review-<n>.md` e `report.md` são artefatos operacionais: devem viver
-em `.quenching/documentation/`, fora de `docs_dir`, e não podem ser alcançados por uma rota
-publicada. A validação registra cada `source gap:` no relatório de QA, mas nunca o promove a uma
-página para “completar” cobertura.
+Plans, ledgers, `review-<n>.md` scorecards and `report.md` are operational artifacts: they must live
+in `.quenching/documentation/`, outside `docs_dir`, and no published route may reach them. The
+validation records each `source gap:` in the QA report, but never promotes it to a page to
+"complete" coverage.
 
-### Baseline de escala do catálogo
+### Catalog scale baseline
 
-A medição local de 27/08/2026 usou 100 detalhes (101 arquivos incluindo o índice): o verificador
-completo levou `0,03 s` e a busca de linhagem via `rg` menos de `0,01 s`. Esses números são apenas
-um baseline reprodutível, não um limite de produto; o limite de publicação continua uma decisão
-editorial quando o volume real ultrapassar essa ordem de grandeza.
+The local measurement of 2026-08-27 used 100 detail pages (101 files including the index): the full
+checker took `0.03 s` and the lineage search via `rg` under `0.01 s`. These numbers are only a
+reproducible baseline, not a product limit; the publication limit stays an editorial decision when
+the real volume exceeds that order of magnitude.
 
 `site-asset-missing`, `site-anchor-missing`, `site-sitemap-empty` and `site-page-orphan` fail the
 gate. Until vendoring is deliberately adopted, `site-remote-resource` is a **warning** by default;

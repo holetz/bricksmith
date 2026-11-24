@@ -6,10 +6,15 @@
       "command": [
         "python3",
         ".agents/quenching/assets/bin/cq",
-        "specs",
         "mcp"
       ],
       "enabled": true
+    }
+  },
+  "permission": {
+    "external_directory": {
+      "~/Projetos/bricksmith-slot-*": "allow",
+      "~/Projetos/bricksmith.*": "allow"
     }
   }
 }

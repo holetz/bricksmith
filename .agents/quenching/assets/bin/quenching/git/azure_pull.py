@@ -150,10 +150,11 @@ def merge_azure(args, match: re.Match) -> int:
         print(f"checks pending; re-reading in {POLL_S}s", file=sys.stderr, flush=True)
         time.sleep(POLL_S)
     payload.update(checks=state, notGreen=names)
-    if state == "no-checks" and getattr(args, "allow_no_checks", False):
-        payload["noChecksAccepted"] = True
-    elif state != "green":
-        return finish(state, message)
+    from quenching.git.pull import ci_refusal
+
+    refusal = ci_refusal(args, payload, {"no-checks": "none"}.get(state, state))
+    if refusal is not None:
+        return finish(refusal[0] or state, refusal[1] or message)
     now, message = _read(route + ["--http-method=GET"], dict)
     if now is None:
         return finish("merge-state", message)

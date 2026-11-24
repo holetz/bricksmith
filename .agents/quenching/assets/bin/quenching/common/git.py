@@ -23,6 +23,21 @@ def _git(cwd: str, *argv: str) -> str:
         return ""
 
 
+_REMOTE_URLS: dict[tuple[str, str], str] = {}
+
+
+def remember_remote_url(repo: str, name: str, url: str) -> None:
+    """Keep a remote's URL already read in this process, so the next reader spawns no git.
+    An empty URL is not kept: absence is asked again, never assumed."""
+    if url:
+        _REMOTE_URLS[(os.path.abspath(repo), name)] = url
+
+
+def remembered_remote_url(repo: str, name: str) -> str | None:
+    """The URL `remember_remote_url` kept for this repository and remote, or None."""
+    return _REMOTE_URLS.get((os.path.abspath(repo), name))
+
+
 _ORIGIN_PREFIX = "refs/remotes/origin/"
 _HEADS_PREFIX = "refs/heads/"
 

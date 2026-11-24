@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from quenching.common.deploy import MANIFEST, read_manifest
+from quenching.common.deploy import MANIFEST, dumps_hash_manifest, read_manifest
 from quenching.common.config import repository_document
 from quenching.common.output import FINDINGS, OK, REFUSAL, NoAbbrevParser, emit, refuse
 from quenching.common.version import VERSION
@@ -20,7 +20,8 @@ from quenching.deploy import tree as deploy_tree
 LEGACY = (".claude/commands", ".claude/references", ".agents/.generated-from.json")
 GENERATED_ROOTS = (".agents/quenching/", ".agents/skills/quenching-", ".claude/skills/quenching-",
                    ".claude/agents/quenching-")
-MCP_MOUNTS = {"specs"}
+MCP_MOUNTS = {"all", "specs"}  # `all` is `cq mcp`; `specs` is `cq specs mcp`
+MCP_DEFAULT_MOUNT = "all"
 SETTINGS = ".claude/settings.json"
 # Owned files another cq tool rewrites on purpose: `cq components bridge` restamps its marker with
 # its own generator line and hashes. They carry no human work, so a difference is never `edited`.
@@ -30,7 +31,7 @@ HOOKS_PATH = deploy_tree.PAYLOAD + "/assets/githooks"
 
 def _mcp_refusal(message: str, **extra) -> dict:
     return {"code": "ct-deploy-mcp", "message": message, **extra,
-            "remedy": "declare `shared.mcp` as {mount: \"specs\", command: [<python prefix>]} "
+            "remedy": "declare `shared.mcp` as {mount: \"all\"|\"specs\", command: [<python prefix>]} "
                       "to override the default, or remove the key"}
 
 
@@ -74,7 +75,7 @@ def _mcp_option(target: Path) -> tuple[dict | None, dict | None]:
     if unknown:
         return None, _mcp_refusal(f"`shared.mcp` has unknown key(s): {', '.join(unknown)}",
                                   keys=unknown)
-    mount = raw.get("mount", "specs")
+    mount = raw.get("mount", MCP_DEFAULT_MOUNT)
     if mount not in MCP_MOUNTS:
         return None, _mcp_refusal(
             f"`shared.mcp.mount` must be one of: {', '.join(sorted(MCP_MOUNTS))}", mount=mount)
@@ -127,24 +128,90 @@ def _canonical_text(path: Path) -> str | None:
     return path.read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n")
 
 
-def _mcp_merge(target: Path, wanted: dict[str, list[str]], previous: dict | None) -> dict:
+def _primary_checkout(target: Path) -> str | None:
+    """The primary checkout of the target's repository (a slot resolves to it), else None."""
+    try:
+        done = subprocess.run(["git", "-C", str(target), "rev-parse", "--path-format=absolute",
+                               "--git-common-dir"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    common = done.stdout.strip()
+    if done.returncode != 0 or not common or os.path.basename(common) != ".git":
+        return None
+    return os.path.dirname(common)
+
+
+def _opencode_wanted(target: Path, current: str | None, env: dict,
+                     patterns: list[str] | None = None) -> tuple[dict, list[str]]:
+    """The extras `opencode.json` gets, and why the depth was left out: the slot and store
+    patterns of a git target (`patterns` when given), and `experimental.subagent_depth` unless
+    writing a project `experimental` block would hide a global key (anomalyco/opencode#60410)."""
+    if patterns is None:
+        primary = _primary_checkout(target)
+        patterns = mcpfiles.external_patterns(primary, os.path.expanduser("~")) if primary else []
+    warnings: list[str] = []
+    depth: int | None = mcpfiles.SUBAGENT_DEPTH
+    try:
+        project = json.loads(current).get("experimental") if current else None
+    except (ValueError, AttributeError):
+        project = None
+    if not (isinstance(project, dict) and project):
+        # A project block already in place hides the global one already; adding the depth to it
+        # hides nothing new.
+        hidden, unreadable = mcpfiles.hidden_by_depth(current, env)
+        for path, keys in hidden.items():
+            depth = None
+            warnings.append(
+                f"{mcpfiles.OPENCODE}: experimental.subagent_depth was not written — a project "
+                f"`experimental` block replaces the global one (anomalyco/opencode#60410), and "
+                f"{path} sets {', '.join(keys)}; add \"subagent_depth\": "
+                f"{mcpfiles.SUBAGENT_DEPTH} to that global block by hand")
+        warnings.extend(f"{path} could not be read as JSONC; experimental.subagent_depth was "
+                        "written without checking which global keys it hides"
+                        for path in unreadable if depth is not None)
+    return {"subagentDepth": depth, "externalDirectory": patterns}, warnings
+
+
+def _mcp_merge(target: Path, wanted: dict[str, list[str]], previous: dict | None,
+               env: dict | None = None, keep_patterns: bool = False) -> dict:
     """The quenching entry written into (or taken out of) the user's harness files, unwritten.
 
     `wanted` maps each file to the argv its entry carries; a file the last deploy wrote and that is
     no longer wanted loses only that entry. Nothing is touched that cannot be read safely.
+    `opencode.json` also carries the extras of `_opencode_wanted`; what a past deploy recorded
+    there (`opencodeConfig`) is taken out first, so a changed pattern never lingers.
+    `keep_patterns` (`--check`) reuses the recorded `external_directory` patterns: they name the
+    deploying machine's checkout, so another clone of a committed `opencode.json` is not drift.
     """
     files: list[dict] = []
     warnings: list[str] = []
+    recorded = (previous or {}).get("opencodeConfig")
+    recorded = recorded if isinstance(recorded, dict) else None
+    opencode = None
     for rel in sorted({*wanted, *_mcp_recorded(previous)}):
         path = target / rel
         if not (_safe_relative(rel) and _contained(target, path)) or (path.exists() and not path.is_file()):
             warnings.append(f"{rel} is not a regular file inside the target; its MCP entry was not touched")
             continue
         current = _canonical_text(path)
-        if rel in wanted:
+        if rel in wanted and rel == mcpfiles.OPENCODE:
+            base = mcpfiles.opencode_strip(current, recorded) if recorded and current else current
+            kept = recorded.get("externalDirectory") if keep_patterns and recorded else None
+            extras, why = _opencode_wanted(target, base, os.environ if env is None else env,
+                                           kept if isinstance(kept, list) else None)
+            warnings.extend(why)
+            new = (None if current is not None and base is None
+                   else mcpfiles.merged(rel, base, wanted[rel], extras))
+            # Record only what this merge writes: a depth or an allow the user already had is
+            # theirs, and the removal must not take it out.
+            written = mcpfiles.written_extras(base, extras)
+            opencode = written if new is not None and (
+                written["subagentDepth"] is not None or written["externalDirectory"]) else None
+        elif rel in wanted:
             new = mcpfiles.merged(rel, current, wanted[rel])
         elif current is not None and mcpfiles.NAME in current:
-            new = mcpfiles.removed(rel, current)
+            new = mcpfiles.removed(rel, current, recorded if rel == mcpfiles.OPENCODE else None)
         else:
             continue
         if new is None:
@@ -153,7 +220,7 @@ def _mcp_merge(target: Path, wanted: dict[str, list[str]], previous: dict | None
             continue
         if new != current:
             files.append({"rel": rel, "text": new, "delete": new == ""})
-    return {"files": files, "warnings": warnings}
+    return {"files": files, "warnings": warnings, "opencode": opencode}
 
 
 def _edited(target: Path, rel: str, recorded: str | None) -> bool:
@@ -308,9 +375,12 @@ def _settings_merge(target: Path, built: dict, previous: dict | None) -> dict | 
     keys = recorded.get("attribution") if recorded else []
     keys = keys if isinstance(keys, list) else []
     merged = claude_settings.merge(current, wanted["hooks"] if wanted else [],
-                                   wanted["attribution"] if wanted else None, keys)
+                                   wanted["attribution"] if wanted else None, keys,
+                                   mcpjson=bool(wanted and wanted.get("mcpjson")),
+                                   mcpjson_recorded=bool(recorded and recorded.get("mcpjson")))
     if wanted is not None:
         built["manifest"]["claudeSettings"]["attribution"] = sorted(merged.attribution)
+        built["manifest"]["claudeSettings"]["mcpjson"] = merged.mcpjson
     delete = (wanted is None and current is not None and recorded is not None
               and json.loads(merged.text if merged.text is not None else current) == {})
     return {"text": merged.text, "delete": delete, "warnings": merged.warnings,
@@ -334,6 +404,14 @@ def _unlink_owned(target: Path, rel: str) -> None:
     if not (path.is_file() and _safe_relative(rel) and _contained(target, path)):
         return
     path.unlink()
+    if path.suffix == ".py":
+        # The bytecode `_precompile` (or the first import) wrote beside it is no one's file once
+        # the source is gone, and it would keep the directory from ever emptying.
+        cache = path.parent / "__pycache__"
+        for stale in cache.glob(f"{path.stem}.*.pyc"):
+            stale.unlink()
+        if cache.is_dir() and not any(cache.iterdir()):
+            cache.rmdir()
     parent = path.parent
     while parent != target and parent.is_dir() and not any(parent.iterdir()):
         parent.rmdir()
@@ -373,7 +451,7 @@ def write(target: Path, built: dict, result: dict, prune_legacy: bool) -> None:
         path = target / rel
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
+            path.write_text(text, encoding="utf-8", newline="\n")
     merged = built.get("merged")
     if merged and merged["changed"]:
         path = target / SETTINGS
@@ -381,15 +459,40 @@ def write(target: Path, built: dict, result: dict, prune_legacy: bool) -> None:
             path.unlink()
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(merged["text"], encoding="utf-8")
+            path.write_text(merged["text"], encoding="utf-8", newline="\n")
     _write_mcp(target, built.get("mcpMerge"))
     if prune_legacy:
         pointer = target / "CLAUDE.md"
         if pointer.is_file() and pointer.read_text(encoding="utf-8").strip() == "@AGENTS.md":
             pointer.unlink()
     (target / MANIFEST).parent.mkdir(parents=True, exist_ok=True)
-    (target / MANIFEST).write_text(json.dumps(built["manifest"], indent=2) + "\n",
-                                   encoding="utf-8")
+    # `newline="\n"` on every text write: the deployed tree is LF on Windows too.
+    (target / MANIFEST).write_text(dumps_hash_manifest(built["manifest"]),
+                                   encoding="utf-8", newline="\n")
+
+
+def _precompile(target: Path, python: list[str]) -> str | None:
+    """Write the payload's bytecode once, under the interpreter the hooks and the MCP server run.
+
+    Otherwise every first call of a fresh deploy or slot writes its own `.pyc`, each one a file the
+    target's real-time antivirus scans. The `.pyc` tag is the loading interpreter's, so the compile
+    runs under that prefix, never this process. The bytecode is a cache: no manifest entry, no
+    `--check`, and a failure is a warning, never a refusal of a write that already landed.
+    """
+    assets = target / deploy_tree.PAYLOAD / "assets"
+    if not assets.is_dir():
+        return None
+    try:
+        done = subprocess.run([*python, "-m", "compileall", "-q", str(assets)],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"the payload bytecode was not precompiled with `{' '.join(python)}`: {exc}"
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout).strip().splitlines()
+        return (f"the payload bytecode was not precompiled with `{' '.join(python)}` "
+                f"(exit {done.returncode}){': ' + detail[-1] if detail else ''}")
+    return None
 
 
 def _human(target: Path, built: dict, result: dict, written: bool) -> str:
@@ -468,13 +571,21 @@ def main(argv: list[str]) -> int:
     python = mcpfiles.python_prefix(
         declared["command"] if declared else None,
         recorded_mcp.get("command") if isinstance(recorded_mcp, dict) else None)
-    # Registered by default; `shared.mcp` only overrides the mount and the prefix. A uvx runtime
-    # carries no vendored entry point to call, so there the registration is skipped, not refused.
-    mcp = ({"mount": declared["mount"] if declared else "specs", "command": python}
+    recorded_settings = (previous or {}).get("claudeSettings")
+    recorded_hooks = recorded_settings.get("command") if isinstance(recorded_settings, dict) else None
+    # The hooks and the MCP server share one direct interpreter: `uv run` never starts either.
+    hooks_python, hooks_warning = mcpfiles.direct_prefix(
+        python, recorded_hooks if isinstance(recorded_hooks, list) else None)
+    # Registered by default, the whole server; `shared.mcp` only overrides the mount and the
+    # prefix. A uvx runtime carries no vendored entry point to call, so there the registration is
+    # skipped, not refused.
+    mcp = ({"mount": declared["mount"] if declared else MCP_DEFAULT_MOUNT, "command": hooks_python}
            if runtime == "vendor" else None)
     mcp_warnings = ([] if mcp or not harnesses else [
         "the MCP server is not registered: `--runtime uvx` carries no vendored entry point; "
         "use `--runtime vendor` to register it"])
+    if hooks_warning and harnesses and (mcp or "claude" in harnesses):
+        mcp_warnings.append(hooks_warning)
     try:
         manifest = deploy_tree.load_modules(deploy_tree.source_root())
         modules = deploy_tree.normalize_modules(
@@ -482,7 +593,8 @@ def main(argv: list[str]) -> int:
         profiles = (_split(args.profiles) or recorded(previous, "profiles")
                     or deploy_tree.profiles_for(modules))
         built = deploy_tree.build_tree(deploy_tree.source_root(), target, modules, harnesses,
-                                       runtime, profiles, mcp=mcp, python=python)
+                                       runtime, profiles, mcp=mcp, python=python,
+                                       hooks_python=hooks_python)
     except (OSError, ValueError) as exc:
         return refuse({"code": "ct-deploy-source", "message": str(exc),
                        "remedy": "run deploy from a complete quenching checkout or wheel"},
@@ -496,7 +608,10 @@ def main(argv: list[str]) -> int:
                       args.json)
     wanted = {rel: deploy_tree.mcp_argv(mcp) for rel in built["manifest"].get("mcpFiles", [])} \
         if mcp else {}
-    built["mcpMerge"] = _mcp_merge(target, wanted, previous)
+    built["mcpMerge"] = _mcp_merge(target, wanted, previous, keep_patterns=args.check)
+    if built["mcpMerge"]["opencode"]:
+        # What the deploy wrote into the user's `opencode.json`, so a later run takes it out.
+        built["manifest"]["opencodeConfig"] = built["mcpMerge"]["opencode"]
     result = plan(target, built, previous)
     result["warnings"] = [*result.get("warnings", []), *mcp_warnings,
                           *_identity_hooks_warnings(target)]
@@ -521,6 +636,9 @@ def main(argv: list[str]) -> int:
     if args.write:
         write(target, built, result, args.prune_legacy)
         written = True
+        compile_warning = _precompile(target, hooks_python)
+        if compile_warning:
+            result["warnings"] = [*result["warnings"], compile_warning]
     payload = {"ok": not result["conflicts"], "target": str(target),
                "version": built["manifest"]["version"],
                "installedVersion": installed if isinstance(installed, str) else None,
@@ -586,7 +704,7 @@ def _remove_main(target: Path, previous: dict | None, args) -> int:
             if merged["delete"]:
                 path.unlink()
             elif merged["text"] is not None:
-                path.write_text(merged["text"], encoding="utf-8")
+                path.write_text(merged["text"], encoding="utf-8", newline="\n")
         _write_mcp(target, result["mcp"])
         (target / MANIFEST).unlink()
         written = True

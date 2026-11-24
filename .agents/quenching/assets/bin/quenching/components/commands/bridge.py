@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 
+from quenching.common.deploy import dumps_hash_manifest
 from quenching.common.output import FINDINGS, OK, emit, refuse
 
 SOURCE = Path(".agents") / "skills"
@@ -46,6 +47,15 @@ def with_marker(text: str, name: str) -> str:
     return line + text
 
 
+def _canonical(path: Path) -> bytes:
+    """The file as git keeps it: a `core.autocrlf` checkout holds CRLF for the same blob.
+
+    Imported here because `quenching.deploy.tree` imports this module at load time.
+    """
+    from quenching.deploy.tree import eol_canonical
+    return eol_canonical(path.read_bytes())
+
+
 def expected_tree(repo: Path) -> dict[str, bytes]:
     """`<name>/<file>` -> the bytes the bridge writes, for every skill of the source."""
     out: dict[str, bytes] = {}
@@ -57,7 +67,7 @@ def expected_tree(repo: Path) -> dict[str, bytes]:
             continue
         for path in sorted(p for p in skill.rglob("*") if p.is_file()):
             rel = path.relative_to(source).as_posix()
-            data = path.read_bytes()
+            data = _canonical(path)
             if path.name == SKILL_FILE and path.parent == skill:
                 data = with_marker(data.decode("utf-8"), skill.name).encode("utf-8")
             out[rel] = data
@@ -97,9 +107,8 @@ def plan(repo: Path) -> dict:
         path = destination / rel
         if not path.is_file():
             changes.append({"path": rel, "change": "create"})
-        elif path.read_bytes() != data or _mode(path) != _mode(repo / SOURCE / rel):
-            change = "edited" if recorded.get(rel) and sha256(path.read_bytes()) != recorded[rel] \
-                else "update"
+        elif (disk := _canonical(path)) != data or _mode(path) != _mode(repo / SOURCE / rel):
+            change = "edited" if recorded.get(rel) and sha256(disk) != recorded[rel] else "update"
             changes.append({"path": rel, "change": change})
     for rel in sorted(set(recorded) - set(expected)):
         if (destination / rel).is_file():
@@ -136,7 +145,7 @@ def write(repo: Path, result: dict) -> None:
     }
     if result["expected"] or (repo / MANIFEST).exists():
         destination.mkdir(parents=True, exist_ok=True)
-        (repo / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        (repo / MANIFEST).write_text(dumps_hash_manifest(manifest), encoding="utf-8")
 
 
 def add_arguments(sp) -> None:

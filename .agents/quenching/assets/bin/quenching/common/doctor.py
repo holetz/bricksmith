@@ -12,16 +12,23 @@ completed its provider setup while never making a GitHub repository look like Az
 """
 from __future__ import annotations
 
+import glob
 import importlib
 import os
+import re
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable
 
+from quenching.common.cache import cache_root
+from quenching.common.git import COMMAND_TIMEOUT_S, _git
 from quenching.common.config import (active_provider, detect_profile, load_config,
                                      prepare_minimal_config,
                                      write_minimal_config)
+from quenching.common.gitcache import untracked_cache_line, untracked_cache_report
 from quenching.common.io import read_text
 from quenching.common.output import OK, emit, refuse
 
@@ -201,7 +208,222 @@ def _run_setup(as_json: bool, root: str, write: bool) -> int:
     return OK
 
 
-def run(as_json: bool, root: str, *, setup: bool = False, write: bool = False) -> int:
+ANTIVIRUS_CAVEAT = (
+    "Nothing here is applied: excluding a path from the antivirus is a security decision for "
+    "you or your IT. Under Tamper Protection or a managed policy (Intune, Trend Micro Apex One) "
+    "the change is refused locally; hand the plain list to whoever owns the central console.")
+UV_TIMEOUT_S = 10
+
+
+def _owns(candidate: str, common: str) -> bool:
+    """`candidate` is a checkout of `common`: its `.git` is that git dir, or a `gitdir:` file to it."""
+    dot_git = os.path.join(candidate, ".git")
+    if os.path.isfile(dot_git):
+        head = read_text(dot_git).strip()
+        if not head.startswith("gitdir:"):
+            return False
+        target = os.path.join(candidate, head[len("gitdir:"):].strip())
+        return _canonical(target) == _canonical(common)
+    if not os.path.isdir(dot_git) or _canonical(dot_git) != _canonical(common):
+        return False
+    # A bare `.git` parent (`--separate-git-dir`) carries the git dir but none of its files: a
+    # checkout is proven by one tracked file the index recorded there (its inode, size and mtime,
+    # so uncommitted edits elsewhere do not matter), or by every tracked file carrying the index's
+    # content (a clean checkout whose stat is stale). `diff` refreshes the index it reads, so
+    # both read a throwaway copy and the real index is never written.
+    index = os.path.join(common, "index")
+    if not os.path.isfile(index):
+        return False
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            env = {**os.environ, "GIT_INDEX_FILE": shutil.copyfile(
+                index, os.path.join(scratch, "index"))}
+            listed = subprocess.run(["git", "--git-dir", common, "ls-files", "-z", "--debug"],
+                                    capture_output=True, cwd=candidate, timeout=COMMAND_TIMEOUT_S,
+                                    env=env)
+            if listed.returncode != 0 or not listed.stdout:
+                return False
+            if _stat_matches(candidate, listed.stdout):
+                return True
+            argv = ["git", "--git-dir", common, "--work-tree", candidate, "diff", "--quiet",
+                    "--no-ext-diff", "--no-textconv", "--ignore-submodules"]
+            return subprocess.run(argv, capture_output=True, cwd=candidate,
+                                  timeout=COMMAND_TIMEOUT_S, env=env).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+_INDEX_ENTRY = re.compile(
+    rb"(?:\A|\n)([^\0\n]+)\0  ctime: [^\n]*\n  mtime: (\d+):(\d+)\n  dev: \d+\tino: (\d+)\n"
+    rb"  uid: [^\n]*\n  size: (\d+)\t")
+
+
+def _stat_matches(candidate: str, listing: bytes) -> bool:
+    """One entry of `ls-files -z --debug` is the file in `candidate`: same inode, size and mtime.
+
+    An inode of 0 (not recorded, as on Git for Windows) proves nothing: a same-named copy could
+    match size and mtime."""
+    mask = 0xFFFFFFFF
+    for match in _INDEX_ENTRY.finditer(listing):
+        rel, sec, nsec, ino, size = match.groups()
+        if not int(ino):
+            continue
+        try:
+            st = os.lstat(os.path.join(candidate, os.fsdecode(rel)))
+        except OSError:
+            continue
+        if ((st.st_ino & mask) == int(ino) and (st.st_size & mask) == int(size)
+                and (st.st_mtime_ns // 10**9) & mask == int(sec)
+                and (not int(nsec) or st.st_mtime_ns % 10**9 == int(nsec))):
+            return True
+    return False
+
+
+def _primary_root(root: str) -> tuple[str | None, bool]:
+    """The primary worktree, proven: never the parent of a git dir only by its name.
+
+    In the primary worktree it is the toplevel; in a slot it is the first candidate that owns the
+    shared git dir — the sibling without `-slot-<n>`, then the parent of a `.git` common dir —
+    else the slot's own toplevel, narrower and never broader, with `False` beside it: the
+    fallback is no primary. `(None, False)` outside a git repository: the raw root is never
+    offered as the repository."""
+    top = _git(root, "rev-parse", "--show-toplevel").strip()
+    if not top:
+        return None, False
+    top = os.path.normpath(top)
+    common = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    git_dir = _git(root, "rev-parse", "--absolute-git-dir").strip()
+    if not common or _canonical(git_dir) == _canonical(common):
+        return top, True
+    candidates = []
+    stem = re.sub(r"-slot-\d+$", "", os.path.basename(top))
+    if stem != os.path.basename(top):
+        candidates.append(os.path.join(os.path.dirname(top), stem))
+    if os.path.basename(common) == ".git":
+        candidates.append(os.path.dirname(common))
+    for candidate in candidates:
+        if _owns(candidate, common):
+            return os.path.normpath(candidate), True
+    return top, False
+
+
+def _canonical(path: str) -> str:
+    return os.path.normcase(os.path.realpath(path))
+
+
+def _too_broad(path: str) -> bool:
+    """A disk root, the home or an ancestor of it, or the system temp or an ancestor of it."""
+    target = _canonical(path)
+    if os.path.dirname(target) == target:
+        return True
+    for anchor in (os.path.expanduser("~"), tempfile.gettempdir()):
+        anchor = _canonical(anchor)
+        if target == anchor or anchor.startswith(target.rstrip(os.sep) + os.sep):
+            return True
+    return False
+
+
+def _uv_cache_dir(which: Callable[[str], str | None]) -> str | None:
+    uv = which("uv")
+    if not uv:
+        return None
+    try:
+        out = subprocess.run([uv, "cache", "dir"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=UV_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    path = out.stdout.strip()
+    return path if out.returncode == 0 and path else None
+
+
+def antivirus_report(root: str, *, which: Callable[[str], str | None] | None = None) -> dict:
+    """The paths and processes an on-access scanner should spare for this repository.
+
+    Read-only: it resolves paths and runs `uv cache dir` when `uv` is on PATH, nothing else."""
+    which = which or shutil.which
+    primary, proven = _primary_root(os.path.abspath(root))
+    if primary is None:
+        return {"refusal": {
+            "code": "cq-antivirus-no-repo",
+            "root": os.path.abspath(root),
+            "message": f"not inside a git repository: {os.path.abspath(root)}",
+            "remedy": "run `cq doctor --antivirus` inside the repository (rode dentro do repositório)",
+        }}
+    if _too_broad(primary):
+        return {"refusal": {
+            "code": "cq-antivirus-unsafe-root",
+            "root": primary,
+            "message": f"the repository root is too broad to exclude: {primary} is a disk root, "
+                       "the home, the system temp or an ancestor of one",
+            "remedy": "keep the repository in a folder of its own, then run `cq doctor --antivirus` there",
+        }}
+    if proven:
+        parent, name = os.path.split(primary)
+        paths = [{"path": primary, "what": "repository (its .git holds the spec store)"}]
+        pattern = os.path.join(parent, f"{name}-slot-*")
+        paths.append({"path": pattern, "what": "worktree slots (wildcard)"})
+        paths += [{"path": slot, "what": "worktree slot"}
+                  for slot in sorted(glob.glob(pattern)) if os.path.isdir(slot)]
+    else:
+        paths = [{"path": primary, "what": "worktree (its primary worktree could not be proven)"}]
+    paths.append({"path": cache_root(), "what": "quenching cache"})
+    venv = os.path.join(primary, ".venv")
+    if os.path.isdir(venv):
+        paths.append({"path": venv, "what": "virtual environment"})
+    uv_cache = _uv_cache_dir(which)
+    if uv_cache:
+        paths.append({"path": uv_cache, "what": "uv cache"})
+    processes = [{"path": os.path.abspath(sys.executable), "what": "python"}]
+    git = which("git")
+    if git:
+        processes.append({"path": os.path.abspath(git), "what": "git"})
+    informational = [{
+        "path": tempfile.gettempdir(),
+        "what": "system temp — not printed as an exclusion: a common malware drop location"}]
+    informational += [{"path": p["path"], "what": f"{p['what']} — too broad to exclude"}
+                      for p in paths if _too_broad(p["path"])]
+    common = _git(primary, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    if common and not _canonical(common).startswith(_canonical(primary).rstrip(os.sep) + os.sep):
+        informational.append({"path": common, "what": "git dir outside the worktree — not listed: "
+                                                      "its folder is not the repository"})
+    return {
+        "root": primary,
+        "paths": [p for p in paths if not _too_broad(p["path"])],
+        "processes": processes,
+        "informational": informational,
+        "caveat": ANTIVIRUS_CAVEAT,
+    }
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _antivirus_human(report: dict) -> str:
+    lines = [f"cq doctor --antivirus — {report['root']}", "",
+             "Microsoft Defender (an elevated PowerShell):"]
+    lines += [f"  Add-MpPreference -ExclusionPath {_ps_quote(p['path'])}" for p in report["paths"]]
+    lines += [f"  Add-MpPreference -ExclusionProcess {_ps_quote(p['path'])}"
+              for p in report["processes"]]
+    lines += ["", "Plain list (a central console such as Trend Micro):"]
+    lines += [f"  path     {p['path']}  ({p['what']})" for p in report["paths"]]
+    lines += [f"  process  {p['path']}  ({p['what']})" for p in report["processes"]]
+    lines += ["", "Not listed:"]
+    lines += [f"  {p['path']}  ({p['what']})" for p in report["informational"]]
+    lines += ["", report["caveat"]]
+    return "\n".join(lines)
+
+
+def run_antivirus(as_json: bool, root: str) -> int:
+    report = antivirus_report(root)
+    if "refusal" in report:
+        return refuse(report["refusal"], as_json)
+    emit(as_json, {"ok": True, **report}, _antivirus_human(report))
+    return OK
+
+
+def run(as_json: bool, root: str, *, setup: bool = False, write: bool = False,
+        antivirus: bool = False) -> int:
     """Render the top-level doctor and preserve the CQ refusal door for missing prerequisites."""
     resolved_root = os.path.abspath(root)
     if not os.path.isdir(resolved_root):
@@ -213,6 +435,14 @@ def run(as_json: bool, root: str, *, setup: bool = False, write: bool = False) -
         }, as_json)
     if setup:
         return _run_setup(as_json, resolved_root, write)
+    if antivirus:
+        if write:
+            return refuse({
+                "code": "cq-setup-write-without-setup",
+                "message": "`--write` is valid only with `--setup`; `--antivirus` writes nothing",
+                "remedy": "run `cq doctor --antivirus` and apply what it prints yourself",
+            }, as_json)
+        return run_antivirus(as_json, resolved_root)
     if write:
         return refuse({
             "code": "cq-setup-write-without-setup",
@@ -244,5 +474,10 @@ def run(as_json: bool, root: str, *, setup: bool = False, write: bool = False) -
     if config is not None:
         report = {**report, "config": config}
         human += f"\n  {_config_line(config)}"
+    git_cache = untracked_cache_report(resolved_root)
+    if git_cache is not None:
+        report = {**report, "gitCache": git_cache}
+        line = untracked_cache_line(git_cache)
+        human += f"\n  {line}" if line else ""
     emit(as_json, {"ok": True, **report}, human)
     return OK

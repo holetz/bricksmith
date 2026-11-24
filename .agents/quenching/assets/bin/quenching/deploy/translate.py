@@ -89,8 +89,53 @@ def transform_platform(text: str) -> str:
     return text
 
 
-def transform_tools(value: str) -> str:
-    """Keep the shipped grant, re-rooted at the target-local `cq` and its `cq.cmd` twin."""
+MCP_SERVER = "quenching"
+
+
+def _grant_names(tools: str) -> list[str]:
+    return [item.strip() for item in re.split(r",\s*(?![^()]*\))", tools) if item.strip()]
+
+
+def mcp_tools(names: list[str]) -> list[str] | None:
+    """The `quenching` MCP tools a grant list covers: `None` for the whole server (`Bash`, or an
+    unscoped `Bash(cq:*)`), else every tool under each scoped `Bash(cq <verbs>:*)` prefix — never
+    wider than the shell grant it mirrors."""
+    from quenching.mcp import catalog
+    if "Bash" in names:
+        return None
+    granted: list[str] = []
+    for name in names:
+        match = CQ_GRANT.match(name)
+        if not match:
+            continue
+        if not match.group(2):
+            return None
+        granted.extend(tool for tool in catalog.tool_names(tuple(match.group(2).split()))
+                       if tool not in granted)
+    return granted
+
+
+def _with_mcp(value: str, enumerate_all: bool) -> str:
+    """Append the Claude Code names of the MCP tools the grant covers, once: `mcp__quenching` for
+    the whole server where a rule may name it (skills), every tool by name where only a list of
+    names is read (a subagent's `tools:`)."""
+    from quenching.mcp import catalog
+    names = _grant_names(value)
+    tools = mcp_tools(names)
+    prefix = f"mcp__{MCP_SERVER}"
+    if tools is None:
+        wanted = [f"{prefix}__{tool}" for tool in catalog.tool_names()] if enumerate_all \
+            else [prefix]
+    else:
+        wanted = [f"{prefix}__{tool}" for tool in tools]
+    missing = [name for name in wanted if name not in names]
+    return ", ".join([value, *missing]) if missing else value
+
+
+def transform_tools(value: str, enumerate_mcp: bool = False) -> str:
+    """Keep the shipped grant, re-rooted at the target-local `cq` and its `cq.cmd` twin, plus the
+    `quenching` MCP tools that grant covers."""
+    value = _with_mcp(value, enumerate_mcp)
     value = re.sub(r"Bash\(cq((?:\.cmd)?[^)]*):\*\)",
                    lambda m: f"Bash({CQ}{m.group(1)}:*)", value)
     def target_agent(item: str) -> str:
@@ -163,6 +208,22 @@ def _cq_patterns(names: list[str]) -> list[str]:
     return patterns
 
 
+SHELL_GRANT = re.compile(r"Bash\(([^():]+):\*\)$")
+
+
+def _shell_patterns(names: list[str]) -> list[str]:
+    """One `<command> *` pattern per scoped non-cq `Bash(<command>:*)` grant, in source order."""
+    patterns: list[str] = []
+    for name in names:
+        match = SHELL_GRANT.match(name)
+        if not match or CQ_GRANT.match(name):
+            continue
+        pattern = f"{match.group(1).strip()} *"
+        if pattern not in patterns:
+            patterns.append(pattern)
+    return patterns
+
+
 def opencode_permissions(tools: str | None) -> dict[str, str | dict[str, str]]:
     """A source `tools:` list as OpenCode permissions: deny-first, with the cq grants allowed.
 
@@ -172,17 +233,21 @@ def opencode_permissions(tools: str | None) -> dict[str, str | dict[str, str]]:
     """
     if tools is None:
         return {}
-    names = [item.strip() for item in re.split(r",\s*(?![^()]*\))", tools) if item.strip()]
+    names = _grant_names(tools)
     heads = {name.split("(", 1)[0] for name in names}
     granted: dict[str, str | dict[str, str]] = {}
     granted["edit"] = "allow" if heads & {"Edit", "Write", "NotebookEdit"} else "deny"
     granted["webfetch"] = "allow" if "WebFetch" in heads else "deny"
     if "Bash" in names:
         granted["bash"] = "allow"
-    elif patterns := _cq_patterns(names):
+    elif patterns := _cq_patterns(names) + _shell_patterns(names):
         granted["bash"] = {"*": "ask", **dict.fromkeys(patterns, "allow")}
     else:
         granted["bash"] = "ask" if "Bash" in heads else "deny"
+    # Last match wins: the server-wide deny first, then the tools the cq grants cover.
+    mcp = mcp_tools(names)
+    granted[f"{MCP_SERVER}_*"] = "allow" if mcp is None else "deny"
+    granted.update(dict.fromkeys((f"{MCP_SERVER}_{tool}" for tool in mcp or []), "allow"))
     granted["task"] = _task_grant(names)
     return granted
 
@@ -222,7 +287,7 @@ def opencode_agent_document(raw: str, name: str) -> str:
                 out.append(f"  {key}:")
                 out.extend(f'    "{pattern}": {mode}' for pattern, mode in value.items())
             else:
-                out.append(f"  {key}: {value}")
+                out.append(f'  "{key}": {value}' if "*" in key else f"  {key}: {value}")
     if denies_task:
         out.extend(["tools:", "  task: false"])
     out.append("---")
@@ -244,7 +309,7 @@ def agent_document(raw: str, name: str) -> str:
                                   ("description", json.dumps(transform_platform(description),
                                                              ensure_ascii=False))]
     if fields.get("tools"):
-        out.append(("tools", transform_tools(fields["tools"])))
+        out.append(("tools", transform_tools(fields["tools"], enumerate_mcp=True)))
     for key in ("model", "effort"):
         if fields.get(key):
             out.append((key, fields[key]))

@@ -9,6 +9,7 @@ import re
 import tempfile
 import time
 
+from quenching.common.cache import cache_path
 from quenching.common.git import COMMAND_TIMEOUT_S, _git
 from quenching.common.config import CONFIG_FILE, find_repo_root
 from quenching.common.io import write_text
@@ -92,10 +93,8 @@ def azure_cache_path(org: str, project: str) -> str:
 
     Keyed by org and project so two projects in one org never see each other's answers."""
     import hashlib
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
-        os.path.expanduser("~"), ".cache")
     key = hashlib.sha256(f"{org}\n{project}".encode()).hexdigest()[:16]
-    return os.path.join(base, "quenching", "azure", f"{key}.json")
+    return cache_path("azure", f"{key}.json")
 
 
 def azure_cache_read(org: str, project: str) -> dict:

@@ -233,7 +233,7 @@ link: **report it as a finding and write nothing.**
 With no git in the repo there is nothing to anchor to: tick the box without `--subject` and say so
 once in the report, rather than inventing a placeholder.
 
-**A task that runs generators declares their outputs (mirrors, manifests) in `files:`**: the spec-verifier discounts only the paths its audit proved a byte-for-byte copy of their source in a manifest-declared module, and fails the scope of any other path written outside the declared `files:` (including under `files: []`): a hand-edited generated file or a derived output that is no copy.
+**A task declares in `files:` only what it edits, never what the deploy regenerates**: the spec-verifier's scope check takes the deploy's mirrors and manifest as implicit when a path under `quenching/` changed, and fails any other path written outside the declared `files:` (including under `files: []`), such as a hand-edited generated file.
 
 **A task with no `files:` declared** — the line absent, or written `files: []` — is the same rule one
 level down: it produces no diff of its own, so there is no commit to anchor to and no subject or

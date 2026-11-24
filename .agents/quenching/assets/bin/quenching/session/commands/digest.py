@@ -9,16 +9,34 @@ from pathlib import Path
 from quenching.common.output import FINDINGS, OK, refuse
 from quenching.session.evidence import assign_corrections, clip, digest_command
 from quenching.session.model import normalize
-from quenching.session.parse import read_session, silence_refusal
+from quenching.session.opencode_transcript import OpenCodeError, read_opencode, wants_opencode
+from quenching.session.parse import read_lines, read_session, silence_refusal
 from quenching.session.transcript import resolve_transcript
 
 
 def cmd_digest(args) -> int:
-    path, how = resolve_transcript(args.transcript, Path.cwd().resolve())
-    if path is None:
+    cwd = Path.cwd().resolve()
+    # OpenCode first, as `context` does: it is the innermost shell when one harness is opened
+    # from the other. With no id and no running OpenCode session, Claude Code's transcripts are
+    # tried first and the newest OpenCode session in this directory is the fallback.
+    opencode = wants_opencode(args.transcript)
+    path = how = None
+    if not opencode:
+        path, how = resolve_transcript(args.transcript, cwd)
+        opencode = path is None and not args.transcript
+    if opencode:
+        try:
+            lines, label, found, _ = read_opencode(args.transcript, cwd)
+        except OpenCodeError as error:
+            if path is None and how and not wants_opencode(args.transcript):
+                return refuse({"code": "se-no-transcript", "message": how}, args.json)
+            return refuse({"code": error.code, "message": error.message}, args.json)
+        model, path, how = read_lines(lines, label), label, found
+    elif path is None:
         return refuse({"code": "se-no-transcript", "message": how}, args.json)
+    else:
+        model = read_session(path)
 
-    model = read_session(path)
     model_objects = model.pop("_commands")
     objects = model_objects
     corrections = model["corrections"]

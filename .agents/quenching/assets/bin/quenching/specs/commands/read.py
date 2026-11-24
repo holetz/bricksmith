@@ -63,13 +63,15 @@ def cmd_list(args, root: str, out: Emitter) -> int:
         return 0
     specs = backend.list_specs(phase)
     rows = []
+    # ONE batched read for the whole front: `read_spec` per spec re-lists the store each time.
+    batch = backend.read_specs([s["id"] for s in specs])
     for s in specs:
         # ASKED OF THE BACKEND, never of the path. This was the last command reading
         # `read_text(s["path"])` directly, which worked only because the files backend's
         # locator happens to be a filesystem path — against GitHub it is an issue URL, and
         # `list` would have reported every spec as empty rather than failing.
-        info, rerr = backend.read_spec(s["id"])
-        if rerr or info is None:
+        info, rerr = batch.get(str(s["id"])), {}
+        if info is None:
             # NO REFUSAL IS REACHABLE HERE ANY MORE, and the row is kept anyway. The ID came
             # from the listing, so it cannot be unknown, and two specs cannot share a native
             # ID — which is what retired `sp-ambiguous-slug` by construction. What survives

@@ -237,7 +237,78 @@ def agent_peaks(transcripts: list) -> list:
     return rows
 
 
+def _since(args):
+    """(instant, refusal): `--since` parsed, or why it is not an instant."""
+    if not getattr(args, "since", None):
+        return None, None
+    when = parse_instant(args.since)
+    if when is None:
+        return None, {"code": "se-bad-since", "message": f"--since is not an ISO-8601 instant: {args.since}"}
+    return when, None
+
+
+def _cell(value, width: int) -> str:
+    return f"{'-' if value is None else value:>{width}}"
+
+
+def _print(out: dict, args, how: str) -> int:
+    if args.json:
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+    else:
+        print(f"subagents: {out['subagents']}  ({how})")
+        print(f"{'agentType':<22}{'model':<26}{'req':>6}{'input':>9}{'cacheRead':>12}"
+              f"{'cacheWrite':>12}{'output':>9}{'maxWindow':>11}")
+        for g in out["groups"]:
+            print(f"{g['agentType']:<22}{g['model']:<26}{_cell(g['requests'], 6)}{g['input']:>9}"
+                  f"{g['cacheRead']:>12}{g['cacheWrite']:>12}{g['output']:>9}{_cell(g['maxWindow'], 11)}")
+        print("\nper model (tiers are never summed together):")
+        for m in out["byModel"]:
+            print(f"  {m['model']}: req={'-' if m['requests'] is None else m['requests']} input={m['input']}"
+                  f" cacheRead={m['cacheRead']} cacheWrite={m['cacheWrite']} output={m['output']}")
+        for a in out["anomalies"]:
+            print(f"  ! {a['file']} line {a['line']}: {a['message']}")
+    return FINDINGS if out["anomalies"] else OK
+
+
+def _cost_opencode(args) -> int:
+    """The tree of an OpenCode session, from its database (opened read-only)."""
+    from quenching.session import opencode_cost  # these import commands.cache, which imports this module
+    from quenching.session.opencode_transcript import OpenCodeError
+    if getattr(args, "self_marker", None):
+        return refuse({"code": "se-opencode-self", "message":
+                       "--self selects a Claude Code subagent transcript by its latest call; on OpenCode pass "
+                       "--descendants-of with the orchestrator's session id"}, args.json)
+    since, bad = _since(args)
+    if bad:
+        return refuse(bad, args.json)
+    try:
+        sessions, path, how, root = opencode_cost.read_tree(args.transcript, Path.cwd().resolve(),
+                                                            getattr(args, "opencode_db", None))
+    except OpenCodeError as error:
+        return refuse({"code": error.code, "message": error.message}, args.json)
+    out = opencode_cost.aggregate(sessions, root, getattr(args, "descendants_of", None),
+                                  getattr(args, "nested", False),
+                                  int(since.timestamp() * 1000) if since else None,
+                                  getattr(args, "latest_orchestrator", False))
+    if out.get("noOrchestrator"):
+        return refuse({"code": "se-no-orchestrator",
+                       "message": f"--latest-orchestrator: no orchestrator agent under session {root}"}, args.json)
+    if out.get("unknownScope"):
+        return refuse({"code": "se-no-transcript", "message":
+                       f"--descendants-of: session {out['unknownScope']} is not in the tree of {root}"}, args.json)
+    if not out["groups"]:
+        return refuse({"code": "se-no-requests", "message": f"no session with tokens under {root} in {path}"},
+                      args.json)
+    out.update(ok=True, subagents=f"{path}#{root}", resolvedBy=how)
+    if getattr(args, "usd", False):
+        price_rows(out)
+    return _print(out, args, how)
+
+
 def cmd_cost(args) -> int:
+    from quenching.session.opencode_cost import wants_opencode_cost  # circular at module level
+    if wants_opencode_cost(args.transcript, getattr(args, "opencode_db", None)):
+        return _cost_opencode(args)
     directory, how = subagents_dir(args.transcript)
     if directory is None:
         code = ("se-ambiguous-session" if how.startswith("several sessions")
@@ -246,12 +317,9 @@ def cmd_cost(args) -> int:
     if not directory.is_dir():
         return refuse({"code": "se-no-subagents", "message": f"no subagents directory at {directory}"},
                       args.json)
-    since = None
-    if getattr(args, "since", None):
-        since = parse_instant(args.since)
-        if since is None:
-            return refuse({"code": "se-bad-since",
-                           "message": f"--since is not an ISO-8601 instant: {args.since}"}, args.json)
+    since, bad = _since(args)
+    if bad:
+        return refuse(bad, args.json)
     descendants_of = getattr(args, "descendants_of", None)
     marker = getattr(args, "self_marker", None)
     if marker:
@@ -273,19 +341,4 @@ def cmd_cost(args) -> int:
     out.update(ok=True, subagents=str(directory), resolvedBy=how)
     if getattr(args, "usd", False):
         price_rows(out)
-    if args.json:
-        print(json.dumps(out, indent=2, ensure_ascii=False))
-    else:
-        print(f"subagents: {directory}  ({how})")
-        print(f"{'agentType':<22}{'model':<26}{'req':>6}{'input':>9}{'cacheRead':>12}"
-              f"{'cacheWrite':>12}{'output':>9}{'maxWindow':>11}")
-        for g in out["groups"]:
-            print(f"{g['agentType']:<22}{g['model']:<26}{g['requests']:>6}{g['input']:>9}"
-                  f"{g['cacheRead']:>12}{g['cacheWrite']:>12}{g['output']:>9}{g['maxWindow']:>11}")
-        print("\nper model (tiers are never summed together):")
-        for m in out["byModel"]:
-            print(f"  {m['model']}: req={m['requests']} input={m['input']} cacheRead={m['cacheRead']}"
-                  f" cacheWrite={m['cacheWrite']} output={m['output']}")
-        for a in out["anomalies"]:
-            print(f"  ! {a['file']} line {a['line']}: {a['message']}")
-    return FINDINGS if out["anomalies"] else OK
+    return _print(out, args, how)
