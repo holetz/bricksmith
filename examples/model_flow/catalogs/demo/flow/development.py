@@ -77,8 +77,9 @@ def attrition_labels(ctx):
         .select(
             "account_id",
             "closing_date",
-            (f.col("closed_at").isNotNull() & (f.col("closed_at") > f.col("closing_date")) & (f.col("closed_at") <= horizon_end))
-            .cast("int")
+            # when/otherwise, never a boolean chain over a null closed_at: the label must be 0 or 1, never null
+            f.when((f.col("closed_at") > f.col("closing_date")) & (f.col("closed_at") <= horizon_end), 1)
+            .otherwise(0)
             .alias("attrited"),
         )
     )  # fmt: skip
