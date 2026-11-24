@@ -3,7 +3,7 @@ type: how-to
 title: "Data stability"
 description: "How to declare data-stability checks on tasks and read their dashboard-ready results."
 resource: "src/bricksmith/monitor/**"
-timestamp: "2026-11-23T01:23:04-03:00"
+timestamp: "2026-11-24T16:20:00-03:00"
 audience: both
 authority: current
 ---
@@ -57,6 +57,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
 | `refresh_periods` | `1` | The latest N periods are profiled again on every run (late or corrected data). |
 | `max_periods`, `max_segments` | `36`, `50` | Computation window and the most frequent segment values kept per segment set. |
+| `rules` | `[]` | [Limit rules](#limit-rules): an inline list, or the path of a TOML or JSON file, that picks limits or marks segments informational per dataset, column, segment, metric and date. |
 | `scope`, `prefix`, `dataset` | output's schema, `stability_`, output name | Where the tables live and how the dataset is named. |
 | `inference` | 10 bins, >20 distinct = numeric, 20 categories, >1000 text values skipped, exact-zero bin | Options of `"auto"`. |
 
@@ -111,6 +112,49 @@ red, and only the worse side counts.
 critical alert, or escalate an open warning to critical. Severity never goes down. `close_after` greens close the
 alert, and suppressed periods neither count nor break a run. An alert that reopens within `recurrence` periods is
 flagged. A red trend check opens a `trend` alert.
+
+## Limit rules
+
+`limits` and `column_limits` give one set of limits per metric (and column). When a segment is informational, a
+column is naturally volatile or one dataset needs stricter bounds, declare **rules** instead of scattering overrides
+in code. Rules are reviewable data: an inline `rules` list, or the path of a project file that git versions.
+
+```toml
+# monitoring/rules.toml
+[[rules]]
+id = "sales-psi-strict"      # reported on every result row it judges
+version = 2                  # the highest version wins a tie
+dataset = "sales_monthly"    # selectors: dataset, column, segment, metric (absent = any)
+metric = "psi"
+valid_from = "2026-01-01"    # inclusive ISO dates, compared with the period's date
+limits = { green = 0.05, red = 0.10 }
+
+[[rules]]
+id = "pilot-channels"
+informational_segments = ["channel=pilot"]   # or controlled_segments = [...]: every other segment is informational
+```
+
+```python
+"stability": {"period": "month", "segments": ["channel"], "rules": "monitoring/rules.toml"}
+```
+
+- **Specificity.** Among the rules that match a result, the highest score wins: a set `dataset` scores 4, `segment` 2
+  and `column` 1. Equal scores go to the highest `version`, then to the smallest `id`. `metric` is a required filter of
+  limits rules. With no matching rule, `column_limits`, `limits` and the defaults apply as before.
+- **Validity.** `valid_from` and `valid_to` are inclusive. A rule with a bound never matches a period whose text is
+  not a date, so a time-boxed rule cannot judge an undated period by accident. `limits = null` disables the
+  judgment (`no_rule`).
+- **Informational segments.** `informational_segments` lists segment values (`channel=pilot`: the canonical segment
+  key) that are computed and stored with the status `informational`: never a color, never in a trend, persistence
+  or alert, never counted by the gate. `controlled_segments` lists the segments that stay controlled and makes
+  every other segment informational. The whole table is never informational. The most specific informational rule
+  decides alone. Informational rows show their value on the dashboards, with empty limits.
+- **Audit.** Every result row carries `rule_id` and `rule_version` (empty and `0` without a rule); an informational
+  row carries the informational rule's. Changing a rule rewrites the window's results like any limits change.
+- Stability rules use `absolute` limits only, like `limits`. A table created before the rule columns gains them
+  through the `evolution` write option.
+
+See [decision 0021](../decisions/0021-limit-rules-selectors.md).
 
 ## Tables
 
@@ -176,5 +220,5 @@ fails with `stability_gate`, and `sales_report` is blocked.
   `max_periods`, `max_segments` and the column list proportionate.
 - Results compare periods within one binning version. Changing the bin-relevant configuration starts a new version,
   whose history begins at the next run.
-- Not yet covered: human alert actions, notification delivery, a maturation lag between monitoring and data periods,
-  per-segment rule specificity and revision reliability. They are captured as follow-up specifications.
+- Not yet covered: notification delivery, reading rules from a Delta table and revision reliability. They are
+  captured as follow-up specifications.

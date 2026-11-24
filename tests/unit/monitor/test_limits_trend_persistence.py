@@ -18,6 +18,8 @@ from bricksmith.monitor.limits import (
     YELLOW,
     Limits,
     classify,
+    compared_value,
+    judge,
     rank,
     worst,
 )
@@ -46,6 +48,48 @@ def test_limits_validation_and_round_trip() -> None:
         Limits.from_dict({"green": "x", "red": 1})
     limits = Limits.from_dict({"green": 0.2, "red": 0.5, "direction": "both"})
     assert Limits.from_dict(limits.to_dict()) == limits
+
+
+def test_absolute_limits_serialize_as_before_and_kinds_round_trip() -> None:
+    assert Limits(0.1, 0.25).to_dict() == {"center": 0.0, "direction": "higher", "green": 0.1, "red": 0.25}
+    relative = Limits.from_dict(
+        {"green": -0.15, "red": -0.30, "direction": "lower", "kind": "relative", "reference": "out_of_time"}
+    )
+    assert relative.to_dict()["kind"] == "relative" and Limits.from_dict(relative.to_dict()) == relative
+    control = Limits(2, 3, "both", kind="control")
+    assert "reference" not in control.to_dict() and Limits.from_dict(control.to_dict()) == control
+    with pytest.raises(MonitorError, match="kind must be"):
+        Limits(0.1, 0.2, kind="percent")
+    with pytest.raises(MonitorError, match="reference applies"):
+        Limits(2, 3, "both", kind="control", reference="development")
+
+
+def test_relative_limits_judge_the_relative_change() -> None:
+    drop = Limits(-0.15, -0.30, "lower", kind="relative")
+    assert compared_value(drop, 0.32, baseline=0.40) == pytest.approx(-0.20)
+    assert judge(0.36, drop, baseline=0.40)[0].status == GREEN
+    light, compared = judge(0.32, drop, baseline=0.40)
+    assert light.status == YELLOW and compared == pytest.approx(-0.20)
+    assert judge(0.26, drop, baseline=0.40)[0].status == RED
+    assert judge(-0.26, drop, baseline=-0.40)[0].status == GREEN  # |baseline| keeps the sign of the change
+    for baseline in (None, 0.0, math.nan):
+        light, compared = judge(0.3, drop, baseline=baseline)
+        assert light.status == NO_BASELINE and compared is None
+    assert judge(None, drop, baseline=0.4)[0].status == NO_DATA
+    assert judge(0.1, drop, baseline=0.4, count=3, min_count=10)[0].status == INSUFFICIENT_VOLUME
+
+
+def test_control_limits_judge_the_standardized_distance() -> None:
+    chart = Limits(2, 3, "both", kind="control")
+    assert compared_value(chart, 0.50, baseline=0.40, spread=0.04) == pytest.approx(2.5)
+    assert judge(0.47, chart, baseline=0.40, spread=0.04)[0].status == GREEN
+    assert judge(0.30, chart, baseline=0.40, spread=0.04)[0].status == YELLOW
+    assert judge(0.25, chart, baseline=0.40, spread=0.04)[0].status == RED
+    assert compared_value(chart, 0.4, baseline=0.4, spread=0.0) == 0.0
+    assert compared_value(chart, 0.5, baseline=0.4, spread=0.0) == math.inf
+    assert judge(0.5, chart, baseline=0.4, spread=None)[0].status == NO_BASELINE
+    assert compared_value(Limits(0.1, 0.25), 0.7, baseline=0.1) == 0.7
+    assert compared_value(None, 0.7) == 0.7
 
 
 def test_suppressed_states_win_in_order() -> None:

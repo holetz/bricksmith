@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from bricksmith.clients import Clients, import_extra
 from bricksmith.env import normalize_host, require_profile_defined
 from bricksmith.errors import BricksmithError, ConfigError, MissingExtraError
+from bricksmith.ops.redact import redact_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -146,6 +147,17 @@ def check_authenticated(context: ExecutionContext, clients: Clients) -> StageRes
     return StageResult("authenticated", State.PASSED, "host matches the expected workspace; identity resolved")
 
 
+_DETAIL_LIMIT = 300
+
+
+def _failure_detail(error: Exception) -> str:
+    """Return the failure class and a redacted single-line message, cut to a bounded length."""
+    message = " ".join(redact_text(str(error)).split())
+    if len(message) > _DETAIL_LIMIT:
+        message = message[:_DETAIL_LIMIT] + "..."
+    return f"{type(error).__name__}: {message}" if message else type(error).__name__
+
+
 def check_compute(clients: Clients) -> StageResult:
     """Run ``select 1`` on the selected compute."""
     try:
@@ -154,8 +166,8 @@ def check_compute(clients: Clients) -> StageResult:
             return StageResult("compute-tested", State.FAILED, "select 1 returned an unexpected value")
     except MissingExtraError as error:
         return StageResult("compute-tested", State.UNSUPPORTED, error.message)
-    except Exception as error:  # noqa: BLE001 - report the failure class only
-        return StageResult("compute-tested", State.FAILED, type(error).__name__)
+    except Exception as error:  # noqa: BLE001 - the class plus a redacted, bounded message
+        return StageResult("compute-tested", State.FAILED, _failure_detail(error))
     return StageResult("compute-tested", State.PASSED, "select 1 returned 1")
 
 

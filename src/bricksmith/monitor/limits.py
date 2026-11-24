@@ -1,7 +1,12 @@
 """Traffic-light limits: green, yellow and red bands plus explicit states for values that cannot be judged.
 
 Shared by data stability and model monitoring. ``classify`` never invents a color: a missing value, too few
-rows, a missing baseline or a missing rule each have their own suppressed state, ranked below green.
+rows, a missing baseline, a missing rule or an informational segment each have their own suppressed state, ranked
+below green.
+
+A limit has a kind that decides which number its bands judge: ``absolute`` judges the value itself,
+``relative`` the relative change ``(value - baseline) / |baseline|`` against a named reference, and
+``control`` the standardized distance ``(value - mean) / sd`` from a baseline of period values.
 """
 
 from __future__ import annotations
@@ -19,13 +24,18 @@ NO_DATA = "no_data"
 INSUFFICIENT_VOLUME = "insufficient_volume"
 NO_BASELINE = "no_baseline"
 NO_RULE = "no_rule"
+INFORMATIONAL = "informational"
 COLORS = (GREEN, YELLOW, RED)
-SUPPRESSED = (NO_DATA, INSUFFICIENT_VOLUME, NO_BASELINE, NO_RULE)
+SUPPRESSED = (NO_DATA, INSUFFICIENT_VOLUME, NO_BASELINE, NO_RULE, INFORMATIONAL)
 RANK: dict[str, int] = {GREEN: 0, YELLOW: 1, RED: 2}
 HIGHER = "higher"
 LOWER = "lower"
 BOTH = "both"
 DIRECTIONS = (HIGHER, LOWER, BOTH)
+ABSOLUTE = "absolute"
+RELATIVE = "relative"
+CONTROL = "control"
+KINDS = (ABSOLUTE, RELATIVE, CONTROL)
 
 
 def rank(status: str) -> int:
@@ -46,17 +56,28 @@ class Limits:
     ``higher``: green when ``value <= green``, yellow when ``value <= red``, red otherwise (``green <= red``).
     ``lower``: green when ``value >= green``, yellow when ``value >= red``, red otherwise (``green >= red``).
     ``both``: the distance ``|value - center|`` is judged like ``higher`` (``0 <= green <= red``).
+
+    ``kind`` decides what is judged (see :func:`compared_value`); ``reference`` names the baseline a ``relative``
+    limit compares with (its meaning belongs to the monitor that reads it).
     """
 
     green: float
     red: float
     direction: str = HIGHER
     center: float = 0.0
+    kind: str = ABSOLUTE
+    reference: str = ""
 
     def __post_init__(self) -> None:
-        """Reject an unknown direction or boundaries in the wrong order."""
+        """Reject an unknown direction or kind, a misplaced reference, or boundaries in the wrong order."""
         if self.direction not in DIRECTIONS:
             msg = f"limits direction must be one of {', '.join(DIRECTIONS)}, got {self.direction!r}"
+            raise MonitorError(msg)
+        if self.kind not in KINDS:
+            msg = f"limits kind must be one of {', '.join(KINDS)}, got {self.kind!r}"
+            raise MonitorError(msg)
+        if self.reference and self.kind != RELATIVE:
+            msg = f"limits reference applies to kind {RELATIVE!r} only, got kind {self.kind!r}"
             raise MonitorError(msg)
         if any(math.isnan(v) for v in (self.green, self.red, self.center)):
             msg = "limits cannot be NaN"
@@ -78,18 +99,31 @@ class Limits:
         return GREEN if judged <= self.green else YELLOW if judged <= self.red else RED
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form."""
-        return {"center": self.center, "direction": self.direction, "green": self.green, "red": self.red}
+        """Return the serializable form; ``kind`` and ``reference`` appear only when they are not the default."""
+        data: dict[str, Any] = {
+            "center": self.center,
+            "direction": self.direction,
+            "green": self.green,
+            "red": self.red,
+        }
+        if self.kind != ABSOLUTE:
+            data["kind"] = self.kind
+        if self.reference:
+            data["reference"] = self.reference
+        return data
 
     @classmethod
     def from_dict(cls, data: Any) -> Limits:  # noqa: ANN401 - user configuration
-        """Build limits from ``{green, red, direction?, center?}``, rejecting unknown keys."""
+        """Build limits from ``{green, red, direction?, center?, kind?, reference?}``, rejecting unknown keys."""
         if not isinstance(data, dict):
             msg = f"limits must be a mapping with green and red, got {data!r}"
             raise MonitorError(msg)
-        unknown = set(data) - {"green", "red", "direction", "center"}
+        unknown = set(data) - {"green", "red", "direction", "center", "kind", "reference"}
         if unknown or "green" not in data or "red" not in data:
-            msg = f"limits need green and red (and optionally direction, center); got keys {sorted(data)}"
+            msg = (
+                "limits need green and red (and optionally direction, center, kind, reference); "
+                f"got keys {sorted(data)}"
+            )
             raise MonitorError(msg)
         try:
             return cls(
@@ -97,6 +131,8 @@ class Limits:
                 red=float(data["red"]),
                 direction=str(data.get("direction", HIGHER)),
                 center=float(data.get("center", 0.0)),
+                kind=str(data.get("kind", ABSOLUTE)),
+                reference=str(data.get("reference") or ""),
             )
         except (TypeError, ValueError):
             msg = f"limits green, red and center must be numbers, got {data!r}"
@@ -142,22 +178,76 @@ def classify(  # noqa: PLR0913 - one keyword per suppression condition
     return Light(limits.band(value))
 
 
+def compared_value(
+    limits: Limits | None, value: float | None, *, baseline: float | None = None, spread: float | None = None
+) -> float | None:
+    """Return the number the bands of ``limits`` judge, or ``None`` when its baseline is missing.
+
+    ``absolute`` (or no limits): ``value``. ``relative``: ``(value - baseline) / |baseline|``; a missing or zero
+    baseline gives ``None``. ``control``: ``(value - baseline) / spread`` with ``baseline`` the mean and ``spread``
+    the standard deviation of the baseline values; a zero spread gives ``0`` on the mean and an infinite distance
+    elsewhere; a missing mean or spread gives ``None``.
+    """
+    if value is None or limits is None or limits.kind == ABSOLUTE:
+        return value
+    if baseline is None or not math.isfinite(baseline):
+        return None
+    if limits.kind == RELATIVE:
+        return None if baseline == 0 else (value - baseline) / abs(baseline)
+    if spread is None or not math.isfinite(spread):
+        return None
+    residual = value - baseline
+    tolerance = 1e-12 * max(1.0, abs(baseline))
+    if spread <= tolerance:
+        return 0.0 if abs(residual) <= tolerance else math.copysign(math.inf, residual)
+    return residual / spread
+
+
+def judge(  # noqa: PLR0913 - one keyword per suppression condition and baseline input
+    value: float | None,
+    limits: Limits | None,
+    *,
+    baseline: float | None = None,
+    spread: float | None = None,
+    count: int | None = None,
+    min_count: int = 0,
+    reason: str = "",
+) -> tuple[Light, float | None]:
+    """Classify ``value`` through its limit kind and return the light and the compared value.
+
+    A value whose relative or control baseline is missing is ``no_baseline`` (after ``no_data`` and
+    ``insufficient_volume``, as :func:`classify` orders them).
+    """
+    compared = compared_value(limits, value, baseline=baseline, spread=spread)
+    if value is not None and compared is None:
+        light = classify(value, limits, count=count, min_count=min_count, has_baseline=False, reason=reason)
+        return light, None
+    return classify(compared, limits, count=count, min_count=min_count, reason=reason), compared
+
+
 __all__ = [
+    "ABSOLUTE",
     "BOTH",
     "COLORS",
+    "CONTROL",
     "GREEN",
     "HIGHER",
+    "INFORMATIONAL",
     "INSUFFICIENT_VOLUME",
+    "KINDS",
     "LOWER",
     "NO_BASELINE",
     "NO_DATA",
     "NO_RULE",
     "RED",
+    "RELATIVE",
     "SUPPRESSED",
     "YELLOW",
     "Light",
     "Limits",
     "classify",
+    "compared_value",
+    "judge",
     "rank",
     "worst",
 ]

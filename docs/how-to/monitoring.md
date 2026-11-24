@@ -15,6 +15,8 @@ model. Definitions, formulas and edge cases are in the [BS-13 specification](htt
 
 To watch an ordinary table period by period, declared on the task that writes it and gated in the run, see
 [data stability](stability.md); it shares bins, PSI and references with this page.
+To monitor a model declared on the task that writes its predictions, with maturation-aware periods, a run record
+and dashboard views, see [model monitoring on tasks](model-monitoring.md).
 
 ## Fit a reference, compare a window
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bricksmith.errors import BricksmithError, PlanError, ValidationError
+from bricksmith.features.record import collecting
 from bricksmith.ops.events import (
     RUN_FINISHED,
     RUN_STARTED,
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bricksmith.context import ExecutionContext
+    from bricksmith.features.record import EngineChoice
     from bricksmith.graph import TaskGraph
     from bricksmith.ops.events import EventSink
     from bricksmith.plan import Plan
@@ -92,13 +94,15 @@ class _Worker:
             if events:
                 events.emit(TASK_STARTED, task_id=entry.task_id, attempt=attempts, targets=_targets(entry))
             ctx = TaskContext(entry, self.execution, self.table_io, self.granted, self.externals)
+            choices: list[EngineChoice] = []
             try:
-                function(ctx)
+                with collecting() as choices:
+                    function(ctx)
             except Exception as error:  # noqa: BLE001 - task code may raise anything
                 if attempts >= self.retry.max_attempts or isinstance(error, BricksmithError):
                     return TaskResult(
                         entry.task_id, FAILED, "task raised", attempts, _error(error), (), tuple(ctx.writes),
-                        time.monotonic() - started,
+                        time.monotonic() - started, feature_engines=_engines(choices),
                     )  # fmt: skip
                 if events:
                     events.emit(
@@ -107,24 +111,43 @@ class _Worker:
                 self.sleep(wait_for)
                 wait_for *= self.retry.backoff
             else:
-                return self._observe(entry, ctx, attempts, started)
+                return self._observe(entry, ctx, attempts, started, _engines(choices))
 
-    def _observe(self, entry: PlanEntry, ctx: TaskContext, attempts: int, started: float) -> TaskResult:
-        """Run the declared stability checks after a successful task; the gate may still fail the task."""
-        outcomes: tuple[dict[str, object], ...] = ()
+    def _observe(
+        self,
+        entry: PlanEntry,
+        ctx: TaskContext,
+        attempts: int,
+        started: float,
+        engines: tuple[dict[str, object], ...] = (),
+    ) -> TaskResult:
+        """Run the declared stability and model monitoring checks after a successful task; a gate may fail it."""
+        stability: tuple[dict[str, object], ...] = ()
+        models: tuple[dict[str, object], ...] = ()
+        reason, failure = "", None
         if any("stability" in t.options for t in entry.targets):
             from bricksmith.monitor.stability.hook import run_stability  # noqa: PLC0415 - only for declaring tasks
 
             found, failure = run_stability(ctx, self.run_id)
-            outcomes = tuple(o.to_dict() for o in found)
-            if failure is not None:
-                return TaskResult(
-                    entry.task_id, FAILED, "stability check failed", attempts, _error(failure), (),
-                    tuple(ctx.writes), time.monotonic() - started, outcomes,
-                )  # fmt: skip
+            stability = tuple(o.to_dict() for o in found)
+            reason = "stability check failed" if failure else ""
+        if any("model_monitoring" in t.options for t in entry.targets):
+            from bricksmith.monitor.model.hook import run_model_monitoring  # noqa: PLC0415 - only for declaring tasks
+
+            measured, model_failure = run_model_monitoring(ctx, self.run_id)
+            models = tuple(o.to_dict() for o in measured)
+            if failure is None and model_failure is not None:
+                reason, failure = "model monitoring check failed", model_failure
+        state, error = (FAILED, _error(failure)) if failure is not None else (SUCCEEDED, None)
         return TaskResult(
-            entry.task_id, SUCCEEDED, "", attempts, None, (), tuple(ctx.writes), time.monotonic() - started, outcomes
+            entry.task_id, state, reason, attempts, error, (), tuple(ctx.writes), time.monotonic() - started,
+            stability, models, engines,
         )  # fmt: skip
+
+
+def _engines(choices: list[EngineChoice]) -> tuple[dict[str, object], ...]:
+    """Return the feature engine choices a task recorded, serializable."""
+    return tuple(c.to_dict() for c in choices)
 
 
 def _targets(entry: PlanEntry) -> tuple[str, ...]:
@@ -138,6 +161,8 @@ def _emit_finished(events: RunEvents | None, entry: PlanEntry, result: TaskResul
     fields: dict[str, object] = {"blocked_by": list(result.blocked_by), "reason": result.reason}
     if result.stability:
         fields["stability"] = [dict(s) for s in result.stability]
+    if result.model_monitoring:
+        fields["model_monitoring"] = [dict(m) for m in result.model_monitoring]
     events.emit(
         TASK_FINISHED,
         task_id=result.task_id,

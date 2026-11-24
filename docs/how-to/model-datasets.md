@@ -3,7 +3,7 @@ type: how-to
 title: "Model datasets"
 description: "How to build population, feature, label and training or prediction datasets as ordinary tasks."
 resource: "src/bricksmith/mlops/**"
-timestamp: "2026-10-14T00:21:17-03:00"
+timestamp: "2026-11-23T09:27:03-03:00"
 audience: both
 authority: current
 ---
@@ -14,6 +14,9 @@ Population, features, labels and training/prediction datasets are built by ordin
 functions, so they share the project's discovery, graph and runner with data, quality and
 monitoring tasks. A model can live in the same schema as its feature tasks or in a dedicated one;
 nothing here depends on a catalog, schema or folder name.
+
+For closing-based models built on the [feature store](feature-store.md), with named samples, an exclusion cascade
+and one spine for training and scoring, see [model development stages](model-development.md).
 
 ## Explicit metadata
 

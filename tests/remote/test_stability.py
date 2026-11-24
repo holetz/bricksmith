@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import shutil
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,7 @@ from bricksmith.graph import load_graph
 from bricksmith.monitor.stability import MemoryStore, check, parse_config, view_statements
 from bricksmith.monitor.stability.profile import fit_rows_binning, profile_rows
 from bricksmith.monitor.stability.spark import fit_spark_binning, profile_spark
+from bricksmith.monitor.stability.tables import SCHEMAS
 from bricksmith.plan import build_plan
 from bricksmith.runner import apply_plan
 from bricksmith.storage import SparkTableIO
@@ -153,3 +155,66 @@ def test_declared_stability_gates_the_run_and_feeds_the_views(
     assert [r["status"] for r in status] == ["red"]
     assert count(spark, t("stability_open_alerts")) == len(open_alerts)
     assert {r["period"] for r in spark.table(t("stability_latest")).collect()} == {"2026-06"}
+
+
+RULE_COLUMNS = ("rule_id", "rule_version")
+RULED_TASKS = """
+from bricksmith.tasks import task
+
+DDL = "month STRING, region STRING, amount DOUBLE"
+
+
+def rows():
+    out = []
+    for m, month in enumerate(("2026-01", "2026-02", "2026-03")):
+        for i in range(60):
+            high = (i % 2 == 0) == (m == 2)  # the regions swap in the last month; the whole table stays the same
+            out.append((month, "n" if i % 2 == 0 else "s", float((i // 2) % 10 + (20 if high else 0))))
+    return out
+
+
+@task(kind="table", outputs="scores", metadata={{"write": "overwrite", "stability": {declaration!r}}})
+def scores(ctx):
+    ctx.write("scores", ctx.io.spark.createDataFrame(rows(), DDL))
+"""
+
+
+def test_informational_segments_never_gate_and_old_tables_gain_the_rule_columns(
+    remote_context: ExecutionContext, remote_clients: Clients, test_schema: str, tmp_path: Path
+) -> None:
+    spark = remote_clients.spark()
+    catalog = remote_context.catalog or ""
+    base = {"period": "month", "segments": ["region"], "baseline": "previous", "min_rows": 10}
+    base |= {"gate": {"fail_on": ["red"]}, "persistence": {"immediate_red": True}}
+    rules = [{"id": "pilot", "version": 3, "informational_segments": ["region=n", "region=s"]}]
+
+    def t(prefix: str, name: str) -> str:
+        return f"{catalog}.{test_schema}.{prefix}{name}"
+
+    def run(prefix: str, declaration: dict[str, Any]) -> Any:  # noqa: ANN401
+        project = tmp_path / prefix
+        source = project / "catalogs/demo/ml/scores.py"
+        source.parent.mkdir(parents=True)
+        text = RULED_TASKS.format(declaration={**declaration, "prefix": prefix})
+        source.write_text(textwrap.dedent(text), encoding="utf-8")
+        context = dataclasses.replace(remote_context, catalogs={"demo": catalog}, schemas={"ml": test_schema})
+        graph = load_graph(project, context=context)
+        plan = build_plan(graph)
+        assert not plan.errors
+        return apply_plan(plan, graph, project_root=project, execution=context, table_io=SparkTableIO(spark))
+
+    plain = run("plain_", base)
+    assert plain.results[0].state == "failed" and plain.results[0].error["code"] == "stability_gate"  # type: ignore[index]
+
+    columns = ", ".join(f"`{c}` {k}" for c, k in SCHEMAS["results"].items() if c not in RULE_COLUMNS)
+    spark.sql(f"CREATE TABLE {t('ruled_', 'results')} ({columns})")  # a table as it was before the rule columns
+    ruled = run("ruled_", {**base, "rules": rules})
+    assert ruled.ok, ruled.to_json()
+    assert ruled.results[0].stability[0]["red"] == 0 and ruled.results[0].stability[0]["open_alerts"] == 0
+    table = spark.table(t("ruled_", "results"))
+    assert set(RULE_COLUMNS) <= set(table.columns)
+    shown = table.where("status = 'informational' AND metric = 'psi'").collect()
+    assert shown and {r["rule_id"] for r in shown} == {"pilot"} and {r["rule_version"] for r in shown} == {3}
+    whole = table.where("segment = '' AND metric = 'psi' AND period = '2026-03'").collect()
+    assert whole and all(r["status"] != "red" and r["rule_id"] in ("", None) for r in whole)
+    assert count(spark, t("ruled_", "alerts")) == 0

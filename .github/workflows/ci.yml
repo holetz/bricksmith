@@ -13,13 +13,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The JVM feature kernel (decision 0019): the Scala suite runs the shared golden vectors, and the JAR is
+  # handed to the checks job, which ships it inside the wheel.
+  kernel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: sbt
+      - uses: sbt/setup-sbt@v1.5.16
+      - name: Build and test the kernel
+        run: python3 scripts/build_kernel.py
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - name: Kernel parity on a classic local Spark session
+        run: uv run --isolated --with pyspark==4.0.1 pytest tests/jvm -q -rs
+        env:
+          BRICKSMITH_REQUIRE_KERNEL: "true"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: kernel-jar
+          path: src/bricksmith/features/_jars/bricksmith-kernel.jar
+          if-no-files-found: error
+
   checks:
+    needs: kernel
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: kernel-jar
+          path: src/bricksmith/features/_jars
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
@@ -35,8 +68,8 @@ jobs:
         run: uv run pytest
       - name: Build the library
         run: uv build
-      - name: Verify wheel and sdist in clean environments (heavy integrations absent)
-        run: python3 scripts/verify_dist.py --dist dist
+      - name: Verify wheel and sdist in clean environments (heavy integrations absent, kernel JAR packaged)
+        run: python3 scripts/verify_dist.py --dist dist --require-kernel
       # The private denylist never leaves the developer machine; CI runs the generic patterns
       # and gitleaks as a second line behind the local pre-commit and pre-push hooks.
       - name: Leak gate (generic patterns)

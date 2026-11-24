@@ -11,6 +11,11 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+# The JVM kernel: sbt outputs and the JAR scripts/build_kernel.py places for the wheel
+jvm/target/
+jvm/project/target/
+jvm/project/project/
+src/bricksmith/features/_jars/
 
 # Databricks and local tools
 .databricks/
