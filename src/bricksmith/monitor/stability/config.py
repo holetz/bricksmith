@@ -11,6 +11,7 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.infer import InferenceOptions
 from bricksmith.monitor.limits import ABSOLUTE, BOTH, HIGHER, Limits
 from bricksmith.monitor.persistence import PersistencePolicy
+from bricksmith.monitor.rules import LimitRule, Resolution, parse_rules, resolve
 from bricksmith.monitor.trend import TrendPolicy
 
 PSI = "psi"
@@ -47,7 +48,7 @@ TABLES = ("binnings", "profiles", "results", "alerts", "runs")
 KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "persistence", "gate", "min_rows", "refresh_periods",
-    "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon",
+    "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules",
 })  # fmt: skip
 
 
@@ -148,6 +149,7 @@ class StabilityConfig:
     prefix: str = "stability_"
     inference: InferenceOptions = field(default_factory=InferenceOptions)
     epsilon: float = 1e-4
+    rules: tuple[LimitRule, ...] = ()
 
     @property
     def auto(self) -> bool:
@@ -162,6 +164,16 @@ class StabilityConfig:
         """Return the limits of ``metric`` for ``column``: a column override first, then the metric default."""
         override = self.column_limits.get(column, {})
         return override[metric] if metric in override else self.limits.get(metric)
+
+    def resolve(self, *, dataset: str, column: str, segment: str, metric: str, period_date: str | None) -> Resolution:
+        """Return the rules that apply to one result (see :func:`bricksmith.monitor.rules.resolve`)."""
+        return resolve(
+            self.rules, dataset=dataset, column=column, segment=segment, metric=metric, period_date=period_date
+        )
+
+    def limits_of(self, found: Resolution, metric: str, column: str) -> Limits | None:
+        """Return the limits of a result: its limits rule when one applies, else the declaration's."""
+        return found.limits_rule.limits if found.limits_rule else self.limits_for(metric, column)
 
     def excluded(self) -> tuple[str, ...]:
         """Return the columns never monitored: the declared exclusions, the period, segments and weight."""
@@ -184,7 +196,13 @@ class StabilityConfig:
         return hashlib.sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form."""
+        """Return the serializable form (``rules`` only when declared, so existing fingerprints stay)."""
+        data = self._base_dict()
+        if self.rules:
+            data["rules"] = [r.to_dict() for r in self.rules]
+        return data
+
+    def _base_dict(self) -> dict[str, Any]:
         return {
             "baseline": self.baseline.to_dict(),
             "column_limits": {
@@ -367,6 +385,7 @@ def parse_config(data: object) -> StabilityConfig:
             prefix=prefix,
             inference=_inference(data.get("inference")),
             epsilon=float(data.get("epsilon", 1e-4)),
+            rules=parse_rules(data.get("rules"), owner="stability"),
         )
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"

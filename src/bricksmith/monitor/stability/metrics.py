@@ -20,8 +20,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN
-from bricksmith.monitor.limits import COLORS, GREEN, RED, YELLOW, Light, classify, rank
+from bricksmith.monitor.limits import COLORS, GREEN, INFORMATIONAL, NO_RULE, RED, YELLOW, Light, classify, rank
 from bricksmith.monitor.persistence import CRITICAL, PersistencePolicy, alert_spans
+from bricksmith.monitor.rules import INFORMATIONAL_REASON
 from bricksmith.monitor.stability.config import (
     DISTRIBUTION_METRICS,
     FIXED,
@@ -171,7 +172,12 @@ def _result(  # noqa: PLR0913 - one keyword per result field
     baseline_rows: float | None = None,
     in_baseline: bool = False,
 ) -> dict[str, Any]:
-    limits = ctx.config.limits_for(metric, column)
+    found = ctx.config.resolve(
+        dataset=ctx.dataset, column=column, segment=segment, metric=metric, period_date=period_date(period)
+    )
+    limits = None if found.informational else ctx.config.limits_of(found, metric, column)
+    if found.informational and light.status in (*COLORS, NO_RULE):
+        light = Light(INFORMATIONAL, INFORMATIONAL_REASON)
     row: dict[str, Any] = {
         "dataset": ctx.dataset, "version": ctx.binning.version, "period": period, "period_date": period_date(period),
         "segment": segment, "segment_label": segment_label(segment), "column": column, "metric": metric,
@@ -181,7 +187,8 @@ def _result(  # noqa: PLR0913 - one keyword per result field
         "rows": rows, "baseline_rows": _finite(baseline_rows), "in_baseline": in_baseline,
         "baseline_kind": ctx.config.baseline.kind, "baseline_label": ctx.config.baseline.label,
         "trend_status": "", "trend_expected": None, "trend_deviation": None,
-        "run_id": ctx.run_id, "computed_at": ctx.computed_at,
+        "run_id": ctx.run_id, "computed_at": ctx.computed_at, "rule_id": found.rule_id,
+        "rule_version": found.rule_version,
     }  # fmt: skip
     _trend(ctx, row, value, light, limits.direction if limits else "")
     return row
@@ -207,9 +214,21 @@ def _trend(ctx: _Context, row: dict[str, Any], value: float | None, light: Light
 
 
 def _judge(  # noqa: PLR0913 - the metric and its suppression inputs
-    ctx: _Context, metric: str, column: str, value: float | None, *, rows: int, has_baseline: bool, reason: str = ""
+    ctx: _Context,
+    metric: str,
+    column: str,
+    value: float | None,
+    *,
+    where: tuple[str, str],
+    rows: int,
+    has_baseline: bool,
+    reason: str = "",
 ) -> Light:
-    limits = ctx.config.limits_for(metric, column)
+    period, segment = where
+    found = ctx.config.resolve(
+        dataset=ctx.dataset, column=column, segment=segment, metric=metric, period_date=period_date(period)
+    )
+    limits = ctx.config.limits_of(found, metric, column)
     needs_volume = metric in DISTRIBUTION_METRICS
     if not has_baseline and value is None:
         value = 0.0  # nothing to compare with: let ``no_baseline`` (or too few rows) explain the gap
@@ -264,7 +283,7 @@ def _table_results(  # noqa: PLR0913, PLR0917 - the period's full context
     out = [_result(ctx, metric=ROW_COUNT, value=float(rows), current=float(rows), light=Light("no_rule"), **common)]
     base_rows = sum(history.rows[segment][p] for p in usable) / len(usable) if usable else None
     change = rows / base_rows - 1 if base_rows else None
-    light = _judge(ctx, VOLUME_CHANGE, TABLE, change, rows=rows, has_baseline=bool(usable))
+    light = _judge(ctx, VOLUME_CHANGE, TABLE, change, where=(period, segment), rows=rows, has_baseline=bool(usable))
     out.append(
         _result(
             ctx, metric=VOLUME_CHANGE, value=change, light=light, current=float(rows), baseline=base_rows,
@@ -275,7 +294,9 @@ def _table_results(  # noqa: PLR0913, PLR0917 - the period's full context
         weight = history.weights[segment][period]
         base = sum(history.weights[segment][p] for p in usable) / len(usable) if usable else None
         wchange = weight / base - 1 if base else None
-        light = _judge(ctx, WEIGHT_CHANGE, TABLE, wchange, rows=rows, has_baseline=bool(usable))
+        light = _judge(
+            ctx, WEIGHT_CHANGE, TABLE, wchange, where=(period, segment), rows=rows, has_baseline=bool(usable)
+        )
         out.append(
             _result(
                 ctx, metric=WEIGHT_CHANGE, value=wchange, light=light, current=weight, baseline=base,
@@ -297,6 +318,7 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
     in_baseline: bool,
 ) -> list[dict[str, Any]]:
     segment, column = key
+    where = (period, segment)
     series = history.bins.get(key, {})
     current_bins = series.get(period, {})
     rows = history.rows[segment][period]
@@ -312,23 +334,23 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
     psi_value = _psi(ctx, out, (period, segment, column), current_bins, base_bins if has_base else {})
     results = [
         _result(ctx, metric=PSI, value=psi_value, light=_judge(
-            ctx, PSI, column, psi_value, rows=rows, has_baseline=has_base), **common),
+            ctx, PSI, column, psi_value, where=where, rows=rows, has_baseline=has_base), **common),
         _result(ctx, metric=NULL_RATE, value=cur.null_rate, current=cur.null_rate,
                 baseline=base.null_rate if base else None, light=_judge(
-            ctx, NULL_RATE, column, cur.null_rate, rows=rows, has_baseline=True), **common),
+            ctx, NULL_RATE, column, cur.null_rate, where=where, rows=rows, has_baseline=True), **common),
         _delta(ctx, NULL_RATE_DELTA, cur.null_rate, base.null_rate if base else None, rows, has_base, common),
         _result(ctx, metric=UNSEEN_RATE, value=cur.outside_rate, current=cur.outside_rate,
                 baseline=base.outside_rate if base else None, light=_judge(
-            ctx, UNSEEN_RATE, column, cur.outside_rate, rows=rows, has_baseline=True), **common),
+            ctx, UNSEEN_RATE, column, cur.outside_rate, where=where, rows=rows, has_baseline=True), **common),
         _delta(ctx, UNSEEN_RATE_DELTA, cur.outside_rate, base.outside_rate if base else None, rows, has_base, common),
     ]  # fmt: skip
     if numeric:
         results.append(
             _result(ctx, metric=MEAN, value=cur.mean, current=cur.mean, baseline=base.mean if base else None,
-                    light=_judge(ctx, MEAN, column, cur.mean, rows=rows, has_baseline=True), **common)
+                    light=_judge(ctx, MEAN, column, cur.mean, where=where, rows=rows, has_baseline=True), **common)
         )  # fmt: skip
         shift, reason = _shift(cur, base)
-        light = _judge(ctx, MEAN_SHIFT, column, shift, rows=rows, has_baseline=has_base, reason=reason)
+        light = _judge(ctx, MEAN_SHIFT, column, shift, where=where, rows=rows, has_baseline=has_base, reason=reason)
         results.append(
             _result(ctx, metric=MEAN_SHIFT, value=shift, current=cur.mean, baseline=base.mean if base else None,
                     light=light, **common)
@@ -346,7 +368,8 @@ def _delta(  # noqa: PLR0913, PLR0917 - the metric and its context
     common: dict[str, Any],
 ) -> dict[str, Any]:
     value = current - baseline if baseline is not None else None
-    light = _judge(ctx, metric, common["column"], value, rows=rows, has_baseline=has_base)
+    where = (common["period"], common["segment"])
+    light = _judge(ctx, metric, common["column"], value, where=where, rows=rows, has_baseline=has_base)
     return _result(ctx, metric=metric, value=value, current=current, baseline=baseline, light=light, **common)
 
 
