@@ -23,3 +23,4 @@ hosts, profile names or identities.
 * [Model development stages evidence: free environment](model-stages-free.md) — Remote test evidence for model development stages (spec 79) on the free Databricks environment.
 * [Model evaluation evidence: free environment](model-evaluation-free.md) — Remote test evidence for model evaluation and technical model documentation (spec 80) on the free Databricks environment.
 * [Credit-model performance checks evidence: free environment](model-credit-free.md) — Remote test evidence for the credit-model performance checks of model monitoring (spec 82) on the free Databricks environment.
+* [Model monitoring report evidence: free environment](model-report-free.md) — Remote test evidence for the model monitoring report and governance views (spec 83) on the free Databricks environment.

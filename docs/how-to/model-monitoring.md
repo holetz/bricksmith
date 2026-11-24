@@ -353,7 +353,50 @@ The governance views answer the questions a review asks:
   closed, with the days between;
 - `<prefix>response_summary`: per model, the alerts, how many were acted on and resolved, and the mean days to the
   first action and to resolution;
-- `<prefix>actions_latest`: the latest action of each alert.
+- `<prefix>actions_latest`: the latest action of each alert;
+- `<prefix>coverage_latest`: per declared model, whether it was monitored for the latest closing (the greatest
+  monitoring period of any model), its own latest period and the days since its last finished run;
+- `<prefix>coverage_summary`: how many declared models there are, how many were monitored for the latest closing and
+  the share (`share_monitored`);
+- `<prefix>open_alerts_by_severity`: the open alerts per model and severity, with the oldest opened period;
+- `<prefix>alert_recurrence`: per model and metric, the alerts, how many recurred and the most periods one was flagged;
+- `<prefix>acceptance_summary`: per model, the active, expired and superseded acceptances and the days to the next
+  expiry.
+
+A model is **declared** when it is listed with `--declared` or has any run of any status, so a model whose runs only
+failed counts as not monitored. A model that never ran counts only when you list it:
+
+```bash
+bricksmith model-monitoring views --scope main.monitoring --declared churn,fraud,limit
+```
+
+Time to resolve is in `alert_response` and `response_summary`.
+
+## The monitoring report
+
+One self-contained report per model shows what a reviewer needs on one page:
+
+```bash
+bricksmith model-monitoring report --model churn --scope main.monitoring --out reports/
+bricksmith model-monitoring report --model churn --state exported.json --format md --out reports/
+```
+
+`--scope` reads the tables of that schema through the selected context; `--state` reads an exported
+`{"results": [...], "runs": [...], "actions": [...]}` file offline. Both write `<model>.html` and `<model>.md` (or
+one of them with `--format`). Only results of finished runs are read, the latest per model version and period.
+
+- The **period axis** is the sorted list of monitoring periods found in the data: nothing is hard-coded, and a
+  period with no result stays a gap.
+- There is **one tab or section per metric family**, and one series per metric, column and segment.
+- Each series shows its **development and out-of-time reference values** beside the monitored periods: as dashed
+  lines in the chart and as the first columns of its table.
+- Each point carries its light with a text label, and a result with no value shows the reason it has none.
+- The **alerts** tab lists the alerts with their state and the human action on them (analysis, closure or risk
+  acceptance with its author, reason and `valid_until`), evaluated on `--as-of` (default today).
+
+The HTML needs no script and loads nothing from outside, so it opens offline and in a review pane. In Python,
+`bricksmith.monitor.model.report.build_report` returns the report as data and `render_html` and `render_markdown`
+render it.
 
 ## The gate and the run report
 
