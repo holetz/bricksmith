@@ -140,7 +140,9 @@ def test_model_kinds_are_allowed_when_asked() -> None:
         "metric": "ks",
         "limits": {"green": -0.1, "red": -0.3, "direction": "lower", "kind": "relative"},
     }
-    assert parse_rules([relative], kinds=("absolute", "relative", "control"))[0].limits.kind == "relative"
+    found = parse_rules([relative], kinds=("absolute", "relative", "control"))[0].limits
+    assert found is not None
+    assert found.kind == "relative"
 
 
 def test_files_load_to_the_same_rules_as_the_inline_list(tmp_path: Path) -> None:
