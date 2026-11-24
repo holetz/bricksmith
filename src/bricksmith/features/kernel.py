@@ -54,6 +54,9 @@ ROW_TYPE = "struct<p:int,d:int,v:array<double>>"
 RETURN_TYPE = f"array<{ROW_TYPE}>"
 
 #: Registration paths, in the order :func:`probe` tries them (the Unity Catalog path only when a function is named).
+#: Measured (docs/project/evidence/features-free.md): serverless runs only the Unity Catalog function and refuses the
+#: session registration, while a classic session registers it; a named function is the explicit choice, so it goes
+#: first, and the session path costs no failed sandbox start where a function exists.
 UNITY_CATALOG = "unity-catalog"
 SESSION = "session"
 PROBE_ORDER = (UNITY_CATALOG, SESSION)
