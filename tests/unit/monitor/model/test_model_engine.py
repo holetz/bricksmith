@@ -322,6 +322,35 @@ def test_shift_months_keeps_the_period_format() -> None:
     assert shift_months("Q1-2025", 1) is None and shift_months("", 1) is None
 
 
+@pytest.mark.parametrize(
+    ("source", "months", "expected"),
+    [
+        ("2025-03-31", 1, "2025-02-28"),  # 31 -> 28
+        ("2024-03-31", 1, "2024-02-29"),  # 31 -> 29 in a leap year
+        ("2025-04-30", 1, "2025-03-31"),  # 30 -> 31
+        ("2025-05-31", 1, "2025-04-30"),  # 31 -> 30
+        ("2025-02-28", 1, "2025-01-31"),  # 28 -> 31
+        ("2024-02-29", 1, "2024-01-31"),  # leap 29 -> 31
+        ("2024-02-29", 12, "2023-02-28"),  # leap 29 -> 28
+        ("2025-02-28", 12, "2024-02-29"),  # 28 -> leap 29, still a month end
+        ("2025-06-30", 3, "2025-03-31"),  # several months
+        ("2025-08-31", 6, "2025-02-28"),
+        ("20250430", 1, "20250331"),  # compact format
+        ("2025-04-15", 1, "2025-03-15"),  # mid-month days keep the day
+        ("2025-03-30", 1, "2025-02-28"),  # mid-month day clamps down
+    ],
+)
+def test_shift_months_follows_the_month_end(source: str, months: int, expected: str) -> None:
+    assert shift_months(source, months) == expected
+
+
+def test_month_end_closings_resolve_their_data_period() -> None:
+    closings = ["2025-01-31", "2025-02-28", "2025-03-31", "2025-04-30", "2025-05-31"]
+    found = {c: resolve_data_period(closings, c, Lag(1, "months")) for c in closings[1:]}
+    assert found == {"2025-02-28": "2025-01-31", "2025-03-31": "2025-02-28",
+                     "2025-04-30": "2025-03-31", "2025-05-31": "2025-04-30"}  # fmt: skip
+
+
 def test_resolve_data_period_by_unit() -> None:
     periods = ["2025-01", "2025-03", "2025-04"]
     assert resolve_data_period(periods, "2025-04", Lag(1, "periods")) == "2025-03"
