@@ -1,0 +1,63 @@
+# Development declaration of the attrition model: samples, label, exclusion cascade, grades and feature lookups.
+# Lookup tables are the short output names of this schema; the tasks bind them to the physical tables of the run.
+model = "attrition"
+entity_keys = ["account_id"]
+closing = "closing_date"
+frequency = "monthly"
+as_of = "2025-12-31"     # the latest closing whose performance is observed
+
+[samples.dev]
+role = "train"
+start = "2024-07-31"
+end = "2024-12-31"
+
+[samples.oot]
+role = "out_of_time"
+start = "2025-02-28"
+end = "2025-04-30"
+
+[samples.live]
+role = "prediction"
+start = "2025-07-31"
+end = "2025-12-31"
+
+[label]
+name = "attrited"
+horizon = 3
+definition = "the account closes within the next three closings"
+
+[[exclusions]]           # ordered; the first rule met is the row's main reason
+name = "closed"
+where = { column = "closed", op = "eq", value = true }
+
+[[exclusions]]
+name = "new_account"
+where = { column = "tenure_months", op = "lt", value = 3 }
+
+[[bands]]
+name = "A"
+upper = 0.03
+
+[[bands]]
+name = "B"
+upper = 0.08
+
+[[bands]]
+name = "C"
+upper = 0.2
+
+[[bands]]
+name = "D"
+
+[[lookups]]              # every account feature at the observation closing
+table = "account_features"
+
+[[lookups]]              # two account features three closings earlier
+table = "account_features"
+features = ["balance_mean_3p", "days_past_due_max_3p"]
+offset = 3
+prefix = "prev3_"
+
+[[lookups]]              # the customer grain, joined through the spine's customer_id
+table = "customer_features"
+keys = ["customer_id"]
