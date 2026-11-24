@@ -141,7 +141,7 @@ def _days(end: str | None, start: str | None) -> int | None:
     return (date.fromisoformat(end[:10]) - date.fromisoformat(start[:10])).days
 
 
-def _governed() -> sqlite3.Connection:
+def _governed(declared: tuple[str, ...] = ()) -> sqlite3.Connection:
     """Return a database with the views over a month of alerts, runs and actions (dates as text)."""
     db = sqlite3.connect(":memory:")
     db.create_function("datediff", 2, _days)
@@ -173,7 +173,7 @@ def _governed() -> sqlite3.Connection:
          "created_at": "2026-03-02T00:00:00"},
         {**action, "action_id": "x5", "alert_id": "c", "action": "analysis", "created_at": "2026-03-04T00:00:00"},
     ])  # fmt: skip
-    for statement in view_statements("main"):
+    for statement in view_statements("main", declared=declared):
         db.execute(statement.replace("CREATE OR REPLACE VIEW", "CREATE VIEW"))
     return db
 
@@ -208,3 +208,58 @@ def test_lag_columns_are_additive_result_columns() -> None:
     assert "lag" not in KEYS[RESULTS]
     row = {"model": "m", "lag": 2, "lag_unit": "months"}
     assert merge_rows(RESULTS, [], [row])[0]["lag_unit"] == "months"
+
+
+def test_coverage_counts_declared_models_that_have_no_results_for_the_latest_closing() -> None:
+    db = _governed(declared=("n", "o'brien"))
+    _insert(db, RUNS, [{"run_id": "n1", "model": "late", "status": "failed", "finished_at": "2026-03-02T00:00:00"}])
+    found = db.execute(
+        "SELECT model, latest_closing, latest_period, monitored FROM main.model_monitoring_coverage_latest ORDER BY 1"
+    ).fetchall()
+    assert found == [
+        ("late", "2026-02", None, 0),  # has a failed run only: declared by its run, never monitored
+        ("m", "2026-02", "2026-02", 1),
+        ("n", "2026-02", None, 0),
+        ("o'brien", "2026-02", None, 0),  # a quote in a declared name is escaped, not injected
+    ]
+    summary = db.execute("SELECT latest_closing, declared, monitored, share_monitored FROM "
+                         "main.model_monitoring_coverage_summary").fetchall()  # fmt: skip
+    assert summary == [("2026-02", 4, 1, 0.25)]
+
+
+def test_a_model_one_period_behind_is_not_monitored_for_the_latest_closing() -> None:
+    db = _governed()
+    _insert(db, RUNS, [{"run_id": "b1", "model": "b", "status": "success", "finished_at": "2026-03-02T00:00:00"}])
+    _insert(db, RESULTS, [{"model": "b", "model_version": "1", "run_id": "b1", "monitoring_period": "2026-01",
+                           "light": "green", "light_rank": 0}])  # fmt: skip
+    found = db.execute("SELECT model, monitored, days_since_run > 0 FROM main.model_monitoring_coverage_latest "
+                       "ORDER BY 1").fetchall()  # fmt: skip
+    assert found == [("b", 0, 1), ("m", 1, 1)]
+
+
+def test_governance_summaries_count_severity_recurrence_and_acceptances() -> None:
+    db = _governed()
+    open_by = db.execute("SELECT model, severity, open_alerts FROM main.model_monitoring_open_alerts_by_severity")
+    assert open_by.fetchall() == []  # the fixture alerts carry no severity and its latest run closed a
+    _insert(db, ALERTS, [
+        {"model": "m", "model_version": "1", "run_id": "r2", "alert_id": "z", "monitoring_period": "2026-01",
+         "metric": "psi", "severity": "critical", "kind": "persistence", "state": "open", "recurrence": 1,
+         "flagged_periods": 3, "opened_period": "2026-01"},
+        {"model": "m", "model_version": "1", "run_id": "r2", "alert_id": "y", "monitoring_period": "2026-01",
+         "metric": "psi", "severity": "warning", "kind": "light", "state": "closed", "recurrence": 0,
+         "flagged_periods": 1, "opened_period": "2026-01"},
+    ])  # fmt: skip
+    open_by = db.execute("SELECT model, severity, open_alerts, oldest_opened_period FROM "
+                         "main.model_monitoring_open_alerts_by_severity").fetchall()  # fmt: skip
+    assert open_by == [("m", "critical", 1, "2026-01")]
+    recurrence = db.execute("SELECT model, metric, recurring, max_flagged_periods FROM "
+                            "main.model_monitoring_alert_recurrence").fetchall()  # fmt: skip
+    assert recurrence == [("m", "psi", 1, 3)]
+    accept = db.execute("SELECT model, active, expired, superseded, days_to_next_expiry FROM "
+                        "main.model_monitoring_acceptance_summary").fetchall()  # fmt: skip
+    assert accept == [("m", 0, 1, 1, None)]
+
+
+def test_declared_names_refuse_a_backslash() -> None:
+    with pytest.raises(MonitorError, match="declared model names"):
+        view_statements("main", declared=("a\\b",))

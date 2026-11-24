@@ -1,13 +1,14 @@
-"""The ``model-monitoring`` command group: dashboard ``views``, ``alerts`` replayed from stored rows and ``act``."""
+"""The ``model-monitoring`` command group: dashboard ``views``, ``alerts``, ``act`` and the ``report`` renderer."""
 
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from bricksmith.cli.common import emit, global_parent
+from bricksmith.cli.common import context_from_args, emit, global_parent
 from bricksmith.errors import EXIT_OK, EXIT_VALIDATION, UsageError
 from bricksmith.monitor.cli import _json  # pyright: ignore[reportPrivateUsage]
 from bricksmith.monitor.limits import RED
@@ -16,6 +17,7 @@ from bricksmith.monitor.model.actions import STATE_ACCEPTED, action_row, insert_
 from bricksmith.monitor.model.alerts import replay_alerts
 from bricksmith.monitor.model.config import parse_config
 from bricksmith.monitor.model.engine import LIGHT, open_counts
+from bricksmith.monitor.model.report import build_report, render_html, render_markdown
 from bricksmith.monitor.model.tables import ACTIONS, RESULTS, RUNS, table_name, view_statements
 
 if TYPE_CHECKING:
@@ -27,7 +29,8 @@ def _plain(value: object) -> object:
 
 
 def _views(args: argparse.Namespace) -> int:
-    statements = view_statements(args.scope, args.prefix)
+    declared = [n.strip() for n in (args.declared or "").split(",") if n.strip()]
+    statements = view_statements(args.scope, args.prefix, declared)
     emit(args, {"statements": statements}, ";\n\n".join(statements) + ";")
     return EXIT_OK
 
@@ -89,8 +92,66 @@ def _act(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _table_rows(args: argparse.Namespace, spark: Any, kind: str) -> list[dict[str, Any]]:  # noqa: ANN401 - SparkSession
+    from pyspark.sql import functions as F  # noqa: N812, PLC0415 - heavy integration, loaded where used  # pyright: ignore[reportMissingImports]
+
+    frame = spark.table(table_name(args.scope, args.prefix, kind))
+    if "model" in frame.columns:
+        frame = frame.where(F.col("model") == args.model)
+    return [{k: _plain(v) for k, v in row.asDict().items()} for row in frame.collect()]
+
+
+def _state(args: argparse.Namespace) -> dict[str, Any]:
+    """Return the stored rows the report reads: from an exported state file, or from the tables through Spark."""
+    if bool(args.state) == bool(args.scope):
+        msg = "pass exactly one of --state (exported JSON) or --scope (catalog.schema of the tables)"
+        raise UsageError(msg)
+    if args.state:
+        state = _json(args.state)
+        if (
+            not isinstance(state, dict)
+            or not isinstance(state.get(RESULTS), list)
+            or not isinstance(state.get(RUNS), list)
+        ):
+            msg = f"{args.state} must hold a mapping with 'results' and 'runs' row lists"
+            raise UsageError(msg)
+        return state
+    from bricksmith.clients import Clients  # noqa: PLC0415 - heavy integration, loaded where used
+
+    spark = Clients(context_from_args(args)).spark()
+    return {kind: _table_rows(args, spark, kind) for kind in (RESULTS, RUNS, ACTIONS)}
+
+
+def _report(args: argparse.Namespace) -> int:
+    if args.as_of:
+        try:
+            date.fromisoformat(args.as_of)
+        except ValueError:
+            msg = f"--as-of must be an ISO date (YYYY-MM-DD), got {args.as_of!r}"
+            raise UsageError(msg) from None
+    report = build_report(_state(args), args.model, as_of=args.as_of or "")
+    stem = re.sub(r"[^A-Za-z0-9_.-]", "_", args.model)
+    renderers = {"html": render_html, "md": render_markdown}
+    chosen = renderers if args.format == "both" else {args.format: renderers[args.format]}
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    written = []
+    for extension, render in chosen.items():
+        target = out / f"{stem}.{extension}"
+        target.write_text(render(report), encoding="utf-8")
+        written.append(str(target))
+    series = sum(len(section.series) for section in report.sections)
+    emit(
+        args,
+        {"model": args.model, "periods": report.periods, "series": series, "files": written},
+        f"model monitoring report for {args.model}: {len(report.periods)} period(s), {series} series\n"
+        + "\n".join(f"  wrote {path}" for path in written),
+    )
+    return EXIT_OK
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``model-monitoring views|alerts|act``."""
+    """Register ``model-monitoring views|alerts|act|report``."""
     group = subparsers.add_parser(
         "model-monitoring", help="model monitoring dashboard views and alert replay", parents=[global_parent()]
     )
@@ -98,6 +159,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     views = commands.add_parser("views", help="print CREATE VIEW statements for dashboards", parents=[global_parent()])
     views.add_argument("--scope", required=True, help="catalog.schema holding the model monitoring tables")
     views.add_argument("--prefix", default="model_monitoring_", help="table name prefix (default model_monitoring_)")
+    views.add_argument("--declared", help="comma-separated model names counted as declared for coverage, with the runs")
     views.set_defaults(handler=_views)
     alerts = commands.add_parser(
         "alerts", help="rebuild alerts from stored result lights, without recomputing", parents=[global_parent()]
@@ -126,6 +188,17 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     act.add_argument("--prefix", default="model_monitoring_", help="table name prefix (default model_monitoring_)")
     act.add_argument("--state", help="JSON state file whose 'actions' list the row is appended to")
     act.set_defaults(handler=_act)
+    report = commands.add_parser(
+        "report", help="render a model's monitoring report as HTML and Markdown", parents=[global_parent()]
+    )
+    report.add_argument("--model", required=True, help="the model to report on")
+    report.add_argument("--state", help="JSON file with the stored 'results' and 'runs' (and 'actions') rows")
+    report.add_argument("--scope", help="catalog.schema of the monitoring tables, read through the selected context")
+    report.add_argument("--prefix", default="model_monitoring_", help="table name prefix (default model_monitoring_)")
+    report.add_argument("--out", default=".", help="directory the report files are written to (default .)")
+    report.add_argument("--format", choices=("html", "md", "both"), default="both", help="default both")
+    report.add_argument("--as-of", help="evaluation date (YYYY-MM-DD) for risk acceptances; default today")
+    report.set_defaults(handler=_report)
 
 
 __all__ = ["register"]

@@ -93,3 +93,32 @@ def test_actions_in_the_state_file_drive_the_replay(tmp_path: Path, capsys: pyte
     assert main([*base, "--as-of", "2026-03-15"]) == 0 and "(accepted)" in capsys.readouterr().out
     assert main([*base, "--as-of", "2026-04-15"]) == 4
     assert main([*base, "--as-of", "soon"]) != 0
+
+
+def test_views_command_takes_the_declared_models(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["model-monitoring", "views", "--scope", "main.monitoring", "--declared", "a, b"]) == 0
+    text = capsys.readouterr().out
+    assert "SELECT 'a' AS model" in text and "SELECT 'b' AS model" in text
+    assert "main.monitoring.model_monitoring_coverage_summary" in text
+
+
+def test_report_renders_html_and_markdown_from_an_exported_state(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state, out = _state(tmp_path), tmp_path / "out"
+    assert main(["model-monitoring", "report", "--model", "m", "--state", str(state), "--out", str(out)]) == 0
+    assert "1 period(s), 1 series" in capsys.readouterr().out
+    html_text, md_text = (out / "m.html").read_text(), (out / "m.md").read_text()
+    assert "<svg" in html_text and "<script" not in html_text and "score" in md_text
+    assert "0.3" in md_text and "0.01" not in md_text  # the failed run is never read
+    assert main(["model-monitoring", "report", "--model", "m", "--state", str(state), "--out", str(out),
+                 "--format", "md", "--json"]) == 0  # fmt: skip
+    assert json.loads(capsys.readouterr().out)["files"] == [str(out / "m.md")]
+
+
+def test_report_refuses_a_missing_source_an_unknown_model_and_a_bad_date(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    assert main(["model-monitoring", "report", "--model", "m"]) != 0  # neither --state nor --scope
+    assert main(["model-monitoring", "report", "--model", "zzz", "--state", str(state), "--out", str(tmp_path)]) != 0
+    assert main(["model-monitoring", "report", "--model", "m", "--state", str(state), "--as-of", "soon"]) != 0
+    assert not list(tmp_path.glob("*.html"))
