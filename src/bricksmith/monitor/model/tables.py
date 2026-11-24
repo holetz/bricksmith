@@ -181,8 +181,18 @@ def _view(name: str, *lines: str) -> str:
     return f"CREATE OR REPLACE VIEW {name} AS\n" + "\n".join(lines)
 
 
-def _governance(scope: str, prefix: str) -> list[str]:
-    """Return the governance views: latest actions, acceptances, coverage and timeliness, response times."""
+def _declared(scope: str, prefix: str, declared: Sequence[str]) -> str:
+    """Return the SQL listing the declared models: the names given, and every model with a run of any status."""
+    names = [str(n) for n in dict.fromkeys(declared)]
+    if any(not n or "\\" in n or any(not c.isprintable() for c in n) for n in names):
+        msg = f"model_monitoring: declared model names must be non-empty text without backslashes; got {names!r}"
+        raise MonitorError(msg)
+    sql = f"SELECT DISTINCT model FROM {table_name(scope, prefix, RUNS)}"  # noqa: S608 - names checked by table_name
+    return " UNION ".join([sql, *[f"SELECT '{n.replace(chr(39), chr(39) * 2)}' AS model" for n in names]])
+
+
+def _governance(scope: str, prefix: str, declared: Sequence[str] = ()) -> list[str]:
+    """Return the governance views: actions, acceptances, coverage and timeliness, response times, recurrence."""
     actions = table_name(scope, prefix, ACTIONS)
     columns = "action_id, model, alert_id, action, reason, author, valid_until, created_at"
     latest_actions = table_name(scope, prefix, "actions_latest")
@@ -237,10 +247,59 @@ def _governance(scope: str, prefix: str) -> list[str]:
             "  avg(days_to_first_action) AS mean_days_to_first_action, avg(days_to_resolve) AS mean_days_to_resolve",
             f"FROM {alert_response} GROUP BY model",
         ),
+        *_governance_summaries(scope, prefix, declared),
     ]
 
 
-def view_statements(scope: str, prefix: str = "model_monitoring_") -> list[str]:
+def _governance_summaries(scope: str, prefix: str, declared: Sequence[str]) -> list[str]:
+    """Return the views a governance review reads first: coverage of the latest closing, severities, recurrence."""
+    latest = table_name(scope, prefix, "latest")
+    coverage = table_name(scope, prefix, "coverage_latest")
+    finished = _finished(scope, prefix)
+    return [
+        _view(
+            coverage,
+            "SELECT d.model, g.latest_closing, l.latest_period, f.last_run,",
+            "  CASE WHEN l.latest_period = g.latest_closing THEN 1 ELSE 0 END AS monitored,",
+            "  datediff(current_date, to_date(f.last_run)) AS days_since_run",
+            f"FROM ({_declared(scope, prefix, declared)}) d",
+            f"CROSS JOIN (SELECT max(monitoring_period) AS latest_closing FROM {latest}) g",  # noqa: S608
+            f"LEFT JOIN (SELECT model, max(monitoring_period) AS latest_period FROM {latest} GROUP BY model) l",  # noqa: S608 - names checked by table_name
+            "  ON d.model = l.model",
+            f"LEFT JOIN (SELECT model, max(finished_at) AS last_run FROM ({finished}) GROUP BY model) f",  # noqa: S608
+            "  ON d.model = f.model",
+        ),
+        _view(
+            table_name(scope, prefix, "coverage_summary"),
+            "SELECT latest_closing, count(*) AS declared, sum(monitored) AS monitored,",
+            "  sum(monitored) * 1.0 / count(*) AS share_monitored,",
+            "  max(days_since_run) AS max_days_since_run",
+            f"FROM {coverage} GROUP BY latest_closing",
+        ),
+        _view(
+            table_name(scope, prefix, "open_alerts_by_severity"),
+            "SELECT model, severity, count(*) AS open_alerts, min(opened_period) AS oldest_opened_period",
+            f"FROM {table_name(scope, prefix, 'open_alerts')} GROUP BY model, severity",
+        ),
+        _view(
+            table_name(scope, prefix, "alert_recurrence"),
+            "SELECT model, metric, count(DISTINCT alert_id) AS alerts,",
+            "  count(DISTINCT CASE WHEN recurrence THEN alert_id END) AS recurring,",
+            "  max(flagged_periods) AS max_flagged_periods",
+            f"FROM ({_trusted(scope, prefix, ALERTS)}) a GROUP BY model, metric",
+        ),
+        _view(
+            table_name(scope, prefix, "acceptance_summary"),
+            "SELECT model, sum(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,",
+            "  sum(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) AS expired,",
+            "  sum(CASE WHEN status = 'superseded' THEN 1 ELSE 0 END) AS superseded,",
+            "  min(CASE WHEN status = 'active' THEN days_left END) AS days_to_next_expiry",
+            f"FROM {table_name(scope, prefix, 'acceptances')} GROUP BY model",
+        ),
+    ]
+
+
+def view_statements(scope: str, prefix: str = "model_monitoring_", declared: Sequence[str] = ()) -> list[str]:
     """Return ``CREATE OR REPLACE VIEW`` statements for the dashboard views of the tables in ``scope``.
 
     ``<prefix>latest``: results of the latest finished run per model, version and monitoring period.
@@ -252,6 +311,10 @@ def view_statements(scope: str, prefix: str = "model_monitoring_") -> list[str]:
     ``<prefix>acceptances`` (each risk acceptance as active, expired or superseded, with the days left),
     ``<prefix>coverage`` (periods monitored and days since the last finished run), ``<prefix>alert_response``
     (days from first seen to first action and to closure) and ``<prefix>response_summary`` (their means per model).
+    ``<prefix>coverage_latest`` marks each declared model as monitored or not for the latest closing (the greatest
+    monitoring period of any model), ``<prefix>coverage_summary`` gives the share monitored,
+    ``<prefix>open_alerts_by_severity``, ``<prefix>alert_recurrence`` and ``<prefix>acceptance_summary`` count what
+    stays open, what recurs and which acceptances hold. A model is declared when it is in ``declared`` or has a run.
     """
     latest = table_name(scope, prefix, "latest")
     status = (
@@ -275,7 +338,7 @@ def view_statements(scope: str, prefix: str = "model_monitoring_") -> list[str]:
         f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'latest_details')} AS\n{_trusted(scope, prefix, DETAILS)}",
         status,
         open_alerts,
-        *_governance(scope, prefix),
+        *_governance(scope, prefix, declared),
     ]
 
 
