@@ -360,6 +360,38 @@ def test_register_names_and_resolves_explicit_versions_and_aliases(tmp_path: Pat
     assert store.aliases(NAME) == {"champion": 2}
 
 
+class UnityCatalogTracking(FakeTracking):
+    """Unity Catalog behaviour: search results carry no tags (``tags`` is a raising method, as in the client)."""
+
+    def search_model_versions(self, query: str) -> list[SimpleNamespace]:
+        def no_tags() -> dict[str, str]:
+            msg = "search results do not carry tags; use get_model_version"
+            raise RuntimeError(msg)
+
+        return [
+            SimpleNamespace(version=v.version, run_id=v.run_id, tags=no_tags)
+            for v in super().search_model_versions(query)
+        ]
+
+
+def make_uc_store(tmp_path: Path) -> tuple[ModelStore, UnityCatalogTracking]:
+    client = UnityCatalogTracking(tmp_path / "artifacts")
+    return ModelStore(client, sleep=lambda _: None), client
+
+
+def test_versions_read_tags_per_version_when_search_omits_them(tmp_path: Path) -> None:
+    store, _ = make_uc_store(tmp_path)
+    register_run(store, NAME, "churn_v1", train(store, ThresholdAdapter()))
+    store.set_alias(NAME, "champion", 1)
+    (resolved,) = store.versions(NAME)
+    assert (resolved.model, resolved.version, resolved.aliases, resolved.state) == (
+        "churn_v1", 1, ("champion",), "active"
+    )  # fmt: skip
+    assert store.resolve(NAME, "churn_v1", alias="champion").version == 1
+    store.delete_model(NAME)
+    assert store.registered(NAME) is None
+
+
 @pytest.mark.parametrize(
     ("alias", "version"), [(None, None), ("champion", 1), ("latest", None), ("v3", None), (None, 0), (None, "latest")]
 )

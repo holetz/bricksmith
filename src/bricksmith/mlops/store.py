@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -17,7 +18,7 @@ from bricksmith.mlops.errors import ModelAmbiguousError, ModelError, ModelIncomp
 from bricksmith.mlops.meta import FILE, ModelMetadata
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from bricksmith.clients import Clients
     from bricksmith.context import ExecutionContext
@@ -251,7 +252,9 @@ class ModelStore:
         out = []
         for item in self.client.search_model_versions(f"name = '{name}'"):
             version = int(item.version)
-            tags = dict(item.tags or {})
+            # Unity Catalog search results carry no tags (``tags`` is a raising method): read each version then.
+            found = getattr(item, "tags", None)
+            tags = dict(found) if isinstance(found, Mapping) else self.tags(name, version)
             out.append(
                 ResolvedModel(
                     name,
