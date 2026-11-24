@@ -12,7 +12,7 @@ from quenching.specs.parse.text import (BULLET_RE, FENCE_RE, HEADING_RE, PLACEHO
 from quenching.specs.schema import canonical_headings, load_schema, phase_spec
 
 
-def parse_sections(text: str) -> dict[str, dict]:
+def parse_sections(text: str, compute_filled: bool = True) -> dict[str, dict]:
     """Every level-2 section of a spec file, keyed by its heading text.
 
     Sub-headings (`###`+) belong to their parent section — `## Impact` carries its parsed
@@ -24,7 +24,10 @@ def parse_sections(text: str) -> dict[str, dict]:
 
     **A fenced block is never read as a heading.** `## Tasks` routinely carries a shell block,
     and a `## ` comment inside one used to open a phantom section — which `validate` then
-    reported as a stray heading, and which silently truncated the real section at that line."""
+    reported as a stray heading, and which silently truncated the real section at that line.
+
+    `compute_filled=False` leaves `filled` False without reading the body: a caller that only
+    wants `lines` and `lineno` (the task parser) skips the costliest part of the parse."""
     out: dict[str, dict] = {}
     current: str | None = None
     buf: list[str] = []
@@ -36,10 +39,14 @@ def parse_sections(text: str) -> dict[str, dict]:
         if current is not None and current not in out:
             body = "\n".join(buf)
             out[current] = {"lines": list(buf), "lineno": start,
-                            "filled": has_real_content(body), "body": body}
+                            "filled": has_real_content(body) if compute_filled else False,
+                            "body": body}
 
     for lineno, line in enumerate(lines):
-        fm = FENCE_RE.match(line)
+        # Cheap necessary conditions before each regex (a fence opens within 3 spaces with a
+        # backtick or tilde; a heading starts with `#`): most lines are neither.
+        head = line[:4]
+        fm = FENCE_RE.match(line) if ("`" in head or "~" in head) else None
         if fm:
             mark = fm.group(1)
             if fence is None:
@@ -53,7 +60,7 @@ def parse_sections(text: str) -> dict[str, dict]:
             if current is not None:
                 buf.append(line)
             continue
-        m = HEADING_RE.match(line)
+        m = HEADING_RE.match(line) if line.startswith("#") else None
         if m and len(m.group(1)) == 2:
             flush()
             current = m.group(2).strip()

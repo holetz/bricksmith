@@ -15,6 +15,7 @@ from quenching.codex.config import DEFAULTS as CODEX_DEFAULTS
 from quenching.common.config import (NAMESPACES, _load_local_layer, _load_user_layer,
                                      find_repo_root, repository_document)
 from quenching.config.autonomy import DEFAULTS as AUTONOMY_DEFAULTS, coerce as coerce_autonomy
+from quenching.config.ci import DEFAULTS as CI_DEFAULTS, ENFORCE as CI_ENFORCE
 from quenching.config.host import DEFAULTS as WORK_HOST_DEFAULTS
 from quenching.config.schema import SLOTS, local_decision, registry_leaves
 from quenching.session.commands.context import BUDGETS
@@ -24,7 +25,8 @@ from quenching.session.cachebar import DEFAULTS as CACHE_BAR
 # owning front completes a partial block leaf by leaf.
 DEFAULT_BLOCKS = {("shared", "codex"): CODEX_DEFAULTS, ("shared", "autonomy"): AUTONOMY_DEFAULTS,
                   ("shared", "worktreeSlots"): SLOTS, ("shared", "workHost"): WORK_HOST_DEFAULTS,
-                  ("shared", "contextBudgets"): BUDGETS, ("shared", "cache"): CACHE_BAR}
+                  ("shared", "contextBudgets"): BUDGETS, ("shared", "cache"): CACHE_BAR,
+                   ("shared", "ci"): CI_DEFAULTS}
 
 
 def _read_repository(root: str) -> tuple[dict, dict]:
@@ -92,6 +94,15 @@ def effective(root: str) -> dict:
             warnings.extend(found)
             if isinstance(block, dict):
                 block = {leaf: given for leaf, given in block.items() if checked.get(leaf) == given}
+        if (name, key) == ("shared", "ci"):
+            # a project key: only the repository file counts, and a bad value never relaxes
+            if layer == "user":
+                warnings.append("user layer: shared.ci is a project key (ignored)")
+                block, layer = None, "default"
+            elif isinstance(block, dict) and block.get("enforce", "required") not in CI_ENFORCE:
+                warnings.append("shared.ci.enforce must be one of "
+                                f"{', '.join(CI_ENFORCE)}; required applies")
+                block = None
         for leaf, given, default in _leaves(base, block, defaults):
             rows[leaf] = ({"key": leaf, "value": given, "source": layer} if given is not None
                           else {"key": leaf, "value": default, "source": "default"})

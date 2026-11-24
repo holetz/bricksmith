@@ -24,6 +24,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -55,8 +56,13 @@ AZURE_BODY_NOTE = "Corpo completo no primeiro comentário deste PR."
 
 
 def _tool(tool: str, *argv: str, stdin: str | None = None) -> tuple[int, str, str]:
+    command = spawn_argv([tool, *argv])
+    if command[0] == tool:
+        # Windows looks a bare name up as `.exe` only; the path `which` resolves also reaches a
+        # `.cmd`. Elsewhere it is the same program the bare name would have run.
+        command[0] = shutil.which(tool) or tool
     try:
-        done = subprocess.run(spawn_argv([tool, *argv]), capture_output=True, text=True, encoding="utf-8", errors="replace", input=stdin or "",
+        done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", input=stdin or "",
                               timeout=GH_TIMEOUT_S, env={**os.environ, "LC_ALL": "C", "LANG": "C"})
     except (OSError, subprocess.SubprocessError) as e:
         return 127, "", str(e)
@@ -182,6 +188,34 @@ def _merged(args, payload: dict, human: str) -> int:
     return OK
 
 
+def ci_refusal(args, payload: dict, state: str) -> tuple[str | None, str | None] | None:
+    """Judge the checks against `shared.ci.enforce` (project layer, default `required`).
+
+    `state` is `green`, `none` or `pending`; anything else (red, skipped, unreadable) is refused
+    under every value. `None` accepts — and a relaxed accept records `ciRelaxed` in `payload`;
+    otherwise `(reason, message)`, with `reason` None when the caller keeps its own."""
+    from quenching.config import ci
+
+    mode, warnings = ci.read(os.getcwd())
+    gate_exit = getattr(args, "gate_exit", None)
+    accepted, reason = ci.judge(mode, state, gate_exit)
+    if warnings:
+        payload["ciWarnings"] = warnings
+    if accepted:
+        if state != "green":
+            payload["ciRelaxed"] = {"enforce": mode, "checks": state, "gateExit": gate_exit}
+            if state == "none":
+                payload["noChecksAccepted"] = True
+        return None
+    message = None
+    if reason == "gate-proof-required":
+        message = ci.proof_message(mode, state)
+    elif reason == "no-checks" and getattr(args, "allow_no_checks", False):
+        message = ("--allow-no-checks no longer relaxes the exigence: declare shared.ci.enforce "
+                   "in the project layer (.agents/quenching.json)")
+    return reason, message
+
+
 def _merge(args) -> int:
     from quenching.git.azure_pull import AZURE_PR_URL, merge_azure
 
@@ -213,13 +247,14 @@ def _merge(args) -> int:
                    and (c.get("bucket") not in GREEN or state == "skipped"))
     payload = {"ok": False, "url": args.url, "number": int(match.group(1)), "checks": state,
                "notGreen": names}
-    if state == "none" and getattr(args, "allow_no_checks", False):
-        payload["noChecksAccepted"] = True
-    elif state != "green":
-        payload["reason"] = {"red": "failed", "pending": "pending", "none": "no-checks",
-                                    "skipped": "skipped-required"}.get(
+    refusal = ci_refusal(args, payload, state)
+    if refusal is not None:
+        payload["reason"] = refusal[0] or {"red": "failed", "pending": "pending",
+                                           "none": "no-checks", "skipped": "skipped-required"}.get(
             state, "checks-unreadable")
-        if message:
+        if refusal[1]:
+            payload["message"] = refusal[1]
+        elif message:
             payload["message"] = message
         emit(args.json, payload, f"not merged: {payload['reason']} {' '.join(names)}".rstrip())
         return FINDINGS
@@ -294,6 +329,27 @@ def _spec_vs_head(spec: str, head: str, *, by_name: bool = True) -> dict | None:
                 "message": f"spec {sid} does not own branch {head}"
                            + (f" (its branch record is {work})" if work else "")}
     return None
+
+
+def _spec_body(spec: str) -> str:
+    """The default PR body of a spec: the non-empty `Problem`, `Proposal`, `Impact` and `Validation`
+    sections under their headings, then a `Tasks` count. Empty string when the spec has none."""
+    from quenching.specs.parse.sections import parse_sections
+    backend, err = open_backend(find_repo_root(os.getcwd()))
+    info, err2 = (None, err) if err else read_one(backend, spec, _Quiet())
+    if err2 or not info or not info.get("text"):
+        return ""
+    sections = parse_sections(info["text"])
+    parts = []
+    for heading in ("Problem", "Proposal", "Impact", "Validation"):
+        entry = sections.get(heading)
+        if entry and entry.get("filled"):
+            parts.append(f"## {heading}\n\n{entry['body'].strip()}")
+    tasks = info.get("tasks") or []
+    if tasks:
+        done = sum(1 for t in tasks if isinstance(t, dict) and t.get("checked"))
+        parts.append(f"## Tasks\n\n{done}/{len(tasks)} tasks checked.")
+    return "\n\n".join(parts)
 
 
 def _real_head(number: int, url: str) -> tuple[int, str] | str:
@@ -463,6 +519,14 @@ def _create(args) -> int:
             return refuse(bad, args.json)
     if args.body == "-":
         args.body = sys.stdin.read()
+    if not args.body.strip() and args.spec:
+        args.body = _spec_body(args.spec)
+    if not args.body.strip():
+        return refuse({"code": "git-pr-body-empty",
+                       "message": "the PR body is empty: pass --body, or --spec of a spec "
+                                  "that carries a Problem, Proposal, Impact or Validation "
+                                  "section; a PR is never opened without a description"},
+                      args.json)
     if provider == "azure-boards":
         at = next((flag for flag, value in (("--title", args.title), ("--description", args.body),
                                             ("--head", args.head), ("--base", args.base))

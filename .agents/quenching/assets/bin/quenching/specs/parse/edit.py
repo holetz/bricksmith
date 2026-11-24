@@ -4,6 +4,8 @@ block back into a document in canonical position.
 Moved verbatim out of the pre-refactor specs script."""
 from __future__ import annotations
 
+import re
+
 from quenching.specs.parse.handoff import (current_handoff_section, parse_handoff,
                                            task_section_title)
 from quenching.specs.parse.sections import section_spans
@@ -147,6 +149,34 @@ def unclosed_fence_at(text: str) -> tuple[int, str] | None:
         elif mark[0] == fence[0] and len(mark) >= len(fence):
             fence = None
     return opener if fence is not None else None
+
+
+_MOJIBAKE_WORD = re.compile(r"(?<=[^\W\d_])\?{1,4}(?=[^\W\d_])")
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
+MOJIBAKE_THRESHOLD = 2
+
+
+def mojibake_words(text: str) -> list[str]:
+    """The words a stdin body carries as letter-`?`-letter, once code and URLs are set aside.
+
+    A native pipe encoded as ASCII turns every non-ASCII character into a literal `?` (0x3F), so a
+    corrupted Portuguese body reads `descri??o` and `n?o`. Fenced blocks, code spans and words that
+    carry `://`, `=` or `&` (a URL query) legitimately hold a `?` and are not read."""
+    prose: list[str] = []
+    fence: str | None = None
+    for line in split_lines(text):
+        m = FENCE_RE.match(line)
+        if m:
+            mark = m.group(1)
+            if fence is None:
+                fence = mark[0] * len(mark)
+            elif mark[0] == fence[0] and len(mark) >= len(fence):
+                fence = None
+        elif fence is None:
+            prose.append(_CODE_SPAN.sub(" ", line))
+    words = " ".join(prose).split()
+    return [w for w in words
+            if _MOJIBAKE_WORD.search(w) and not any(c in w for c in ("://", "=", "&"))]
 
 
 def whole_body(content: str, heading: str) -> tuple[str, str | None]:

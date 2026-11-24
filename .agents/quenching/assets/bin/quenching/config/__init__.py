@@ -12,7 +12,7 @@ import shlex
 import sys
 
 from quenching.common.front import resolve_root
-from quenching.common.config import (CONFIG_FILE, LOCAL_CONFIG_FILE, config_path,
+from quenching.common.config import (CONFIG_FILE, LOCAL_CONFIG_FILE, config_path, posix_path,
                                       DEFAULT_PROVIDER, PROVIDER_ENV, active_provider,
                                       find_repo_root, local_config_path, repository_document)
 from quenching.common.git import _git
@@ -100,7 +100,7 @@ def cmd_export(args) -> int:
             "message": f"provider {info['name']} {state}",
             "remedy": "fix or create the repository configuration before exporting it",
         }, args.json)
-    emit(args.json, {"ok": True, "provider": info["name"], "path": info["path"],
+    emit(args.json, {"ok": True, "provider": info["name"], "path": posix_path(info["path"]),
                      "document": document},
          json.dumps(document, indent=2, ensure_ascii=False))
     return OK
@@ -125,7 +125,7 @@ def cmd_init(args) -> int:
     human = (f"cq config init — {path}\n"
              + json.dumps(document, indent=2, ensure_ascii=False)
              + f"\n{action}: {'yes' if args.write else 'no — rerun with `--write` to create it'}")
-    emit(args.json, {"ok": True, "action": f"init-{action}", "path": path,
+    emit(args.json, {"ok": True, "action": f"init-{action}", "path": posix_path(path),
                      "document": document, "written": args.write}, human)
     return OK
 
@@ -156,7 +156,7 @@ def cmd_check(args) -> int:
         human += ("\nkeys nothing reads (a typo yields the default):\n"
                   + "\n".join(f"  {k}" for k in unknown))
     found = bool(missing or unknown)
-    emit(args.json, {"ok": not found, "path": path, "missing": missing, "unknown": unknown}, human)
+    emit(args.json, {"ok": not found, "path": posix_path(path), "missing": missing, "unknown": unknown}, human)
     return FINDINGS if found else OK
 
 
@@ -240,7 +240,7 @@ def cmd_set(args) -> int:
         write_text(path, json.dumps(document, indent=2, ensure_ascii=False) + "\n")
         if args.layer == "local":
             excluded = _exclude_local(repo)
-    payload = {"ok": True, "key": args.key, "layer": args.layer, "path": path,
+    payload = {"ok": True, "key": args.key, "layer": args.layer, "path": posix_path(path),
                "action": "unset" if unset else "set", "changed": changed,
                "previous": previous, "value": value, "excluded": excluded}
     verb = "removed from" if unset else "set in"
@@ -258,7 +258,8 @@ def cmd_schema(args) -> int:
         payload["values"] = {row["key"]: {"value": row["value"], "source": row["source"]}
                              for row in effective(resolve_root(args.root))["values"]}
         repo = find_repo_root(resolve_root(args.root))
-        payload["layerPaths"] = {"project": config_path(repo), "local": local_config_path(repo)}
+        payload["layerPaths"] = {"project": posix_path(config_path(repo)),
+                                 "local": posix_path(local_config_path(repo))}
     lines = []
     for cat in payload["categories"]:
         lines.append(cat["title"]["en"])

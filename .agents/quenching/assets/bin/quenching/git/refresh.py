@@ -46,7 +46,7 @@ def _report(args, payload: dict, human: str, code: int) -> int:
 
 def cmd_refresh(args) -> int:
     cwd = os.getcwd()
-    base = args.base or resolve_base(cwd)[0]
+    base = args.base or resolve_base(cwd, host_default=False)[0]
     for label, value in (("base", base), ("remote", args.remote)):
         if not value or value.startswith("-") or not _branch_ok(cwd, value):
             return refuse({"code": "git-refresh-ref-invalid",

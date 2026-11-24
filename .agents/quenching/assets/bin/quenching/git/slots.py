@@ -24,6 +24,7 @@ import time
 from quenching.common.config import load_config, namespace
 from quenching.common.git import _git_run
 from quenching.common.output import FINDINGS, emit, refuse
+from quenching.common.paths import native_path
 from quenching.git.audit import SAFE, _branch_ok, _commit, _reflog, _run
 from quenching.git.ignored import (_is_link, classify, declared_regenerable, ignored_entries,
                                    undeclared)
@@ -68,7 +69,7 @@ def _worktrees(cwd: str) -> list[dict]:
             continue
         key, _, value = field.partition(" ")
         if key == "worktree":
-            cur = {"path": value, "branch": None, "detached": False, "locked": None}
+            cur = {"path": native_path(value), "branch": None, "detached": False, "locked": None}
         elif key == "branch":
             cur["branch"] = value.removeprefix("refs/heads/")
         elif key == "detached":
@@ -116,7 +117,8 @@ def survey(cwd: str) -> dict:
                           "state": "held" if tree["locked"] is not None else "free",
                           "holder": parse_reason(tree["locked"])})
         else:
-            kind = "opencode" if "/opencode/worktree/" in tree["path"] else "legacy"
+            kind = ("opencode" if "/opencode/worktree/" in tree["path"].replace(os.sep, "/")
+                    else "legacy")
             others.append({**tree, "kind": kind})
     slots.sort(key=lambda s: s["n"])
     return {"primary": primary, "parent": parent, "slots": slots, "others": others,

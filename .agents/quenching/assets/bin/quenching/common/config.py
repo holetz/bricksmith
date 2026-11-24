@@ -10,9 +10,10 @@ import json
 import os
 from typing import Protocol
 
-from quenching.common.git import _git
+from quenching.common.git import _git, remember_remote_url
 from quenching.common.remote import remote_host as _remote_host
 from quenching.common.io import read_text, write_text
+from quenching.common.paths import native_path
 
 
 CONFIG_FILE = os.path.join(".agents", "quenching.json")
@@ -27,6 +28,10 @@ LOCAL_CONFIG_FILE = os.path.join(".agents", "quenching.local.json")
 NAMESPACES = ("shared", "specs", "ops", "proof", "delivery")
 PROVIDER_ENV = "QUENCHING_CONFIG_PROVIDER"
 DEFAULT_PROVIDER = "file"
+
+# `find_repo_root`'s git answer per directory: a repository's top does not move under a running
+# process, and one `git rev-parse` per call is ~50 ms on Windows. Only a found top is kept.
+_TOPLEVEL: dict[str, str] = {}
 
 # Root-level keys accepted by the pre-envelope format. They are diagnostic-only now: a front
 # adapter must refuse to interpret them because doing so makes a half-migrated repository look
@@ -61,6 +66,11 @@ LEGACY_DESTINATIONS = {
     "proofExclusions": "proof",
     "ratchetPath": "proof",
 }
+
+
+def posix_path(path):
+    """A file path as a cq JSON payload carries it: POSIX separators on every platform."""
+    return path.replace(os.sep, "/") if isinstance(path, str) else path
 
 
 def config_path(repo_root: str) -> str:
@@ -170,11 +180,16 @@ def find_repo_root(specs_root: str) -> str:
         if parent == current:
             break
         current = parent
-    top = (_git(specs_root, "rev-parse", "--show-toplevel").strip()
-           if os.path.isdir(specs_root) else "")
+    start = os.path.abspath(specs_root)
+    top = _TOPLEVEL.get(start)
+    if top is None and os.path.isdir(specs_root):
+        top = _git(specs_root, "rev-parse", "--show-toplevel").strip()
+        if top:
+            # git prints `C:/x` on Windows; the cache keeps the native form, so a hit is native too.
+            top = _TOPLEVEL[start] = native_path(top)
     if top:
-        return top
-    return os.path.dirname(os.path.abspath(specs_root))
+        return native_path(top)
+    return os.path.dirname(start)
 
 
 def detect_provider(root: str) -> tuple[str | None, str | None]:
@@ -183,6 +198,7 @@ def detect_provider(root: str) -> tuple[str | None, str | None]:
     remote = _git(repo, "remote", "get-url", "origin").strip()
     if not remote:
         return None, None
+    remember_remote_url(repo, "origin", remote)
     host = _remote_host(remote)
     if host == "github.com" or host.endswith(".github.com"):
         return "github", host

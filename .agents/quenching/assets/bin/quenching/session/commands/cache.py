@@ -9,7 +9,7 @@ The output is token counts only unless `--usd` asks: no price is applied by defa
 gateway's rate is not in either store, and tokens are never summed across models. `--usd` adds each
 row's list-price estimate from quenching's own table (`session/pricing.json`), `null` for a model
 the table does not price. `--session` narrows the scope to one session (the `quenching-cache` bar's
-"this chat"). Message content is never selected."""
+"this chat"). Message content is never selected: `--inflow` takes only sizes, tool names and paths."""
 from __future__ import annotations
 
 import json
@@ -47,6 +47,25 @@ class Req(NamedTuple):
     write5m: int
     write1h: int
     output: int
+    host: str = ""
+
+
+def _host(path: Path) -> str:
+    """The `entrypoint` a Claude Code transcript names (claude-desktop, cli, sdk-ts…), else empty."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '"entrypoint"' not in line:
+                    continue
+                try:
+                    found = json.loads(line).get("entrypoint")
+                except (ValueError, AttributeError):
+                    continue
+                if isinstance(found, str) and found:
+                    return found
+    except OSError:
+        pass
+    return ""
 
 
 def bare(agent: str) -> str:
@@ -59,6 +78,7 @@ def bucket(minutes: float) -> str:
 
 def _claude_file(path: Path, role: str, agent: str, anomalies: list) -> list:
     out = []
+    host = _host(path)
     for model, usage, when, _ in _requests(path, anomalies).values():
         if model == SYNTHETIC:
             continue
@@ -67,12 +87,12 @@ def _claude_file(path: Path, role: str, agent: str, anomalies: list) -> list:
         out.append(Req("claude", str(path), role, agent, model, when, _n(usage, "input_tokens"),
                        _n(usage, "cache_read_input_tokens"), _n(usage, "cache_creation_input_tokens"),
                        _n(created, "ephemeral_5m_input_tokens"), _n(created, "ephemeral_1h_input_tokens"),
-                       _n(usage, "output_tokens")))
+                       _n(usage, "output_tokens"), host))
     return out
 
 
-def claude_requests(directory: Path | None, anomalies: list) -> tuple:
-    """Every request under the project directories in scope; `directory` None means all of them."""
+def claude_files(directory: Path | None) -> tuple:
+    """(role, agent, path) for every main and subagent transcript in scope, the source, or why none."""
     if directory is None:
         root = projects_root()
         dirs = sorted(d for d in root.glob("*") if d.is_dir()) if root.is_dir() else []
@@ -82,13 +102,20 @@ def claude_requests(directory: Path | None, anomalies: list) -> tuple:
         if found is None:
             return [], None, how
         dirs, source = [found], str(found)
-    reqs: list = []
+    files: list = []
     for project in dirs:
-        for main in project.glob("*.jsonl"):
-            reqs += _claude_file(main, "main", "main", anomalies)
-        for sub in project.glob("*/subagents/agent-*.jsonl"):
-            reqs += _claude_file(sub, "subagent", bare(_agent_type(sub)), anomalies)
-    return reqs, source, None
+        files += [("main", "main", main) for main in project.glob("*.jsonl")]
+        files += [("subagent", bare(_agent_type(sub)), sub) for sub in project.glob("*/subagents/agent-*.jsonl")]
+    return files, source, None
+
+
+def claude_requests(directory: Path | None, anomalies: list) -> tuple:
+    """Every request under the project directories in scope; `directory` None means all of them."""
+    files, source, why = claude_files(directory)
+    reqs: list = []
+    for role, agent, path in files:
+        reqs += _claude_file(path, role, agent, anomalies)
+    return reqs, source, why
 
 
 def opencode_db(explicit: str | None) -> Path:
@@ -167,7 +194,8 @@ def opencode_requests(path: Path, directory: Path | None, anomalies: list) -> tu
                 when = datetime.fromtimestamp(created / 1000, timezone.utc) if created else None
                 reqs.append(Req("opencode", sid, "subagent" if parent else "main",
                                 bare(agent or "unknown") if parent else "main", model or "unknown", when,
-                                inp or 0, read or 0, write or 0, 0, 0, (output or 0) + (reasoning or 0)))
+                                inp or 0, read or 0, write or 0, 0, 0, (output or 0) + (reasoning or 0),
+                                "opencode"))
         return reqs, _listings(db, tables, sessions, directory)
     finally:
         db.close()
@@ -219,10 +247,11 @@ def summarize(reqs: list, priced: bool = False) -> tuple:
     for (harness, _, model), own in by_session.items():
         own.sort(key=lambda r: (r.at is None, r.at or datetime.min.replace(tzinfo=timezone.utc)))
         head = own[0]
-        row = rows.setdefault((harness, model, head.role, head.agent), {
-            "harness": harness, "model": model, "role": head.role, "agent": head.agent, "sessions": 0,
-            "requests": 0, "input": 0, "cacheRead": 0, "cacheWrite": 0, "write5m": 0, "write1h": 0,
-            "output": 0, "_first": [], "_peak": [], "_usd": 0.0, "_unpriced": False})
+        row = rows.setdefault((harness, head.host, model, head.role, head.agent), {
+            "harness": harness, "host": head.host, "model": model, "role": head.role, "agent": head.agent,
+            "sessions": 0, "requests": 0, "input": 0, "cacheRead": 0, "cacheWrite": 0, "write5m": 0,
+            "write1h": 0, "output": 0, "readAfterGap5m": 0, "missedAfterGap5to60": 0,
+            "_first": [], "_peak": [], "_usd": 0.0, "_unpriced": False})
         row["sessions"] += 1
         row["_first"].append(_context(head))
         row["_peak"].append(max(_context(r) for r in own))
@@ -239,7 +268,12 @@ def summarize(reqs: list, priced: bool = False) -> tuple:
         for prev, cur in zip(own, own[1:]):
             if prev.at is None or cur.at is None or _context(cur) < COLD_FLOOR:
                 continue
-            label = bucket((cur.at - prev.at).total_seconds() / 60)
+            minutes = (cur.at - prev.at).total_seconds() / 60
+            if minutes >= 5:
+                row["readAfterGap5m"] += cur.read
+                if minutes < 60:
+                    row["missedAfterGap5to60"] += cur.input + cur.write
+            label = bucket(minutes)
             slot = gaps.setdefault((harness, model, cur.role, label), {"requests": 0, "cold": 0, "coldTokens": 0})
             slot["requests"] += 1
             missed = cur.input + cur.write
@@ -251,6 +285,12 @@ def summarize(reqs: list, priced: bool = False) -> tuple:
         row = rows[key]
         context = row["input"] + row["cacheRead"] + row["cacheWrite"]
         row["hitRate"] = round(row["cacheRead"] / context, 4) if context else None
+        mult = pricing.table()["cacheWrite"]
+        # Cache-write cost in input-token equivalents: as recorded, and had every write used one TTL.
+        row["ttl"] = {"writeNow": round((row["cacheWrite"] - row["write1h"]) * mult["5m"]
+                                        + row["write1h"] * mult["1h"]),
+                      "writeAll5m": round(row["cacheWrite"] * mult["5m"]),
+                      "writeAll1h": round(row["cacheWrite"] * mult["1h"])}
         row["firstRequestMedian"] = _median(row.pop("_first"))
         row["peakMedian"] = _median(row.pop("_peak"))
         spent, unpriced = row.pop("_usd"), row.pop("_unpriced")
@@ -283,6 +323,55 @@ def listing_summary(rows: list) -> list:
             for (role, agent), values in sorted(grouped.items())]
 
 
+def cmd_inflow(args, directory: Path | None, since: datetime | None) -> int:
+    """What entered the context by origin and how much of it was re-read (`--inflow`)."""
+    from quenching.session.commands import inflow
+    anomalies: list = []
+    unavailable: dict = {}
+    tally = inflow.Tally()
+    if args.harness in ("all", "claude"):
+        files, _, why = claude_files(directory)
+        if why:
+            unavailable["claude"] = why
+        for _, _, path in files:
+            if since is not None and datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) < since:
+                continue
+            calls, steps = inflow.claude_file(path, anomalies)
+            tally.add("claude", calls, steps)
+    if args.harness in ("all", "opencode"):
+        path = opencode_db(args.opencode_db)
+        if not path.is_file():
+            unavailable["opencode"] = f"no OpenCode database at {path}"
+        else:
+            try:
+                db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+                try:
+                    sessions = _sessions(db, _tables(db))
+                    keep = lambda sid: sid in sessions and _inside(sid, sessions, directory)  # noqa: E731
+                    since_ms = int(since.timestamp() * 1000) if since else None
+                    for calls, steps in inflow.opencode_calls(db, keep, since_ms, anomalies).values():
+                        tally.add("opencode", calls, steps)
+                finally:
+                    db.close()
+            except sqlite3.Error as exc:
+                unavailable["opencode"] = f"{path}: {exc}"
+    if not tally.rows:
+        return refuse({"code": "se-no-usage", "message": "no tool result in scope", "unavailable": unavailable},
+                      args.json)
+    top = tally.top(args.top)
+    out = {"ok": True, "scope": str(directory) if directory else "all", "unit": "tokens, characters / 4",
+           "unavailable": unavailable, "inflow": top, "anomalies": anomalies}
+    if args.json:
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return FINDINGS if anomalies else OK
+    print(f"{'harness':<10}{'kind':<20}{'calls':>7}{'tokens':>10}{'reread':>13}  origin")
+    for r in top:
+        print(f"{r['harness']:<10}{r['kind']:<20}{r['calls']:>7}{r['tokens']:>10}{r['reread']:>13}  {r['origin']}")
+    for name, why in unavailable.items():
+        print(f"  ! {name} unavailable: {why}")
+    return FINDINGS if anomalies else OK
+
+
 def cmd_cache(args) -> int:
     since = None
     if args.since:
@@ -291,6 +380,8 @@ def cmd_cache(args) -> int:
             return refuse({"code": "se-bad-since", "message": f"--since is not an ISO-8601 instant: {args.since}"},
                           args.json)
     directory = None if args.all else Path(args.directory or Path.cwd()).expanduser().resolve()
+    if getattr(args, "inflow", False):
+        return cmd_inflow(args, directory, since)
     anomalies: list = []
     reqs: list = []
     listings: list = []
@@ -332,10 +423,10 @@ def cmd_cache(args) -> int:
     if args.json:
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return FINDINGS if anomalies else OK
-    print(f"{'harness':<10}{'role':<10}{'agent':<18}{'model':<26}{'sess':>6}{'req':>8}{'hit':>7}"
+    print(f"{'harness':<10}{'host':<15}{'role':<10}{'agent':<18}{'model':<26}{'sess':>6}{'req':>8}{'hit':>7}"
           f"{'first':>8}{'peak':>9}")
     for r in rows:
-        print(f"{r['harness']:<10}{r['role']:<10}{r['agent'][:17]:<18}{r['model'][-25:]:<26}{r['sessions']:>6}"
+        print(f"{r['harness']:<10}{r['host'][:14]:<15}{r['role']:<10}{r['agent'][:17]:<18}{r['model'][-25:]:<26}{r['sessions']:>6}"
               f"{r['requests']:>8}{(r['hitRate'] or 0):>7.1%}{r['firstRequestMedian']:>8}{r['peakMedian']:>9}")
     print("\ncold requests by the gap before them (a model never sums into another):")
     for g in gaps:

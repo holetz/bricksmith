@@ -208,7 +208,7 @@ def _rec_fields(args: dict) -> list[str]:
         if isinstance(value, bool) or not isinstance(value, (str, int, float)):
             raise ToolArgs(f"field `{key}` must be a string or a number")
         value = str(value).strip()
-        if not value or "\n" in value:
+        if "\n" in value:  # an empty scalar is absence, and the shell accepts `--set key=`
             raise ToolArgs(f"field `{key}` is not a valid value")
         argv += ["--set", f"{key}={value}"]
     return argv
@@ -403,6 +403,18 @@ WRITES: dict[str, tuple] = {
         "Publish every pending local write of this clone in one push of the store branch, the "
         "same as `cq specs push`. No confirmation gate: calling the tool is the publish.",
         _schema({}, []), _w_push, None, None, None),
+}
+
+
+# The `cq specs` verb path each hand-written tool serves: what the catalog coverage scan
+# (`quenching.mcp.coverage`) counts as covered beside the catalog's own rows.
+COVERS: dict[str, tuple[str, ...]] = {
+    "specs_list": ("list",), "specs_status": ("status",), "specs_show": ("show",),
+    "specs_section": ("section",), "specs_next": ("next",), "specs_epic_progress": ("status",),
+    "specs_create": ("new",), "specs_section_write": ("section",), "specs_record": ("record",),
+    "specs_task": ("task",), "specs_epic_add": ("epic", "add"),
+    "specs_link_add": ("link", "add"), "specs_link_remove": ("link", "remove"),
+    "specs_discover": ("discover",), "specs_promote": ("promote",), "specs_push": ("push",),
 }
 
 

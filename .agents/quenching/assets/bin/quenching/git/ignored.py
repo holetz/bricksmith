@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import posixpath
 import stat
 
 from quenching.common.config import namespace
@@ -20,6 +21,7 @@ DEFAULT_REGENERABLE = (
     ".mypy_cache", ".pyright", ".tox", ".nox", "htmlcov", ".coverage", ".coverage.*",
     "*.egg-info", ".eggs", "pip-wheel-metadata", ".cache", ".ipynb_checkpoints",
     ".hypothesis", "node_modules",
+    ".quenching/git-base-cache.json", ".quenching/git-ci-cache.json",
 )
 
 
@@ -52,18 +54,25 @@ def declared_regenerable(config: dict) -> list[str]:
     ]
 
 
+def _parts(path: str) -> list[str]:
+    return posixpath.normpath(path.replace("\\", "/").rstrip("/")).split("/")
+
+
 def is_regenerable(entry: str, rules: list[str]) -> bool:
     """Whether an ignored entry is covered by one of `rules`.
 
     An entry without a slash names a component at any depth and a `*` in it matches with
     `fnmatch` (`*.egg-info`, `*.py[cod]`); an entry with a slash, inner or trailing, is anchored
-    at the repository root — literal, itself or anything under it."""
-    parts = os.path.normpath(entry.rstrip("/")).split(os.sep)
+    at the repository root — literal, itself or anything under it.
+
+    Both sides are compared in `/` form: git reports `/` on every platform, while a walked path
+    and a `normpath`-ed declaration carry `\\` on Windows."""
+    parts = _parts(entry)
     for rule in rules:
-        if os.sep in rule:
-            anchored = rule.rstrip(os.sep)
-            width = len(anchored.split(os.sep))
-            if os.sep.join(parts[:width]) == anchored:
+        rule = rule.replace("\\", "/")
+        if "/" in rule:
+            anchored = _parts(rule)
+            if parts[:len(anchored)] == anchored:
                 return True
         elif "*" in rule:
             if any(fnmatch.fnmatch(part, rule) for part in parts):

@@ -96,7 +96,8 @@ non-`cq`, non-`git` command is run.
 ### 1. Health
 Resolve `cq` per [align/tool-resolution.md](.agents/quenching/references/align/tool-resolution.md)
 §Resolving the tool; branch on the exit code. Read the root harness for the gate command and the
-ephemeral area. Check, on `main`: `git stash list` is empty, `git worktree list` holds only this
+ephemeral area, and `shared.guidance.autopilot` from `.agents/quenching/bin/cq config show --effective --json` when declared: the project's focus and cautions, a criterion for
+steps 2–3 that never widens a grant or authorizes what **never forced** forbids. Check, on `main`: `git stash list` is empty, `git worktree list` holds only this
 run's worktrees, and the gate is green. Anything red there → this round's first spec is fixing it
 (`.agents/quenching/bin/cq specs new`, then steps 4–5 on it alone).
 
@@ -126,16 +127,18 @@ round's start ref: `git rev-parse main`.
 a fix spec, or an authorized cut from `origin/<base>` — and recorded.
 
 ### 2. Queue
-List the loose specs — open, in no epic — with `.agents/quenching/bin/cq specs list --lean --json`, and the store's
-errors with `.agents/quenching/bin/cq specs validate`. Before any of them enters, one `quenching-spec-scout` per batch proves
-it is still relevant against the current code:
+List the loose specs — open, in no epic — plus the open members of epics of earlier rounds
+(`Autopilot <date> — rodada <n>`) and of the "decide with the human" epics, with `.agents/quenching/bin/cq specs list --lean --json`, and the store's
+errors with `.agents/quenching/bin/cq specs validate`. Before any of them enters or is developed, one `quenching-spec-scout` per batch proves
+it is still relevant against the current code and the `shared.guidance.autopilot` of step 1, and classifies it
+`relevant`, `superseded` (another spec or merge already absorbed the pain: cite it), `stale` (a cited `path:line` or command no longer exists) or `needs-human`:
 
-- the surface it describes has changed → record the evidence in `## Outcome`
-  (`.agents/quenching/bin/cq specs section <id> Outcome --write`) and `.agents/quenching/bin/cq specs promote <id> --outcome abandoned`;
+- `superseded` or `stale` → record the evidence in `## Outcome`
+  (`.agents/quenching/bin/cq specs section <id> Outcome --write`) and `.agents/quenching/bin/cq specs promote <id> --outcome abandoned`; a round epic left with no open member is closed;
 - it needs the human (the **never forced** list) → `.agents/quenching/bin/cq specs link add <human-composite> <id>`;
 - otherwise it joins this round's queue.
 
-**Done when:** every loose spec is queued, abandoned with evidence, or in the human epic.
+**Done when:** every loose spec and every open member of an earlier round is queued, abandoned with evidence, or in the human epic.
 
 ### 3. Map
 Only when the queue is short (fewer than three specs): run the mapping of
@@ -161,7 +164,7 @@ then create the composite and the members with the same `.agents/quenching/bin/c
 Either way, write the composite's `## Design` — and write it as a READ, AN APPEND AND ONE WRITE,
 because `.agents/quenching/bin/cq specs section --write` REPLACES the section: `.agents/quenching/bin/cq specs section <composite> Design
 --json`, the round's dated bullets appended, the body back on stdin. It carries the **autonomy
-policy** (forced execution, push, PR and merge of every member after a verifier PASS, authorized by
+policy** (the step 1 `shared.guidance.autopilot` verbatim, when declared; forced execution, push, PR and merge of every member after a verifier PASS, authorized by
 this invocation, with its date) and **every decision this session took as the delegated owner**,
 each a dated bullet with the evidence it rests on — the step 1 dirty-checkout answer, an abandoned
 spec, a spec sent to the human epic, a proof not run — written BEFORE the launch that depends on
@@ -175,9 +178,9 @@ this round's decisions, and `validate` raises no `sp-link-*` finding.
 **Economy mode.** An epic with **at most 2 members, every one `low` or `medium`**, runs without
 `quenching-spec-orchestrator`: this session launches `quenching-spec-runner` →
 `quenching-spec-verifier` for each member and, after the PASS, publishes it itself
-(`/quenching-git pr-create autonomous`, then `.agents/quenching/bin/cq git pr merge` on green CI), with the acceptance rules
+(`/quenching-git pr-create autonomous`, then `.agents/quenching/bin/cq git pr merge` on green CI, or on the green local gate where `shared.ci.enforce` relaxes it), with the acceptance rules
 of the spec-orchestrator's protocol, cited and not restated — steps 3 (delegation briefs), 4
-(acceptance only on a spec-verifier PASS, the `execute-done:`/`conclude` two spawns, publish after the PASS,
+(acceptance only on a spec-verifier PASS, one `autonomous` runner spawn per member that develops, executes and concludes, the spec-verifier once before the publish, publish after the PASS,
 one re-spawn) and 5 (retry, idempotency) of `quenching/agents/spec-orchestrator.md`.
 Each prompt is ≤ 1,500 characters, and it OPENS with the fixed text every prompt of that type
 shares — the word `autonomous`, the base, the model passed explicitly and the sentence "No git
@@ -218,6 +221,7 @@ the reproduction), queued for the next round; `NONE` creates none.
 
 ### 7. Gate and audit
 On `main`: pull, run the gate, and the audit of step 1. Red → the first spec of the next round.
+Also audit orphan processes: list `pytest`, xdist (`exec(eval(sys.stdin.readline()))`) and `functional-checks.sh` processes whose working directory sits in a slot with no live worker, end them by PID with their children, and print each in step 8 — a worker that returned must leave none running.
 Then decide whether to stop:
 
 - **deadline** — `--until` is reached, or no worker of a next round could finish before it;

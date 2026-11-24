@@ -104,6 +104,9 @@ def add_subcommands(sub: argparse._SubParsersAction) -> argparse._SubParsersActi
     co.add_argument("--since", metavar="ISO8601",
                     help="count only requests at or after this instant (an orchestrator's own window "
                          "when several share the session)")
+    co.add_argument("--opencode-db", metavar="PATH",
+                    help="measure an OpenCode session tree from this database (default: QUENCHING_OPENCODE_DB, "
+                         "else the XDG data dir); a `ses_…` id or OPENCODE_SESSION_ID picks OpenCode too")
     co.add_argument("--usd", action="store_true",
                     help="add each row's list-price estimate from quenching's price table")
     co.add_argument("--json", action="store_true", help="machine-readable output")
@@ -120,6 +123,9 @@ def add_subcommands(sub: argparse._SubParsersAction) -> argparse._SubParsersActi
     ca.add_argument("--session", metavar="ID", help="count only this session's requests (its id)")
     ca.add_argument("--usd", action="store_true",
                     help="add each row's list-price estimate from quenching's price table")
+    ca.add_argument("--inflow", action="store_true",
+                    help="instead of cache rows: what entered the context by origin and how much was re-read")
+    ca.add_argument("--top", type=int, default=15, metavar="N", help="origins listed by --inflow (default 15)")
     ca.add_argument("--json", action="store_true", help="machine-readable output")
     ca.set_defaults(func=cmd_cache)
     cx = sub.add_parser("context", help="measure a live transcript's context and role budget")

@@ -107,6 +107,11 @@ class Job:
         with self.lock:
             if self.status == "running":
                 self.status = "timeout"
+        if os.name == "nt":
+            # A `claude.cmd` puts `cmd.exe` between us and the CLI: killing it alone leaves the CLI
+            # holding stdout open, so the reader never ends. `/T` takes the whole tree.
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)],
+                           capture_output=True, check=False)
         try:
             self.proc.kill()
         except OSError:
