@@ -80,8 +80,9 @@ columns and text with very many values are skipped. The reason for each skip is 
    come from the stored profiles, so the table is not rescanned.
 4. **Results.** Every period of the window is judged against its baseline. Results are written for new periods, or
    for the whole window when limits, baseline, trend or persistence changed.
-5. **Alerts.** Status histories are replayed into alerts. A replay produces the same `alert_id`, and stored alerts
-   it no longer produces become `superseded`.
+5. **Alerts.** Status histories are replayed into alerts. A replay produces the same `alert_id`, an open alert whose
+   opening left the window is carried (see Persistence), and other stored alerts it no longer produces become
+   `superseded`.
 6. **Gate.** The gate is evaluated on the latest period. A failing gate marks the task `failed` with error code
    `stability_gate`, and its dependents become `blocked`. The output itself is already published: the gate protects
    downstream tasks, it does not roll back. The task result (`--json` reports and `task_finished` events) carries a
@@ -158,6 +159,11 @@ red, and only the worse side counts.
 critical alert, or escalate an open warning to critical. Severity never goes down. `close_after` greens close the
 alert, and suppressed periods neither count nor break a run. An alert that reopens within `recurrence` periods is
 flagged. A red trend check opens a `trend` alert.
+
+An open alert whose opening period has left the window is carried: the replay resumes it before the first period of
+the window, so it keeps its `alert_id`, escalates and closes on the window's statuses even when the window alone would
+not open it. Because the replay only sees the window, keep `close_after` and `red` at or below `max_periods`: a longer
+streak can never complete inside the window, and a carried alert would then stay open.
 
 ## Limit rules
 
