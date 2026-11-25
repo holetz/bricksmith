@@ -199,6 +199,42 @@ def test_open_alerts_drops_an_alert_a_rerun_of_its_period_stopped_raising(*, spa
     assert db.execute("SELECT alerts FROM main.model_monitoring_alert_recurrence").fetchone() == (1,)
 
 
+def _rerun_open_alerts(rerun_rows: list[dict[str, object]]) -> list[tuple[object, ...]]:
+    """Return the open alerts after rerun r1 of 2025-05 stored ``rerun_rows`` as results and no alert."""
+    db = sqlite3.connect(":memory:")
+    for kind in KINDS:
+        _create(db, kind)
+    _insert(db, ALERTS, [{
+        "model": "m", "model_version": "1", "metric": "psi", "monitoring_period": "2025-05", "state": "open",
+        "kind": "light", "run_id": "r0", "alert_id": "L", "severity": "critical", "column": "score", "segment": "",
+    }])  # fmt: skip
+    _insert(db, RESULTS, [_result("r0", "2025-05", 0.4, "red", 2), *rerun_rows])
+    _insert(db, RUNS, [
+        {"run_id": "r0", "model": "m", "status": "success", "finished_at": "2025-06-01T00:00:00"},
+        {"run_id": "r1", "model": "m", "status": "partial", "finished_at": "2025-06-02T00:00:00"},
+    ])  # fmt: skip
+    for statement in view_statements("main"):
+        db.execute(statement.replace("CREATE OR REPLACE VIEW", "CREATE VIEW"))
+    found = db.execute("SELECT alert_id, run_id FROM main.model_monitoring_open_alerts").fetchall()
+    by_severity = db.execute("SELECT open_alerts FROM main.model_monitoring_open_alerts_by_severity").fetchall()
+    assert by_severity == [(1,)] * len(found)
+    return found
+
+
+def test_open_alerts_keeps_an_alert_when_the_rerun_of_its_period_errored_on_its_metric() -> None:
+    error = {**_result("r1", "2025-05", 0.0, "", 0), "value": None, "light": None, "reason": "error: boom"}
+    assert _rerun_open_alerts([error]) == [("L", "r0")]
+
+
+def test_open_alerts_keeps_an_alert_when_the_rerun_stored_no_row_for_its_metric() -> None:
+    other = {**_result("r1", "2025-05", 0.1, "green", 0), "metric": "csi"}
+    assert _rerun_open_alerts([other]) == [("L", "r0")]
+
+
+def test_open_alerts_clears_an_alert_when_the_rerun_measured_its_metric_and_raised_none() -> None:
+    assert _rerun_open_alerts([_result("r1", "2025-05", 0.1, "green", 0)]) == []
+
+
 def test_open_alerts_keeps_an_alert_when_a_run_of_another_period_or_a_failed_rerun_did_not_store_it() -> None:
     db = _rerun_history(span=False)
     db.execute("DROP VIEW main.model_monitoring_open_alerts")
