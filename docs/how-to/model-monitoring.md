@@ -302,8 +302,9 @@ bricksmith model-monitoring views --scope main.monitoring
   monitoring period;
 - `<prefix>latest_details`: the bins of those results;
 - `<prefix>model_status`: one row per model, version and period with the worst light and red/yellow counts;
-- `<prefix>open_alerts`: the open alerts of those latest finished runs (light alerts, and persistence and trend spans
-  still open; alerts a person closed or accepted are not open);
+- `<prefix>open_alerts`: the latest stored state of each alert, one row per alert id from the latest finished run that
+  stored it, kept when that state is open (light alerts, and persistence and trend spans still open; a span a later run
+  closed, or a person closed or accepted, is not open);
 - the [governance views](#alert-actions-and-governance-views): `<prefix>actions_latest`, `<prefix>acceptances`,
   `<prefix>coverage`, `<prefix>alert_response` and `<prefix>response_summary`.
 
@@ -377,8 +378,10 @@ The governance views answer the questions a review asks:
   monitoring period of any model), its own latest period and the days since its last finished run;
 - `<prefix>coverage_summary`: how many declared models there are, how many were monitored for the latest closing and
   the share (`share_monitored`);
-- `<prefix>open_alerts_by_severity`: the open alerts per model and severity, with the oldest opened period;
-- `<prefix>alert_recurrence`: per model and metric, the alerts, how many recurred and the most periods one was flagged;
+- `<prefix>open_alerts_by_severity`: the open alerts per model and severity, with the oldest opened period (each alert
+  counted once, in its latest stored state);
+- `<prefix>alert_recurrence`: per model and metric, the alerts, how many recurred and the most periods one was flagged
+  (each alert counted once, in its latest stored state);
 - `<prefix>acceptance_summary`: per model, the active, expired and superseded acceptances and the days to the next
   expiry.
 
