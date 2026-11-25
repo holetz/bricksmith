@@ -19,15 +19,21 @@ from bricksmith.monitor.actions import STATE_ACCEPTED, STATE_CLOSED, apply_actio
 from bricksmith.monitor.limits import COLORS, GREEN, RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN
 from bricksmith.monitor.reference import Reference
+from bricksmith.monitor.stability.config import SCHEMA_METRICS
 from bricksmith.monitor.stability.engine import (
     FAILED,
     PASSED,
     WARNED,
+    _accepted_alerts,  # pyright: ignore[reportPrivateUsage]
     _gate,  # pyright: ignore[reportPrivateUsage]
+    _loaded_periods,  # pyright: ignore[reportPrivateUsage]
     _score_seed,  # pyright: ignore[reportPrivateUsage]
     _trend_seed,  # pyright: ignore[reportPrivateUsage]
     judgment_fingerprint,
+    label_results,
+    window_marks,
 )
+from bricksmith.monitor.stability.marks import ACCEPTED
 from bricksmith.monitor.stability.metrics import alerts, compute
 from bricksmith.monitor.stability.tables import ACTIONS, ALERTS, BINNINGS, PROFILES, RESULTS, RUNS
 from bricksmith.monitor.trend import INSUFFICIENT_HISTORY, TrendPolicy, trend_check
@@ -241,8 +247,9 @@ def _gate_of(
     human: Mapping[str, str],
     period: str,
 ) -> tuple[str, dict[str, int]]:
-    red = sum(1 for r in results if r["period"] == period and r.get("status") == RED)
-    yellow = sum(1 for r in results if r["period"] == period and r.get("status") == YELLOW)
+    counted = [r for r in results if r["period"] == period and r.get("mark") != ACCEPTED]
+    red = sum(1 for r in counted if r.get("status") == RED)
+    yellow = sum(1 for r in counted if r.get("status") == YELLOW)
     open_rows = [r for r in alert_rows if _open_at(r, period) and str(r["alert_id"]) not in human]
     critical = sum(1 for r in open_rows if r.get("severity") == CRITICAL)
     reasons = _gate(config, red, yellow, len(open_rows), critical)
@@ -334,13 +341,21 @@ def backtest(  # noqa: PLR0913 - one keyword per documented input
         report.reason = NO_STORED_PROFILES
         return report
     window = live[-config.max_periods :]
-    seed_rows = _trend_seed(config, store, live, window, dataset=dataset, version=binning.version)
+    today = (now or datetime.now(UTC).isoformat(timespec="seconds"))[:10]
+    loaded = _loaded_periods(config, binning, live)
+    marks = window_marks(config, store, live, loaded, window, dataset=dataset, as_of=today)
+    seed_rows = _trend_seed(
+        config, store, live, window, dataset=dataset, version=binning.version,
+        excluded=marks.excluded, regimes=marks.regimes,
+    )  # fmt: skip
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, emptied=emptied, trend_seed=seed_rows,
         score_seed=_score_seed(config, store, live, window, dataset=dataset, version=binning.version),
+        excluded=marks.excluded, regimes=marks.regimes, invalid=marks.invalid,
     )  # fmt: skip
+    label_results(computed.results, marks)
     actions = store.rows(ACTIONS, dataset)
-    judgment = judgment_fingerprint(config, actions)
+    judgment = judgment_fingerprint(config, actions, marks.marks)
     runs = store.rows(RUNS, dataset, version=binning.version)
     last = max(runs, key=lambda r: str(r.get("finished_at") or ""), default=None)
     report.judgment_changed = last is None or last.get("judgment_fingerprint") != judgment
@@ -349,11 +364,17 @@ def backtest(  # noqa: PLR0913 - one keyword per documented input
         computed.results, config, dataset=dataset, version=binning.version, stored=stored_alerts,
         periods=known, keep_inside=not report.judgment_changed,
     )  # fmt: skip
-    stored_alerts = [r for r in stored_alerts if int(r.get("version") or 0) == binning.version]
+    stored_alerts = [
+        r for r in stored_alerts if int(r.get("version") or 0) == binning.version and r["metric"] not in SCHEMA_METRICS
+    ]
     covered = {*window, *emptied}
-    stored_results = [r for r in store.rows(RESULTS, dataset, version=binning.version) if r["period"] in covered]
-    today = (now or datetime.now(UTC).isoformat(timespec="seconds"))[:10]
+    stored_results = [  # schema results come from the table schema, which stored profiles cannot replay
+        r
+        for r in store.rows(RESULTS, dataset, version=binning.version)
+        if r["period"] in covered and r["metric"] not in SCHEMA_METRICS
+    ]
     human_after = _human_states(fresh_alerts, actions, today)
+    human_after |= _accepted_alerts(fresh_alerts, computed.results, human_after)
     human_before = _human_states(stored_alerts, actions, today)
     selection = [str(p) for p in periods]
     report.periods = [p for p in sorted(covered) if _selected(p, selection)]

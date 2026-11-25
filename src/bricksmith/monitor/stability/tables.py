@@ -22,11 +22,12 @@ PROFILES = "profiles"
 RESULTS = "results"
 ALERTS = "alerts"
 ACTIONS = "actions"
+MARKS = "marks"
 RUNS = "runs"
 REVISIONS = "revisions"
 RESULTS_HISTORY = "results_history"
 ALERT_EVENTS = "alert_events"
-KINDS = (BINNINGS, PROFILES, RESULTS, ALERTS, ACTIONS, RUNS)
+KINDS = (BINNINGS, PROFILES, RESULTS, ALERTS, ACTIONS, MARKS, RUNS)
 #: The tables that exist only with ``history`` on: every judgment ever reported, and every alert transition.
 HISTORY_KINDS = (RESULTS_HISTORY, ALERT_EVENTS)
 #: The tables a declaration can have: ``revisions`` only with ``revision`` on, the history kinds with ``history``.
@@ -36,6 +37,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "dataset": "STRING", "version": "INT", "config_fingerprint": "STRING", "fingerprint": "STRING",
         "period_column": "STRING", "fit_periods": "STRING", "fit_rows": "BIGINT", "columns": "INT",
         "skipped": "STRING", "body": "STRING", "created_run_id": "STRING", "created_at": "STRING",
+        "schema": "STRING",
     },
     PROFILES: {
         "dataset": "STRING", "version": "INT", "period": "STRING", "period_date": "DATE", "segment": "STRING",
@@ -53,7 +55,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "trend_lower": "DOUBLE", "trend_upper": "DOUBLE", "trend_model": "STRING", "drift_status": "STRING",
         "change_point_suggested": "BOOLEAN", "run_id": "STRING",
         "computed_at": "STRING", "rule_id": "STRING", "rule_version": "INT", "baseline_gap": "INT",
-        "settling": "BOOLEAN",
+        "settling": "BOOLEAN", "mark": "STRING", "mark_reason": "STRING",
     },
     ALERTS: {
         "dataset": "STRING", "alert_id": "STRING", "version": "INT", "kind": "STRING", "metric": "STRING",
@@ -66,6 +68,11 @@ SCHEMAS: dict[str, dict[str, str]] = {
     ACTIONS: {
         "action_id": "STRING", "dataset": "STRING", "alert_id": "STRING", "action": "STRING",
         "resolution": "STRING", "reason": "STRING", "author": "STRING", "valid_until": "DATE",
+        "created_at": "STRING",
+    },
+    MARKS: {
+        "mark_id": "STRING", "dataset": "STRING", "period": "STRING", "segment": "STRING", "column": "STRING",
+        "metric": "STRING", "mark": "STRING", "reason": "STRING", "author": "STRING", "valid_until": "DATE",
         "created_at": "STRING",
     },
     REVISIONS: {
@@ -93,8 +100,8 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
         "red": "INT", "yellow": "INT", "open_alerts": "INT", "critical_alerts": "INT", "message": "STRING",
         "judgment_fingerprint": "STRING", "started_at": "STRING", "finished_at": "STRING",
-        "periods_reprocessed": "STRING", "owner": "STRING", "domain": "STRING", "criticality": "STRING",
-        "severity_score": "DOUBLE", "upstream": "STRING",
+        "periods_reprocessed": "STRING", "schema": "STRING", "owner": "STRING", "domain": "STRING",
+        "criticality": "STRING", "severity_score": "DOUBLE", "upstream": "STRING",
     },
 }  # fmt: skip
 KEYS: dict[str, tuple[str, ...]] = {
@@ -103,6 +110,7 @@ KEYS: dict[str, tuple[str, ...]] = {
     RESULTS: ("dataset", "version", "period", "segment", "column", "metric"),
     ALERTS: ("dataset", "alert_id"),
     ACTIONS: ("dataset", "action_id"),
+    MARKS: ("dataset", "mark_id"),
     RUNS: ("run_id", "dataset"),
     REVISIONS: ("dataset", "version", "period", "segment", "column", "bin"),
     RESULTS_HISTORY: ("dataset", "run_id", "version", "period", "segment", "column", "metric"),
@@ -239,9 +247,10 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
     automatic state, with the latest
     human action and the ``effective_state`` it gives. ``<prefix>actions_latest``, ``<prefix>alert_response`` and
     ``<prefix>response_summary`` hold the actions and the time to first action and to close;
-    ``<prefix>false_positive_rate`` counts the closures typed ``false_positive`` per rule.
-    ``<prefix>datasets`` is the dimension of the latest run per dataset: owner, domain, criticality, severity score
-    and the upstream origin, to filter dashboards by responsibility.
+    ``<prefix>false_positive_rate`` counts the closures typed ``false_positive`` per rule;
+    ``<prefix>datasets`` is the dimension of the latest run per dataset (owner, domain, criticality, severity
+    score, upstream origin) to filter dashboards by responsibility; ``<prefix>active_marks`` lists the period
+    marks in force (the latest of each selector, not unmarked, not past ``valid_until``).
     """
     results = table_name(scope, prefix, RESULTS)
     alerts = table_name(scope, prefix, ALERTS)
@@ -322,7 +331,26 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
         f"  SELECT r.*, row_number() OVER (PARTITION BY dataset ORDER BY finished_at DESC, run_id DESC) AS rn\n"
         f"  FROM {runs} r) WHERE rn = 1"
     )
-    return [latest, status, actions_latest, open_alerts, alert_response, response_summary, false_positives, datasets]
+    marks = table_name(scope, prefix, MARKS)
+    mark_columns = "mark_id, dataset, period, segment, `column`, metric, mark, reason, author, valid_until, created_at"
+    active_marks = (
+        f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'active_marks')} AS\n"
+        f"SELECT {mark_columns} FROM (\n"
+        f"  SELECT {mark_columns}, row_number() OVER (PARTITION BY dataset, period, segment, `column`, metric\n"
+        f"    ORDER BY created_at DESC, mark_id DESC) AS rn FROM {marks}) "
+        f"WHERE rn = 1 AND mark <> 'unmarked' AND (valid_until IS NULL OR valid_until >= current_date)"
+    )
+    return [
+        latest,
+        status,
+        actions_latest,
+        open_alerts,
+        alert_response,
+        response_summary,
+        false_positives,
+        active_marks,
+        datasets,
+    ]
 
 
 __all__ = [
@@ -334,6 +362,7 @@ __all__ = [
     "HISTORY_KINDS",
     "KEYS",
     "KINDS",
+    "MARKS",
     "PROFILES",
     "RESULTS",
     "RESULTS_HISTORY",

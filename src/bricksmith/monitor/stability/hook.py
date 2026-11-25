@@ -132,7 +132,7 @@ class _IOStore:
         self.tables = tables
         self.spark = spark
 
-    def rows(
+    def rows(  # noqa: PLR0913 - one keyword per storage filter
         self,
         kind: str,
         dataset: str,
@@ -140,6 +140,7 @@ class _IOStore:
         version: int | None = None,
         periods: Collection[str] | None = None,
         states: Collection[str] | None = None,
+        columns: Collection[str] | None = None,
     ) -> list[dict[str, Any]]:
         physical = self.tables[kind]
         if self.spark is not None:
@@ -154,9 +155,11 @@ class _IOStore:
                 frame = frame.where(f.col("period").isin(list(periods)))
             if states is not None:
                 frame = frame.where(f.col("state").isin(list(states)))
+            if columns is not None:
+                frame = frame.where(f.col("column").isin(list(columns)))
             return [r.asDict() for r in frame.collect()]
         return MemoryStore({kind: self.memory(physical)}).rows(
-            kind, dataset, version=version, periods=periods, states=states
+            kind, dataset, version=version, periods=periods, states=states, columns=columns
         )
 
     def exists(self, kind: str) -> bool:
