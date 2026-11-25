@@ -18,7 +18,7 @@ from bricksmith.monitor.model.alerts import replay_alerts
 from bricksmith.monitor.model.config import parse_config
 from bricksmith.monitor.model.engine import LIGHT, open_counts
 from bricksmith.monitor.model.report import build_report, render_html, render_markdown
-from bricksmith.monitor.model.tables import ACTIONS, RESULTS, RUNS, table_name, view_statements
+from bricksmith.monitor.model.tables import ACTIONS, ALERTS, RESULTS, RUNS, table_name, view_statements
 
 if TYPE_CHECKING:
     import argparse
@@ -119,7 +119,7 @@ def _state(args: argparse.Namespace) -> dict[str, Any]:
     from bricksmith.clients import Clients  # noqa: PLC0415 - heavy integration, loaded where used
 
     spark = Clients(context_from_args(args)).spark()
-    return {kind: _table_rows(args, spark, kind) for kind in (RESULTS, RUNS, ACTIONS)}
+    return {kind: _table_rows(args, spark, kind) for kind in (RESULTS, RUNS, ALERTS, ACTIONS)}
 
 
 def _report(args: argparse.Namespace) -> int:
@@ -129,7 +129,8 @@ def _report(args: argparse.Namespace) -> int:
         except ValueError:
             msg = f"--as-of must be an ISO date (YYYY-MM-DD), got {args.as_of!r}"
             raise UsageError(msg) from None
-    report = build_report(_state(args), args.model, as_of=args.as_of or "")
+    config = parse_config(_json(args.config)) if args.config else None
+    report = build_report(_state(args), args.model, as_of=args.as_of or "", config=config)
     stem = re.sub(r"[^A-Za-z0-9_.-]", "_", args.model)
     renderers = {"html": render_html, "md": render_markdown}
     chosen = renderers if args.format == "both" else {args.format: renderers[args.format]}
@@ -198,6 +199,9 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     report.add_argument("--out", default=".", help="directory the report files are written to (default .)")
     report.add_argument("--format", choices=("html", "md", "both"), default="both", help="default both")
     report.add_argument("--as-of", help="evaluation date (YYYY-MM-DD) for risk acceptances; default today")
+    report.add_argument(
+        "--config", help="JSON declaration whose persistence policy replays alerts when the state stores none"
+    )
     report.set_defaults(handler=_report)
 
 

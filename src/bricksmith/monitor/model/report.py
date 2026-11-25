@@ -3,8 +3,10 @@
 :func:`build_report` keeps the trusted rows of a model (the latest finished run per model version and monitoring
 period, the rule the dashboard views apply) and arranges them as plain data: the period axis is the sorted union of
 the periods found in the data, one section per metric family holds one series per ``(column, segment, metric)``,
-and each series carries the development and out-of-time reference values beside its monitored periods. The open
-alerts come from the same replay the ``alerts`` verb runs, so the human action on each one shows with it.
+and each series carries the development and out-of-time reference values beside its monitored periods. The alerts
+are the ones the model's latest finished run stored (so the counts equal the run's), with the human action on each
+one; a state with no stored alerts is replayed as the ``alerts`` verb does, with the persistence policy of the
+optional ``config``.
 
 :func:`render_html` returns one self-contained page (CSS tabs, inline SVG, no script and no external asset) and
 :func:`render_markdown` the same sections as tables. Both escape every value they print.
@@ -19,12 +21,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.errors import MonitorError
+from bricksmith.monitor.model.actions import apply_actions
 from bricksmith.monitor.model.alerts import replay_alerts, trusted
 from bricksmith.monitor.model.config import ALL_FAMILIES, FAMILY_METRICS
 from bricksmith.monitor.model.engine import open_counts
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+
+    from bricksmith.monitor.model.config import ModelMonitorConfig
 
 GREEN, YELLOW, RED = "green", "yellow", "red"
 _COLORS = {GREEN: "#2e7d32", YELLOW: "#f9a825", RED: "#c62828"}
@@ -176,12 +181,36 @@ def _alert_line(alert: Mapping[str, Any]) -> AlertLine:
     )
 
 
+def _model_alerts(  # noqa: PLR0913 - one keyword per input
+    state: Mapping[str, Iterable[Mapping[str, Any]]], model: str, last: Mapping[str, Any], *, stamp: str, as_of: str,
+    config: ModelMonitorConfig | None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    """Return the alerts of ``model``: the stored ones of its latest finished run, else a replay."""
+    actions = list(state.get("actions", []))
+    if "alerts" in state:
+        mine = [a for a in state["alerts"] if a.get("model") == model and a.get("run_id") == last.get("run_id")]
+        return apply_actions(mine, actions, as_of or stamp[:10])
+    _, alerts = replay_alerts(
+        list(state.get("results", [])), list(state.get("runs", [])), config=config, created_at=stamp,
+        actions=actions, as_of=as_of or stamp[:10],
+    )  # fmt: skip
+    return [a for a in alerts if a["model"] == model]
+
+
 def build_report(
-    state: Mapping[str, Iterable[Mapping[str, Any]]], model: str, *, as_of: str = "", generated: str = ""
+    state: Mapping[str, Iterable[Mapping[str, Any]]],
+    model: str,
+    *,
+    as_of: str = "",
+    generated: str = "",
+    config: ModelMonitorConfig | None = None,
 ) -> Report:
     """Return the report of ``model`` from stored rows.
 
-    ``state`` holds the ``results`` and ``runs`` row lists, and optionally ``actions``. ``as_of`` is the date
+    ``state`` holds the ``results`` and ``runs`` row lists, and optionally ``actions`` and ``alerts``. With
+    ``alerts`` the report lists those of the model's latest finished run, so its counts equal the run's; without,
+    the alerts are replayed from the stored lights with the persistence policy of ``config`` (default policy
+    when none). ``as_of`` is the date
     risk acceptances are evaluated on (default: the generation date); ``generated`` stamps the report (default now).
     A model with no trusted result is a :class:`MonitorError`: an empty report would read as a healthy model.
     """
@@ -203,13 +232,11 @@ def build_report(
     for row in mine:
         if row["monitoring_period"] == latest and row.get("light") in lights:
             lights[str(row["light"])] += 1
-    _, alerts = replay_alerts(
-        results, runs, created_at=stamp, actions=list(state.get("actions", [])), as_of=as_of or stamp[:10]
-    )
-    lines = [_alert_line(a) for a in alerts if a["model"] == model]
-    opened, critical = open_counts([a for a in alerts if a["model"] == model])
     finished = [r for r in runs if r.get("model") == model and r.get("status") in ("success", "partial")]
     last = max(finished, key=lambda r: str(r.get("finished_at") or ""), default={})
+    alerts = _model_alerts(state, model, last, stamp=stamp, as_of=as_of, config=config)
+    lines = [_alert_line(a) for a in alerts]
+    opened, critical = open_counts(alerts)
     run = {k: last.get(k) for k in ("run_id", "status", "gate", "finished_at", "model_version")}
     versions = sorted({str(r.get("model_version") or "") for r in mine})
     return Report(model, versions, periods, latest, stamp, lights, run, sections, lines, opened, critical)
