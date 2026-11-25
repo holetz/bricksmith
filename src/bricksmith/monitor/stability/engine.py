@@ -23,7 +23,7 @@ from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binnin
 from bricksmith.monitor.stability.tables import ALERTS, BINNINGS, PROFILES, RESULTS, RUNS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from bricksmith.monitor.stability.config import StabilityConfig
 
@@ -42,8 +42,20 @@ class StabilityGateError(MonitorError):
 class Store(Protocol):
     """Reads the rows already stored for a dataset in one stability table."""
 
-    def rows(self, kind: str, dataset: str) -> list[dict[str, Any]]:
-        """Return the rows of table ``kind`` whose ``dataset`` column equals ``dataset``."""
+    def rows(
+        self,
+        kind: str,
+        dataset: str,
+        *,
+        version: int | None = None,
+        periods: Collection[str] | None = None,
+        states: Collection[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the rows of table ``kind`` whose ``dataset`` column equals ``dataset``.
+
+        ``version``, ``periods`` and ``states`` narrow the read to one binning version, a set of periods and a set of
+        alert states; a filter left ``None`` keeps every row. Implementations push them into the storage read.
+        """
         ...
 
 
@@ -53,9 +65,25 @@ class MemoryStore:
 
     tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
-    def rows(self, kind: str, dataset: str) -> list[dict[str, Any]]:
-        """Return the stored rows of ``dataset``."""
-        return [dict(r) for r in self.tables.get(kind, []) if r.get("dataset") == dataset]
+    def rows(
+        self,
+        kind: str,
+        dataset: str,
+        *,
+        version: int | None = None,
+        periods: Collection[str] | None = None,
+        states: Collection[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the stored rows of ``dataset``, narrowed by the optional filters."""
+        keep = {} if periods is None else dict.fromkeys(periods)
+        return [
+            dict(r)
+            for r in self.tables.get(kind, [])
+            if r.get("dataset") == dataset
+            and (version is None or int(r.get("version") or 0) == version)
+            and (periods is None or str(r.get("period")) in keep)
+            and (states is None or r.get("state") in states)
+        ]
 
 
 @dataclass(frozen=True)
@@ -215,11 +243,8 @@ def _history_span(config: StabilityConfig) -> int:
     return 0
 
 
-def _plan_periods(
-    config: StabilityConfig, binning: Reference, periods: Sequence[str], profiled: set[str]
-) -> tuple[list[str], list[str], list[str]]:
-    """Return ``(window, periods to profile, periods to load)`` for this run."""
-    window = list(periods[-config.max_periods :])
+def _loaded_periods(config: StabilityConfig, binning: Reference, periods: Sequence[str]) -> list[str]:
+    """Return the periods of the window plus the history its baseline reads: all a run ever loads."""
     start = max(0, len(periods) - config.max_periods - _history_span(config))
     loaded = set(periods[start:])
     if config.baseline.kind == FIXED:
@@ -229,9 +254,18 @@ def _plan_periods(
             else list(fit_periods_of(binning))
         )
         loaded |= set(base)
+    return sorted(loaded)
+
+
+def _plan_periods(
+    config: StabilityConfig, binning: Reference, periods: Sequence[str], profiled: set[str]
+) -> tuple[list[str], list[str], list[str]]:
+    """Return ``(window, periods to profile, periods to load)`` for this run."""
+    window = list(periods[-config.max_periods :])
+    loaded = _loaded_periods(config, binning, periods)
     refresh = set(window[-config.refresh_periods :]) if config.refresh_periods else set()
-    todo = sorted(p for p in loaded if p not in profiled or p in refresh)
-    return window, todo, sorted(loaded)
+    todo = [p for p in loaded if p not in profiled or p in refresh]
+    return window, todo, loaded
 
 
 def _gate(config: StabilityConfig, red: int, yellow: int, open_alerts: int, critical: int) -> list[str]:
@@ -280,7 +314,9 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     binning, binning_rows, skipped = _active_binning(
         data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started
     )
-    stored_profiles = [r for r in store.rows(PROFILES, dataset) if int(r["version"]) == binning.version]
+    stored_profiles = store.rows(
+        PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
+    )
     window, todo, loaded = _plan_periods(config, binning, periods, {str(r["period"]) for r in stored_profiles})
     fresh = _profile(binning, data, config, todo, dataset=dataset, run_id=run_id)
     keep = set(loaded) - set(todo)
@@ -292,12 +328,12 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         )
         row.update(share=share, baseline_share=base, contribution=contribution)
     judgment = judgment_fingerprint(config)
-    previous = [r for r in store.rows(RUNS, dataset) if int(r.get("version") or 0) == binning.version]
+    previous = store.rows(RUNS, dataset, version=binning.version)
     last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
     rewrite_all = last is None or last.get("judgment_fingerprint") != judgment
     emitted = set(window) if rewrite_all else set(todo) & set(window)
     results = [r for r in computed.results if r["period"] in emitted]
-    stored_alerts = store.rows(ALERTS, dataset)
+    stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
     alert_rows = alerts(
         computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
         stored=stored_alerts,

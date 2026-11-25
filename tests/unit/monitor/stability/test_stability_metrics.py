@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import math
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -239,3 +239,48 @@ def test_open_alert_keeps_its_identity_when_its_opening_leaves_the_window() -> N
     assert final[0]["opened_period"] < "2026-10"  # the opening period is outside the last three periods
     assert final[0]["flagged_periods"] > 3
     assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]
+
+
+class _SpyStore(MemoryStore):
+    """A MemoryStore that records the filters of every read and the rows it returned."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[tuple[str, dict[str, Any], int]] = []
+
+    def rows(self, kind: str, dataset: str, **filters: Any) -> list[dict[str, Any]]:  # noqa: ANN401 - test spy
+        found = super().rows(kind, dataset, **filters)
+        self.reads.append((kind, filters, len(found)))
+        return found
+
+
+def test_reads_are_bounded_by_version_window_and_state() -> None:
+    periods = [f"2026-{m:02d}" for m in range(1, 9)]
+    rows = rows_of({p: [1, 1, 2, 2] for p in periods})
+    store = _SpyStore()
+    cfg = config(baseline="previous", max_periods=2)
+    for _ in range(2):
+        found, _ = results_of(rows, cfg, store)
+        for kind, items in found.tables.items():
+            store.tables[kind] = merge_rows(kind, store.tables.get(kind, []), items)
+    # An older binning version and a superseded alert sit in the store but are never read back.
+    store.tables["profiles"] += [{**r, "version": 0} for r in store.tables["profiles"][:5]]
+    store.reads.clear()
+    final, _ = results_of(rows, cfg, store)
+    profiles = next(r for r in store.reads if r[0] == "profiles")
+    assert profiles[1]["version"] == 1 and set(profiles[1]["periods"]) == {"2026-06", "2026-07", "2026-08"}
+    assert profiles[2] <= len(store.tables["profiles"]) - 5
+    alerts_read = next(r for r in store.reads if r[0] == "alerts")
+    assert set(alerts_read[1]["states"]) == {"open", "closed"}
+    assert final.outcome.periods_profiled == 1  # only the refreshed latest period
+
+
+def test_new_binning_version_profiles_and_judges_the_whole_window_in_its_first_run() -> None:
+    rows = rows_of({A: [1, 1, 2, 2], B: [1, 2, 2, 2]})
+    store = MemoryStore()
+    first, _ = results_of(rows, config(baseline="previous"), store)
+    for kind, items in first.tables.items():
+        store.tables[kind] = merge_rows(kind, store.tables.get(kind, []), items)
+    refit, _ = results_of(rows, config(baseline="previous", columns={"x": {"edges": [0, 2, 3]}}), store)
+    assert refit.outcome.version == 2 and refit.outcome.periods_profiled == 2
+    assert {r["period"] for r in refit.tables["results"]} == {A, B}

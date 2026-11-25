@@ -218,9 +218,12 @@ fails with `stability_gate`, and `sales_report` is blocked.
 
 - Fitting collects one small row per distinct value of each column. Above 100,000 distinct values, the Spark engine
   uses approximate percentiles instead.
-- Computing results collects the stored profiles of the window: periods × segment values × columns × bins rows. Keep
-  `max_periods`, `max_segments` and the column list proportionate.
-- Results compare periods within one binning version. Changing the bin-relevant configuration starts a new version,
-  whose history begins at the next run.
+- Computing results collects the stored profiles of the window and of the history its baseline reads, for the active
+  binning version only: periods × segment values × columns × bins rows. The filters on version and period run in the
+  storage read, so older periods and other versions are never collected. Open and closed alerts of the dataset and the
+  runs of the active version are read as well. Keep `max_periods`, `max_segments` and the column list proportionate.
+- Results compare periods within one binning version. Changing the bin-relevant configuration fits a new version in
+  the next run, which profiles and judges every period of the window at once (the first run of a version is not quiet,
+  and the gate can fail in it). Alerts of the previous version are marked `superseded`.
 - Not yet covered: notification delivery, reading rules from a Delta table and revision reliability. They are
   captured as follow-up specifications.
