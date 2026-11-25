@@ -15,7 +15,7 @@ from bricksmith.monitor.stability.config import CRITICALITY_WEIGHTS, parse_confi
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
 from bricksmith.monitor.stability.incident import Upstream, build_incident, upstream_origin
 from bricksmith.monitor.stability.tables import SCHEMAS, merge_rows, view_statements
-from bricksmith.ops.notify import AlertNotifier
+from bricksmith.ops.notify import AlertEvent, AlertNotifier, AlertRoute
 from bricksmith.plan import build_plan
 from bricksmith.runner import InMemoryTableIO, apply_plan
 
@@ -239,3 +239,35 @@ def test_a_broken_source_yields_one_notified_incident_and_silent_labeled_ones_do
 def test_downstream_notifies_when_the_source_is_healthy(tmp_path: Path) -> None:
     report = _plan_run(tmp_path, "no", AlertNotifier([_Sink()]))
     assert all("upstream" not in r.stability[0] for r in report.results)
+
+
+class _Named(_Sink):
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.name = name
+
+
+def _event(**details: str) -> AlertEvent:
+    return AlertEvent("statistical_alert", "orders", "m", details=details, key=f"k{sorted(details.items())}")
+
+
+def test_routing_sends_each_alert_to_the_adapters_of_its_owner_and_criticality() -> None:
+    sales, risk, everything = _Named("sales"), _Named("risk"), _Named("all")
+    routes = [
+        AlertRoute("sales", owners=("sales",)),
+        AlertRoute("risk", min_criticality="high"),
+        AlertRoute("risk", domains=("finance",)),
+    ]
+    notifier = AlertNotifier([sales, risk, everything], routes=routes)
+    notifier.notify(_event(owner="sales", criticality="low"))
+    notifier.notify(_event(owner="ingest", criticality="critical"))
+    notifier.notify(_event(owner="ingest", domain="finance", criticality="low"))
+    notifier.notify(_event())
+    assert [p["details"]["owner"] for p in sales.payloads] == ["sales"]  # type: ignore[index]
+    assert len(risk.payloads) == 2  # the critical one and the finance one, never the low or the unnamed
+    assert len(everything.payloads) == 4  # an adapter without a route keeps receiving everything
+
+
+def test_routing_rejects_an_unknown_criticality_floor() -> None:
+    with pytest.raises(ValueError, match="min_criticality"):
+        AlertRoute("x", min_criticality="urgent")
