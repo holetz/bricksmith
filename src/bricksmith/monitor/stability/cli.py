@@ -14,6 +14,7 @@ from bricksmith.monitor.actions import RESOLUTIONS, action_row, insert_statement
 from bricksmith.monitor.cli import _data, _json, _source  # pyright: ignore[reportPrivateUsage]
 from bricksmith.monitor.stability.backtest import backtest
 from bricksmith.monitor.stability.config import parse_config
+from bricksmith.monitor.stability.dashboard import dashboard_definition
 from bricksmith.monitor.stability.engine import MemoryStore, check
 from bricksmith.monitor.stability.marks import MARKS as MARK_NAMES
 from bricksmith.monitor.stability.marks import UNMARKED, effective_marks, mark_row
@@ -95,6 +96,16 @@ def _backtest(args: argparse.Namespace) -> int:
 def _views(args: argparse.Namespace) -> int:
     statements = view_statements(args.scope, args.prefix)
     emit(args, {"statements": statements}, ";\n\n".join(statements) + ";")
+    return EXIT_OK
+
+
+def _dashboard(args: argparse.Namespace) -> int:
+    text = json.dumps(dashboard_definition(args.prefix, args.scope), indent=2) + "\n"
+    if args.output:
+        Path(args.output).write_text(text, encoding="utf-8")
+        emit(args, {"output": args.output}, f"wrote {args.output}")
+    else:
+        emit(args, dashboard_definition(args.prefix, args.scope), text.rstrip("\n"))
     return EXIT_OK
 
 
@@ -210,7 +221,7 @@ def _register_marks(commands: argparse._SubParsersAction[argparse.ArgumentParser
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``stability check|reprocess|backtest|views|action|mark|unmark|marks``."""
+    """Register ``stability check|reprocess|backtest|views|dashboard|action|mark|unmark|marks``."""
     group = subparsers.add_parser(
         "stability", help="check table stability by period and print dashboard views", parents=[global_parent()]
     )
@@ -257,6 +268,15 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     views.add_argument("--scope", required=True, help="catalog.schema holding the stability tables")
     views.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
     views.set_defaults(handler=_views)
+    board = commands.add_parser(
+        "dashboard",
+        help="print the AI/BI dashboard definition (.lvdash.json) over the stability views",
+        parents=[global_parent()],
+    )
+    board.add_argument("--scope", help="catalog.schema holding the views (default: unqualified names)")
+    board.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
+    board.add_argument("--output", help="write the definition to this file instead of printing it")
+    board.set_defaults(handler=_dashboard)
     act = commands.add_parser(
         "action",
         help="record a human action on an alert: analysis, closed (with a resolution) or risk_accepted",
