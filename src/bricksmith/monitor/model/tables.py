@@ -175,9 +175,11 @@ def _latest_alerts(scope: str, prefix: str) -> str:
 
     An alert id is the stable identity of a span: a later run moves its period or closes it, so only its latest
     stored row says what state it is in. A row is dropped when a finished run newer than the one that stored it
-    covered the alert's monitoring period (stored results for that model version and period) and stored no row of
-    the alert: a rerun of the period stopped raising it (a light alert is written only while red or yellow, and a
-    span a rerun no longer opens is not written at all), so it is cleared, not open.
+    measured the alert's metric (a non-error result row for that model version, monitoring period, segment, column
+    and metric) and stored no row of the alert: a rerun that measured the metric and stopped raising it (a light
+    alert is written only while red or yellow, and a span a rerun no longer opens is not written at all) clears it.
+    A rerun whose measurement of that metric errored (a result row whose reason starts with ``error:``) or stored
+    no row for it measured nothing, so the alert stays open.
     """
     runs = table_name(scope, prefix, RUNS)
     alerts = table_name(scope, prefix, ALERTS)
@@ -194,7 +196,11 @@ def _latest_alerts(scope: str, prefix: str) -> str:
         f"WHERE NOT EXISTS (SELECT 1 FROM {results} c JOIN {runs} n\n"
         f"    ON c.run_id = n.run_id AND c.model = n.model AND n.status IN ({finished})\n"
         f"  WHERE c.model = t.model AND c.model_version = t.model_version\n"
-        f"    AND c.monitoring_period = t.monitoring_period AND n.finished_at > r.finished_at)"
+        f"    AND c.monitoring_period = t.monitoring_period AND c.metric = t.metric\n"
+        f"    AND (t.segment IS NULL OR c.segment = t.segment)\n"
+        f"    AND (t.`column` IS NULL OR c.`column` = t.`column`)\n"
+        f"    AND (c.reason IS NULL OR c.reason NOT LIKE 'error:%')\n"
+        f"    AND n.finished_at > r.finished_at)"
     )
 
 
