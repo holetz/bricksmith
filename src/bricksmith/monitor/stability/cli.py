@@ -1,4 +1,4 @@
-"""The ``stability`` command group: ``check`` or ``reprocess`` a table outside a project and print the ``views``."""
+"""The ``stability`` command group: ``check``, ``reprocess`` or ``backtest`` a table outside a project, ``views``."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from bricksmith.errors import EXIT_OK, EXIT_VALIDATION, UsageError
 from bricksmith.monitor.actions import ACTIONS as ACTION_NAMES
 from bricksmith.monitor.actions import RESOLUTIONS, action_row, insert_statement
 from bricksmith.monitor.cli import _data, _json, _source  # pyright: ignore[reportPrivateUsage]
+from bricksmith.monitor.stability.backtest import backtest
 from bricksmith.monitor.stability.config import parse_config
 from bricksmith.monitor.stability.engine import MemoryStore, check
 from bricksmith.monitor.stability.tables import ACTIONS, ALL_KINDS, SCHEMAS, merge_rows, table_name, view_statements
@@ -56,6 +57,23 @@ def _check(args: argparse.Namespace) -> int:
     return EXIT_VALIDATION if outcome.failed else EXIT_OK
 
 
+def _backtest(args: argparse.Namespace) -> int:
+    config = parse_config(_json(args.config))
+    loaded = _json(args.state)
+    if not isinstance(loaded, dict):
+        msg = f"{args.state} must hold a mapping of stability table to rows"
+        raise UsageError(msg)
+    store = MemoryStore({k: list(v) for k, v in loaded.items() if k in ALL_KINDS})
+    dataset = args.dataset or config.dataset
+    if not dataset:
+        msg = "backtest needs --dataset: the declaration names none"
+        raise UsageError(msg)
+    periods = [p.strip() for p in (args.periods or "").split(",") if p.strip()]
+    report = backtest(config, store, dataset=dataset, periods=periods, noise_runs=args.noise, seed=args.seed)
+    emit(args, report.to_dict(), report.summary())
+    return EXIT_OK
+
+
 def _views(args: argparse.Namespace) -> int:
     statements = view_statements(args.scope, args.prefix)
     emit(args, {"statements": statements}, ";\n\n".join(statements) + ";")
@@ -90,7 +108,7 @@ def _action(args: argparse.Namespace) -> int:
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``stability check|reprocess|views|action``."""
+    """Register ``stability check|reprocess|backtest|views|action``."""
     group = subparsers.add_parser(
         "stability", help="check table stability by period and print dashboard views", parents=[global_parent()]
     )
@@ -118,6 +136,20 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     redo.add_argument("--state", help="local JSON file holding the stability tables; read, then updated")
     redo.add_argument("--run-id", default="cli", help="run identity recorded on the rows")
     redo.set_defaults(handler=_check)
+    bt = commands.add_parser(
+        "backtest",
+        help="replay a candidate configuration over the stored profiles and report what would change (never writes)",
+        parents=[global_parent()],
+    )
+    bt.add_argument("--config", required=True, help="JSON file with the candidate stability declaration")
+    bt.add_argument("--dataset", help="dataset name (default: the declaration's)")
+    bt.add_argument("--state", required=True, help="local JSON file holding the stability tables; only read")
+    bt.add_argument("--periods", help="report only these periods: a list (a,b) or a range (first..last)")
+    bt.add_argument(
+        "--noise", type=int, default=0, metavar="RUNS", help="also estimate the false-alarm rate on RUNS noise series"
+    )
+    bt.add_argument("--seed", type=int, default=0, help="seed of the noise estimate (default 0)")
+    bt.set_defaults(handler=_backtest)
     views = commands.add_parser("views", help="print CREATE VIEW statements for dashboards", parents=[global_parent()])
     views.add_argument("--scope", required=True, help="catalog.schema holding the stability tables")
     views.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
