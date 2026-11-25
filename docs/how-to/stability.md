@@ -59,7 +59,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity}`. See [Notifications](#notifications). |
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
 | `refresh_periods` | `1` | The latest N periods are profiled again on every run (late or corrected data). |
-| `max_periods`, `max_segments` | `36`, `50` | Computation window and the most frequent segment values kept per segment set. |
+| `max_periods`, `max_segments` | `36`, `50` | Computation window and the most frequent segment values kept per segment set, ranked over every period the run loads (see [Profiles](#what-happens-in-a-run)). |
 | `rules` | `[]` | [Limit rules](#limit-rules): an inline list, or the path of a TOML or JSON file, that picks limits or marks segments informational per dataset, column, segment, metric and date. |
 | `scope`, `prefix`, `dataset` | output's schema, `stability_`, output name | Where the tables live and how the dataset is named. |
 | `inference` | 10 bins, >20 distinct = numeric, 20 categories, >1000 text values skipped, exact-zero bin | Options of `"auto"`. |
@@ -77,7 +77,14 @@ columns and text with very many values are skipped. The reason for each skip is 
    refitted per run, because moving quantiles produce false drift.
 3. **Profiles.** Periods without a stored profile, plus the latest `refresh_periods`, are profiled. Each profile
    holds counts, weights and per-bin value sums and squares, per period, segment, column and bin. Older periods
-   come from the stored profiles, so the table is not rescanned.
+   come from the stored profiles, so the table is not rescanned. The kept segments of each segment set are the
+   `max_segments` most frequent values over every period the run loads (the window and the history its baseline
+   reads), not only the periods it profiles, so the set does not change with `refresh_periods`. A segment that
+   already has stored profiles in those periods stays kept even when it falls out of the top, so the set can exceed
+   `max_segments` until its history leaves the window. A kept segment with no rows in a profiled period after its
+   first period gets profile rows at zero, so a segment whose volume collapses or vanishes is still judged
+   (`volume_change` down to -1). A segment that newly enters the top starts with `no_baseline`; its earlier periods
+   are not profiled again.
 4. **Results.** Every period of the window is judged against its baseline. Results are written for new periods, or
    for the whole window when limits, baseline, trend or persistence changed.
 5. **Alerts.** Status histories are replayed into alerts. A replay produces the same `alert_id`, an open alert whose

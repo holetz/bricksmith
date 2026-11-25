@@ -95,6 +95,55 @@ def test_spark_engine_equals_the_pure_engine(
     assert unseen["value"] > 0.2  # the new category "z" falls outside the fitted bins
 
 
+def segment_history(latest: dict[str, int]) -> list[tuple[Any, ...]]:
+    steady = {"a": 30, "b": 20, "c": 10}
+    months = {"2026-01": steady, "2026-02": steady, "2026-03": steady, "2026-04": steady, "2026-05": latest}
+    return [(m, ch, float(i % 10)) for m, counts in months.items() for ch, n in counts.items() for i in range(n)]
+
+
+def test_spark_keeps_the_same_segments_as_the_pure_engine_across_runs(remote_clients: Clients) -> None:
+    spark = remote_clients.spark()
+    ddl = "month STRING, ch STRING, x DOUBLE"
+    config = parse_config(
+        {"period": "month", "columns": {"x": {"edges": [0, 5, 10]}}, "segments": ["ch"], "max_segments": 2,
+         "baseline": {"kind": "fixed", "start": "2026-01", "end": "2026-03"}, "min_rows": 0,
+         "persistence": {"immediate_red": True}, "gate": {"fail_on": ["red"]}}
+    )  # fmt: skip
+    first_rows = [r for r in segment_history({}) if r[0] != "2026-05"]
+    for latest, carried_b in (({"a": 30, "c": 15}, "gone"), ({"a": 30, "b": 1, "c": 100}, "outranked")):
+        rows = segment_history(latest)
+        frame = spark.createDataFrame(rows, ddl)
+        dicts: list[dict[str, Any]] = [dict(zip(("month", "ch", "x"), r, strict=True)) for r in rows]
+        pure_bins, _ = fit_rows_binning(dicts, config, ["2026-01", "2026-02", "2026-03"], dataset="d", version=1)
+        spark_bins, _ = fit_spark_binning(frame, config, ["2026-01", "2026-02", "2026-03"], dataset="d", version=1)
+        assert spark_bins.to_dict() == pure_bins.to_dict()
+        loaded = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"]
+        carried = {"ch=b": "2026-01"}
+        pure_profile, pure_info = profile_rows(
+            pure_bins, dicts, config, ["2026-05"], dataset="d", rank_periods=loaded, carried=carried
+        )
+        spark_profile, spark_info = profile_spark(
+            spark_bins, frame, config, ["2026-05"], dataset="d", rank_periods=loaded, carried=carried
+        )
+        assert_rows_equal(pure_profile, spark_profile, ("period", "segment", "column", "bin"))
+        assert pure_info.to_dict() == spark_info.to_dict()
+        assert "ch=b" in {r["segment"] for r in spark_profile}, carried_b
+
+        outcomes = []
+        for data in (dicts, frame):
+            store = MemoryStore()
+            first: list[dict[str, Any]] = [dict(zip(("month", "ch", "x"), r, strict=True)) for r in first_rows]
+            earlier = check(
+                first if data is dicts else spark.createDataFrame(first_rows, ddl), config, store,
+                dataset="d", run_id="r1", now="t",
+            )  # fmt: skip
+            store.tables = {kind: list(items) for kind, items in earlier.tables.items()}
+            outcomes.append(check(data, config, store, dataset="d", run_id="r2", now="t"))
+        pure, remote = outcomes
+        assert_rows_equal(pure.tables["results"], remote.tables["results"], ("period", "segment", "column", "metric"))
+        assert pure.outcome.to_dict() == remote.outcome.to_dict() and remote.outcome.status == "failed"
+
+
 ACTIONS = ("collect", "count", "first", "toPandas")
 
 
