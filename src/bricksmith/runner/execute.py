@@ -132,13 +132,13 @@ class _Worker:
         if any("stability" in t.options for t in entry.targets):
             from bricksmith.monitor.stability.hook import run_stability  # noqa: PLC0415 - only for declaring tasks
 
-            found, failure = run_stability(ctx, self.run_id, self.notifier, self.notify)
+            found, failure = run_stability(ctx, self.run_id, self.notifier, self.notify, self.root)
             stability = tuple(o.to_dict() for o in found)
             reason = "stability check failed" if failure else ""
         if any("model_monitoring" in t.options for t in entry.targets):
             from bricksmith.monitor.model.hook import run_model_monitoring  # noqa: PLC0415 - only for declaring tasks
 
-            measured, model_failure = run_model_monitoring(ctx, self.run_id)
+            measured, model_failure = run_model_monitoring(ctx, self.run_id, self.root)
             models = tuple(o.to_dict() for o in measured)
             if failure is None and model_failure is not None:
                 reason, failure = "model monitoring check failed", model_failure

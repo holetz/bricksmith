@@ -210,7 +210,8 @@ A `rules` list (or the path of a TOML or JSON file) refines `limits` per column,
 segments informational. The syntax, the specificity (dataset 4, segment 2, column 1, then highest `version`, then
 smallest `id`), the validity dates and the informational states are the ones of
 [data stability](stability.md#limit-rules); here the dataset selector is the `model`, the segment is the segment
-value (`n`, not `region=n`), and the validity is compared with the monitoring period.
+value (`n`, not `region=n`), and the validity is compared with the monitoring period. A relative rules file path
+resolves against the project root, like [stability](stability.md#limit-rules).
 
 ```python
 "rules": [

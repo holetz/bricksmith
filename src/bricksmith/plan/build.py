@@ -24,6 +24,7 @@ from bricksmith.tasks.declaration import DATA
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+    from pathlib import Path
 
     from bricksmith.graph import TaskGraph, TaskNode
 
@@ -82,7 +83,9 @@ def _sinks(node: TaskNode) -> tuple[str, ...]:
     return ()
 
 
-def _stability_targets(node: TaskNode, physical: dict[str, str], issues: list[Issue]) -> tuple[Target, ...]:
+def _stability_targets(
+    node: TaskNode, physical: dict[str, str], issues: list[Issue], root: Path | None
+) -> tuple[Target, ...]:
     """Return the declared stability targets of a task; an invalid declaration becomes an error issue."""
     if "stability" not in node.metadata:
         return ()
@@ -90,7 +93,7 @@ def _stability_targets(node: TaskNode, physical: dict[str, str], issues: list[Is
     from bricksmith.monitor.stability.hook import stability_targets  # noqa: PLC0415 - only for declaring tasks
 
     try:
-        return stability_targets(node.metadata, {n: physical[n] for n in node.outputs}, Target)
+        return stability_targets(node.metadata, {n: physical[n] for n in node.outputs}, Target, root)
     except ValidationError as error:
         issues.append(Issue("invalid_stability", ERROR, f"{node.id}: {error}", node.id))
         return ()
@@ -117,7 +120,9 @@ def _feature_options(
         return None
 
 
-def _model_monitoring_targets(node: TaskNode, physical: dict[str, str], issues: list[Issue]) -> tuple[Target, ...]:
+def _model_monitoring_targets(
+    node: TaskNode, physical: dict[str, str], issues: list[Issue], root: Path | None
+) -> tuple[Target, ...]:
     """Return the declared model monitoring targets of a task; an invalid declaration becomes an error issue."""
     if "model_monitoring" not in node.metadata:
         return ()
@@ -125,7 +130,7 @@ def _model_monitoring_targets(node: TaskNode, physical: dict[str, str], issues: 
     from bricksmith.monitor.model.hook import model_monitoring_targets  # noqa: PLC0415 - only for declaring tasks
 
     try:
-        return model_monitoring_targets(node.metadata, {n: physical[n] for n in node.outputs}, Target)
+        return model_monitoring_targets(node.metadata, {n: physical[n] for n in node.outputs}, Target, root)
     except ValidationError as error:
         issues.append(Issue("invalid_model_monitoring", ERROR, f"{node.id}: {error}", node.id))
         return ()
@@ -166,8 +171,8 @@ def _entry(  # noqa: PLR0913 - the entry and where its issues go
                 )
                 for name in node.outputs
             ),
-            *_stability_targets(node, physical, issues),
-            *_model_monitoring_targets(node, physical, issues),
+            *_stability_targets(node, physical, issues, graph.root),
+            *_model_monitoring_targets(node, physical, issues, graph.root),
         ),
         sinks=_sinks(node),
     )

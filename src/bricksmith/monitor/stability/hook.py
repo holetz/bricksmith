@@ -36,6 +36,7 @@ from bricksmith.monitor.stability.tables import (
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
+    from pathlib import Path
 
     from bricksmith.ops.notify import AlertNotifier
     from bricksmith.plan.model import PlanEntry, Target
@@ -62,10 +63,10 @@ class Declaration:
         return self.config.dataset or self.physical
 
 
-def resolve(value: object, outputs: Mapping[str, str]) -> tuple[Declaration, ...]:
+def resolve(value: object, outputs: Mapping[str, str], root: Path | None = None) -> tuple[Declaration, ...]:
     """Bind the ``stability`` metadata of a task to its outputs (``name -> physical``)."""
     found: list[Declaration] = []
-    for config in parse_declarations(value):
+    for config in parse_declarations(value, root):
         if config.output:
             names = [n for n, p in outputs.items() if config.output in (n, n.rsplit(".", 1)[-1], p)]
         else:
@@ -85,13 +86,13 @@ def resolve(value: object, outputs: Mapping[str, str]) -> tuple[Declaration, ...
 
 
 def stability_targets(
-    metadata: Mapping[str, object], outputs: Mapping[str, str], target_type: type[Target]
+    metadata: Mapping[str, object], outputs: Mapping[str, str], target_type: type[Target], root: Path | None = None
 ) -> tuple[Target, ...]:
     """Return the declared ``merge`` targets of the stability tables (none without a ``stability`` key)."""
     if KEY not in metadata:
         return ()
     seen: dict[str, Target] = {}
-    for declaration in resolve(metadata[KEY], outputs):
+    for declaration in resolve(metadata[KEY], outputs, root):
         for kind, physical in declaration.tables.items():
             if physical in outputs.values():
                 msg = f"stability: {physical!r} is also a task output; choose another prefix or scope"
@@ -102,7 +103,7 @@ def stability_targets(
     return tuple(seen[p] for p in sorted(seen))
 
 
-def declarations(entry: PlanEntry) -> tuple[Declaration, ...]:
+def declarations(entry: PlanEntry, root: Path | None = None) -> tuple[Declaration, ...]:
     """Return the declarations of a plan entry (read back from its output targets' options)."""
     outputs = {
         t.name: t.physical
@@ -111,7 +112,7 @@ def declarations(entry: PlanEntry) -> tuple[Declaration, ...]:
     }
     for target in entry.targets:
         if KEY in target.options:
-            return resolve(target.options[KEY], outputs)
+            return resolve(target.options[KEY], outputs, root)
     return ()
 
 
@@ -226,15 +227,17 @@ def run_stability(
     run_id: str,
     notifier: AlertNotifier | None = None,
     notify: NotifyPolicy | None = None,
+    root: Path | None = None,
 ) -> tuple[tuple[Outcome, ...], BaseException | None]:
     """Check every declared output of the task; return the outcomes and the error that fails the task, if any.
 
     With a ``notifier``, alerts that opened, escalated or recurred are delivered after the rows are written, under
-    the declaration's ``notify`` policy or, when it declares none, the project's ``notify`` default.
+    the declaration's ``notify`` policy or, when it declares none, the project's ``notify`` default. A relative rules
+    file path resolves against the project ``root``.
     """
     outcomes: list[Outcome] = []
     failure: BaseException | None = None
-    for declaration in declarations(ctx.entry):
+    for declaration in declarations(ctx.entry, root):
         try:
             outcome = _check_one(ctx, declaration, run_id, notifier, notify)
         except Exception as error:  # noqa: BLE001 - the error policy decides
