@@ -32,7 +32,7 @@ def test_the_prefix_reaches_the_datasets() -> None:
 
 
 def test_load_resources_defers_every_target_to_bundle_variables() -> None:
-    from databricks.bundles.core import Bundle  # noqa: PLC0415
+    from databricks.bundles.core import Bundle  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
     for target in ("dev", "prod"):
         dashboard = _dashboard(load_resources(Bundle(target=target)))
