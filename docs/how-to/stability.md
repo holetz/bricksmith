@@ -68,6 +68,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `refresh_periods` | `1` | The latest N periods are profiled again on every run (late or corrected data). |
 | `max_periods`, `max_segments` | `36`, `50` | Computation window and the most frequent segment values kept per segment set, ranked over every period the run loads (see [Profiles](#what-happens-in-a-run)). |
 | `rules` | `[]` | [Limit rules](#limit-rules): an inline list, or the path of a TOML or JSON file, that picks limits or marks segments informational per dataset, column, segment, metric and date. A rule's `metric` must be a stability metric. |
+| `auto_columns` | `freeze` | With `columns: "auto"`, `freeze` keeps the monitored columns of the fitted binning and alerts on a changed schema; `extend` fits a new binning version when the table's columns or types change. See [Schema drift](#schema-drift). |
 | `scope`, `prefix`, `dataset` | output's schema, `stability_`, output name | Where the tables live and how the dataset is named. |
 | `epsilon` | `1e-4` | Floor of a bin share in PSI and CSI. Must be a finite number greater than 0. |
 | `inference` | 10 bins, >20 distinct = numeric, 20 categories, >1000 text values skipped, exact-zero bin | Options of `"auto"`. |
@@ -87,6 +88,33 @@ Model monitoring applies the same `epsilon` bound.
 `"auto"` uses quantile bins (with a separate bin for exact zeros) for numeric columns with many distinct values.
 Other numeric, text and boolean columns are categorical. Dates, timestamps, binary and complex types, constant
 columns and text with very many values are skipped. The reason for each skip is stored on the binning row.
+
+## Schema drift
+
+The binning is frozen per configuration, so a column added later is never profiled and a dropped one used to fail
+the run. Every run now stores the table schema (a JSON list of `[column, type, nullable]`, in the `schema` column of
+`stability_binnings` for the schema a binning was fitted against, and of `stability_runs` for the schema each run saw)
+and judges the drift of the latest period of the window:
+
+- `schema_change` (table level, value = columns added, dropped or retyped, listed in `reason`) is compared with the
+  schema the active binning was fitted on, so a frozen binning keeps reporting an unmonitored new column. The run that
+  fits a new version compares with the binning it replaces. Binnings stored before this feature have no schema: the
+  last run's schema is the reference until a new version is fitted. Columns in `exclude` are ignored, and nullability
+  is recorded but not compared.
+- `missing_column` (per column, value 1) reports a monitored column that is no longer in the table, in the pure and
+  the Spark engine alike, instead of failing the run or profiling 100% nulls. The column leaves the profile of that run,
+  and a run where it is back reports it once at 0 so its alert closes. A missing period, weight or segment column, or a
+  table without any monitored column, still fails the run.
+
+Both are ordinary results: default limits are `higher: 0 / 2` for `schema_change` (one or two changed columns are
+yellow, more are red) and `higher: 0 / 0` for `missing_column`; override them with `limits` or `column_limits`, switch
+one off with `null`, and use `gate.fail_on` to fail the task. Their alerts open on the first flagged run
+(`yellow` and `red` of `persistence` do not apply to them) and close after `close_after` clean runs.
+
+`auto_columns: extend` (only with `columns: "auto"`) hashes the table's non-excluded columns and types into the binning
+fingerprint: when they change, the next run fits a new binning version on the latest `fit_periods` periods (the earliest
+ones may predate the new column), unless the baseline is a fixed range. The `schema_change` result of that run says which
+columns were absorbed. Like any refit, the new version profiles and judges every period of the window at once.
 
 ## Small samples and PSI
 
@@ -344,6 +372,8 @@ of the table, so it works on every engine.
 | `weight_change` | table | same, with the weight column | both: 0.20 / 0.50 |
 | `revision_row_change` | table | rows now / rows at first publication − 1 (only with `revision`) | both: 0.01 / 0.05 |
 | `revision_psi` | column | PSI of the period's bin shares against its first publication | higher: 0.05 / 0.10 |
+| `schema_change` | table | columns added, dropped or retyped since the binning was fitted | higher: 0 / 2 |
+| `missing_column` | column | 1 while a monitored column is absent (0 when it returned) | higher: 0 / 0 |
 | `revision_mean_shift` | numeric column | (mean − first-publication mean) / first-publication std | both: 0.10 / 0.25 |
 
 Bounds are inclusive. With `higher`, a value up to `green` is green, up to `red` is yellow, and above `red` is red.
@@ -485,7 +515,7 @@ which reports never use.
 
 | Table | Key | Main columns |
 |---|---|---|
-| `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body |
+| `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body, schema |
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
 | `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper, trend_model, drift_status, change_point_suggested |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
@@ -493,7 +523,7 @@ which reports never use.
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
 | `stability_results_history` | dataset, run_id, version, period, segment, column, metric | only with `history`: the judged columns of `stability_results`, run_id, judged_at, judgment_fingerprint, data_version; append-only |
 | `stability_alert_events` | dataset, alert_id, event, run_id, action_id | only with `history`: period, severity, state, resolution, message, occurred_at; one row per alert transition |
-| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed |
+| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed, schema |
 
 Table-level metrics use column `""`, and the whole population uses segment `""` (label `(all)`). Segment keys are
 canonical text, `col=value,col2=value2`, with `(null)` for nulls. `period_date` is the first day the period
@@ -581,9 +611,15 @@ fails with `stability_gate`, and `sales_report` is blocked.
   binning version only: periods × segment values × columns × bins rows. The filters on version and period run in the
   storage read, so older periods and other versions are never collected. Open and closed alerts of the dataset and the
   runs of the active version are read as well. Keep `max_periods`, `max_segments` and the column list proportionate.
-- Results compare periods within one binning version. Changing the bin-relevant configuration fits a new version in
-  the next run, which profiles and judges every period of the window at once (the first run of a version is not quiet,
-  and the gate can fail in it). Alerts of the previous version are marked `superseded`.
+- Distribution results compare periods within one binning version. Changing the bin-relevant configuration fits a new
+  version in the next run, which profiles and judges every period of the window at once (the first run of a version is
+  not quiet, and the gate can fail in it). Column alerts of the previous version are marked `superseded`.
+- The table-level metrics (`row_count`, `volume_change`, `weight_change`, `schema_change`) do not depend on bins, so
+  their series continue across versions of the same period column: the baseline, the trend history and the alerts read
+  the totals of the earlier versions too, including periods the table no longer holds, within the horizon of
+  `max_periods` and the baseline's reach. A table-level alert keeps its `alert_id` through a refit instead of being
+  superseded. Reading them collects, per earlier version, the profile rows of one column. A version fitted with another
+  period column is left out.
 - Revision reliability compares stored profiles, not rows: it says that a period changed and by how much, not which
   keys changed, and it does not read the Delta history of the table.
 - Not yet covered: reading rules from a Delta table. It is captured as a follow-up specification.

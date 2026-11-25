@@ -36,6 +36,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "dataset": "STRING", "version": "INT", "config_fingerprint": "STRING", "fingerprint": "STRING",
         "period_column": "STRING", "fit_periods": "STRING", "fit_rows": "BIGINT", "columns": "INT",
         "skipped": "STRING", "body": "STRING", "created_run_id": "STRING", "created_at": "STRING",
+        "schema": "STRING",
     },
     PROFILES: {
         "dataset": "STRING", "version": "INT", "period": "STRING", "period_date": "DATE", "segment": "STRING",
@@ -93,7 +94,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
         "red": "INT", "yellow": "INT", "open_alerts": "INT", "critical_alerts": "INT", "message": "STRING",
         "judgment_fingerprint": "STRING", "started_at": "STRING", "finished_at": "STRING",
-        "periods_reprocessed": "STRING",
+        "periods_reprocessed": "STRING", "schema": "STRING",
     },
 }  # fmt: skip
 KEYS: dict[str, tuple[str, ...]] = {

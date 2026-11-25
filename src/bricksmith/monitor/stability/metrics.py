@@ -51,6 +51,7 @@ from bricksmith.monitor.stability.config import (
     REVISION_PSI,
     ROW_COUNT,
     SAMPLE_SIZE,
+    SCHEMA_METRICS,
     UNSEEN_RATE,
     UNSEEN_RATE_DELTA,
     VOLUME_CHANGE,
@@ -115,6 +116,36 @@ def index_profiles(binning: Reference, profiles: Iterable[Mapping[str, Any]]) ->
             weights[period] = weights.get(period, 0.0) + slot[1]
     history.periods = sorted(found)
     return history
+
+
+def table_totals(history: History, earlier: Iterable[Mapping[str, Any]] = ()) -> History:
+    """Return the rows and weights per segment and period of the whole lineage: earlier versions, then ``history``.
+
+    ``earlier`` holds profile rows of earlier binning versions (of one column each: the first column of a version
+    is counted, since every row falls in one bin of every column). A period known to several versions takes the
+    newest version's totals; the active ``history`` overrides them all.
+    """
+    columns: dict[int, str] = {}
+    sums: dict[tuple[int, str, str], list[float]] = {}
+    for row in earlier:
+        version, column = int(row["version"]), str(row["column"])
+        columns[version] = min(column, columns.get(version, column))
+    for row in earlier:
+        version = int(row["version"])
+        if str(row["column"]) != columns[version]:
+            continue
+        slot = sums.setdefault((version, str(row["segment"]), str(row["period"])), [0.0, 0.0])
+        slot[0] += int(row["count"] or 0)
+        slot[1] += float(row.get("weight") or 0.0)
+    totals = History()
+    for (_, segment, period), (count, weight) in sorted(sums.items()):
+        totals.rows.setdefault(segment, {})[period] = int(count)
+        totals.weights.setdefault(segment, {})[period] = weight
+    for segment, by_period in history.rows.items():
+        totals.rows.setdefault(segment, {}).update(by_period)
+        totals.weights.setdefault(segment, {}).update(history.weights.get(segment, {}))
+    totals.periods = sorted({p for by_period in totals.rows.values() for p in by_period})
+    return totals
 
 
 def baseline_periods(config: StabilityConfig, binning: Reference, periods: Sequence[str], period: str) -> list[str]:
@@ -379,6 +410,7 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     run_id: str = "",
     computed_at: str = "",
     emptied: Collection[str] = (),
+    earlier: Iterable[Mapping[str, Any]] = (),
     settling: Collection[str] = (),
     gap: Callable[[Sequence[str], str], int] | None = None,
     trend_seed: Mapping[Key, Sequence[float]] | None = None,
@@ -390,6 +422,10 @@ def compute(  # noqa: PLR0913 - one keyword per result field
 
     An ``emptied`` period is reported like any other, but its zero-count profile is never a baseline period for
     another period: the ``previous`` and ``rolling`` rules skip it and take the next eligible period.
+
+    The table-level metrics (``row_count``, ``volume_change``, ``weight_change``) do not depend on bins, so they
+    read the totals of the whole lineage: ``earlier`` are profile rows of earlier binning versions. Periods only
+    those versions know are judged too (their results feed trends and alert replays) and are the caller's to drop.
 
     A ``settling`` period is judged and shown (``settling`` true) like any other, but it is never a baseline
     period, never enters a trend history and is not counted by the gate. ``gap(baseline periods, period)`` gives
@@ -419,20 +455,31 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     in_window = [p for p in history.periods if p in {*window, *emptied}]
     skipped = {*emptied, *settling}
     eligible = [p for p in history.periods if p not in skipped]
-    for period in in_window:
+    totals = table_totals(history, earlier)
+    table_eligible = [p for p in totals.periods if p not in skipped]
+    earlier_only = [p for p in totals.periods if p not in set(history.periods)]
+    for period in sorted({*in_window, *earlier_only}):
+        in_active = period in in_window
         ordered = sorted([*eligible, period]) if period in skipped else eligible
-        wanted = [p for p in baseline_periods(config, binning, ordered, period) if p not in settling]
-        ctx.gap = gap(wanted, period) if gap and wanted else 0
-        for segment in sorted(history.rows):
-            if period not in history.rows[segment]:
+        table_order = sorted([*table_eligible, period]) if period in skipped else table_eligible
+        counted = [p for p in baseline_periods(config, binning, table_order, period) if p not in settling]
+        ctx.gap = gap(counted, period) if gap and counted else 0
+        for segment in sorted(totals.rows):
+            if period not in totals.rows[segment]:
                 continue
             skip = _skipped(ctx, segment)
-            wanted = baseline_periods(config, binning, [p for p in ordered if p == period or p not in skip], period)
+            table_wanted = baseline_periods(
+                config, binning, [p for p in table_order if p == period or p not in skip], period
+            )
             first = len(out.results)
-            present = [p for p in wanted if p in history.rows[segment]]
-            enough = len(present) >= (config.baseline.min_periods if config.baseline.kind == "rolling" else 1)
-            usable = present if enough else []
-            out.results += _table_results(ctx, history, segment, period, usable, wanted)
+            out.results += _table_results(
+                ctx, totals, segment, period, _usable(config, totals, segment, table_wanted), table_wanted
+            )
+            if not in_active or period not in history.rows.get(segment, {}):
+                _mark_red(ctx, segment, period, out.results[first:])
+                continue
+            wanted = baseline_periods(config, binning, [p for p in ordered if p == period or p not in skip], period)
+            usable = _usable(config, history, segment, wanted)
             for spec in binning.columns:
                 out.results += _column_results(
                     ctx, out, history, (segment, spec.column), period, usable,
@@ -440,6 +487,13 @@ def compute(  # noqa: PLR0913 - one keyword per result field
                 )  # fmt: skip
             _mark_red(ctx, segment, period, out.results[first:])
     return out
+
+
+def _usable(config: StabilityConfig, history: History, segment: str, wanted: Sequence[str]) -> list[str]:
+    """Return the ``wanted`` baseline periods the segment has, or none when there are too few of them."""
+    present = [p for p in wanted if p in history.rows[segment]]
+    enough = len(present) >= (config.baseline.min_periods if config.baseline.kind == "rolling" else 1)
+    return present if enough else []
 
 
 def _skipped(ctx: _Context, segment: str) -> set[str]:
@@ -610,14 +664,23 @@ def alert_id(dataset: str, version: int, key: Key, kind: str, opened: str) -> st
     return hashlib.sha256(text.encode()).hexdigest()[:20]
 
 
+def table_level(row: Mapping[str, Any]) -> bool:
+    """Tell whether an alert or result is about the whole table (column ``""``), whatever the binning version."""
+    return str(row["column"]) == TABLE
+
+
 def _stored_by_key(
-    stored: Iterable[Mapping[str, Any]], version: int
+    stored: Iterable[Mapping[str, Any]], version: int, lineage: Collection[int] = ()
 ) -> tuple[dict[tuple[str, ...], Mapping[str, Any]], dict[tuple[str, ...], list[str]]]:
-    """Return the stored open alert and the stored close periods of ``version``, per (segment, column, metric, kind)."""
+    """Return the stored open alert and the stored close periods of ``version``, per (segment, column, metric, kind).
+
+    Table-level alerts of the other versions in ``lineage`` count as ``version``'s own: they survive a refit.
+    """
     carried: dict[tuple[str, ...], Mapping[str, Any]] = {}
     closes: dict[tuple[str, ...], list[str]] = {}
     for r in stored:
-        if int(r.get("version") or 0) != version:
+        stored_version = int(r.get("version") or 0)
+        if stored_version != version and not (table_level(r) and stored_version in lineage):
             continue
         key = (str(r["segment"]), str(r["column"]), str(r["metric"]), str(r["kind"]))
         if r.get("state") == OPEN:
@@ -693,6 +756,7 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     stored: Iterable[Mapping[str, Any]] = (),
     periods: Sequence[str] = (),
     keep_inside: bool = True,
+    lineage: Collection[int] = (),
 ) -> list[dict[str, Any]]:
     """Replay the status and trend series of every judged metric into alert rows (persistence and trend kinds).
 
@@ -705,17 +769,26 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     A stored open alert that opened inside the window, when the window alone no longer reproduces it (its red run
     began before the window), is carried too and replayed from its opening period; ``keep_inside=False`` (the
     judgment changed) lets the replay re-judge it instead.
+
+    ``lineage`` lists the other versions of the same dataset and period column: a table-level alert is carried across
+    them and, once opened, keeps the identity of the lineage's first version, so a refit neither closes nor reopens it.
     """
-    carried, closes = _stored_by_key(stored, version)
-    statuses, trends, values = _series(results)
+    carried, closes = _stored_by_key(stored, version, lineage)
+    anchor = min([version, *lineage])
+    rows = list(results)
+    statuses, trends, values = _series(rows)
+    reasons = {(_key_of(r), r["period"]): str(r["reason"] or "") for r in rows}
     persistence = config.persistence
     trend_policy = PersistencePolicy(
         yellow=0, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
     )
+    schema_policy = PersistencePolicy(
+        yellow=1, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
+    )
     out: list[dict[str, Any]] = []
     for key in sorted(trends):
         for kind, series, policy in (
-            (PERSISTENCE, statuses.get(key, []), persistence),
+            (PERSISTENCE, statuses.get(key, []), schema_policy if key[2] in SCHEMA_METRICS else persistence),
             (TREND, trends[key], trend_policy),
         ):
             if not series:
@@ -752,10 +825,17 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
                     f"{subject} [{segment_label(segment)}] {verb}: {span.severity} since {span.opened}, "
                     f"last {span.last_status} in {span.last_period}"
                     + (f" (value {value:.4g})" if value is not None else "")
+                    + (
+                        f": {why}"
+                        if (why := reasons.get((key, span.last_period), "")) and metric in SCHEMA_METRICS
+                        else ""
+                    )
                 )
                 out.append(
                     {
-                        "dataset": dataset, "alert_id": alert_id(dataset, version, key, kind, span.opened),
+                        "dataset": dataset,
+                        "alert_id": str(old["alert_id"]) if old is not None and old.get("alert_id")
+                        else alert_id(dataset, anchor if key[1] == TABLE else version, key, kind, span.opened),
                         "version": version, "kind": kind, "metric": metric, "column": column, "segment": segment,
                         "segment_label": segment_label(segment), "severity": span.severity,
                         "severity_rank": 2 if span.severity == CRITICAL else 1, "state": span.state,
@@ -796,4 +876,6 @@ __all__ = [
     "mean_shift",
     "rank",
     "result_row",
+    "table_level",
+    "table_totals",
 ]
