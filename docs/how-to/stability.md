@@ -214,7 +214,37 @@ The command prints the `INSERT` statement to run (or appends the row to a `--sta
 The latest action of each alert wins. Stored alerts keep their automatic state; the run folds the actions into the gate
 counts and the notifications on the run date, and the message reports how many alerts are accepted. Actions enter the
 judgment fingerprint, so a new decision re-judges the window and a replay stays deterministic. Resolutions are stored
-and counted by `stability_false_positive_rate`; their effect on baselines belongs to period marks, which are separate.
+and counted by `stability_false_positive_rate`; their effect on baselines belongs to period marks, below.
+
+## Period marks
+
+Actions decide about alerts; a **mark** decides about a period: a known event (a migration, a campaign, a one-off
+load) or a permanent change. Marks live in the append-only `stability_marks` table. Record one with
+`bricksmith stability mark`, cancel it with `unmark` and list what is in force with `marks`:
+
+```bash
+bricksmith stability mark --dataset orders --period 2026-03 --mark excluded \
+  --reason "migration backfill" --author ana --scope main.monitoring
+bricksmith stability unmark --dataset orders --period 2026-03 --reason "reprocessed" --author ana --state state.json
+bricksmith stability marks --state state.json --as-of 2026-04-01
+```
+
+The commands print the `INSERT` statement to run (`--scope`) or append the row to a `--state` file. The marks are:
+
+- `accepted` keeps the period's values and colors, labels the results (`mark`, `mark_reason`) and keeps them, and the
+  open alerts whose last period they cover, out of the gate and notifications. It may be narrowed with `--segment`,
+  `--column` or `--metric`;
+- `excluded` keeps the period out of every trend history and every `previous` or `rolling` baseline of the others;
+- `regime_change` declares a new normal: the trend history is emptied at that period and a `previous` or `rolling`
+  baseline never reaches before it, so the period after a level shift is judged green once `min_points` periods exist;
+- `invalid` marks a period being reprocessed: its results are `informational` and it is kept out of everything, like
+  `excluded`, until unmarked.
+
+`excluded`, `regime_change` and `invalid` hold for the whole period and take no selector. `--valid-until` (inclusive)
+bounds any mark; a reason and an author are required, so an `accepted` mark cannot hide a problem silently. The latest
+row of each selector wins; the run reads the marks of the periods it loads and enters the marks in force into the
+judgment fingerprint, so a new mark, an `unmark` or an expiry re-judges the window and a replay stays deterministic
+(`backtest` reads them too). `stability_active_marks` lists the marks in force for dashboards.
 
 ## Revision reliability
 
@@ -388,8 +418,9 @@ which reports never use.
 |---|---|---|
 | `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body |
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
-| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper |
+| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper, mark, mark_reason |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
+| `stability_marks` | dataset, mark_id | period, segment, column, metric, mark, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
 | `stability_results_history` | dataset, run_id, version, period, segment, column, metric | only with `history`: the judged columns of `stability_results`, run_id, judged_at, judgment_fingerprint, data_version; append-only |
@@ -410,7 +441,8 @@ denotes when it can be read as a date.
   `effective_state` it gives (`open`, `accepted` or `closed`);
 - `stability_actions_latest`, `stability_alert_response` and `stability_response_summary`: the latest action per alert,
   and the days to the first action and to the closing of each alert;
-- `stability_false_positive_rate`: closures typed `false_positive` against all closures, per rule.
+- `stability_false_positive_rate`: closures typed `false_positive` against all closures, per rule;
+- `stability_active_marks`: the period marks in force (not unmarked, not past `valid_until`).
 
 A BI model on these tables works as a star:
 
