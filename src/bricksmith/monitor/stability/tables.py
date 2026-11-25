@@ -63,7 +63,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "severity_rank": "INT", "state": "STRING", "opened_period": "STRING", "escalated_period": "STRING",
         "closed_period": "STRING", "last_period": "STRING", "last_status": "STRING", "last_value": "DOUBLE",
         "flagged_periods": "INT", "recurrence": "BOOLEAN", "message": "STRING", "run_id": "STRING",
-        "updated_at": "STRING",
+        "updated_at": "STRING", "upstream": "STRING",
     },
     ACTIONS: {
         "action_id": "STRING", "dataset": "STRING", "alert_id": "STRING", "action": "STRING",
@@ -100,7 +100,8 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
         "red": "INT", "yellow": "INT", "open_alerts": "INT", "critical_alerts": "INT", "message": "STRING",
         "judgment_fingerprint": "STRING", "started_at": "STRING", "finished_at": "STRING",
-        "periods_reprocessed": "STRING", "schema": "STRING",
+        "periods_reprocessed": "STRING", "schema": "STRING", "owner": "STRING", "domain": "STRING",
+        "criticality": "STRING", "severity_score": "DOUBLE", "upstream": "STRING",
     },
 }  # fmt: skip
 KEYS: dict[str, tuple[str, ...]] = {
@@ -118,7 +119,8 @@ KEYS: dict[str, tuple[str, ...]] = {
 #: The columns of the dashboard views: the contract the dashboard datasets are written against.
 VIEW_COLUMNS: dict[str, tuple[str, ...]] = {
     "datasets": (
-        "dataset", "version", "task_id", "physical", "binning_created_at", "last_run_id", "last_run_at",
+        "dataset", "version", "task_id", "physical", "owner", "domain", "criticality", "severity_score", "upstream",
+        "binning_created_at", "last_run_id", "last_run_at",
         "last_run_status", "gate", "latest_period", "status", "status_rank", "red", "yellow", "row_count",
         "open_alerts",
     ),
@@ -268,7 +270,8 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
     ``<prefix>response_summary`` hold the actions and the time to first action and to close;
     ``<prefix>false_positive_rate`` counts the closures typed ``false_positive`` per rule; ``<prefix>active_marks``
     lists the period marks in force (the latest of each selector, not unmarked, not past ``valid_until``).
-    ``<prefix>datasets`` is the dataset dimension (latest binning, last run, latest period status);
+    ``<prefix>datasets`` is the dataset dimension (latest binning, last run with its owner, domain, criticality,
+    severity score and upstream origin, latest period status);
     ``<prefix>series`` is one row per series and period with limits, trend band, light, mark and alert action;
     ``<prefix>incidents`` groups the alerts per dataset and opening period. Columns: :data:`VIEW_COLUMNS`.
     """
@@ -344,6 +347,7 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
         f"  ON a.dataset = r.dataset AND a.segment = r.segment AND a.`column` = r.`column` AND a.metric = r.metric\n"
         f"WHERE l.action = 'closed' AND r.rule_id IS NOT NULL GROUP BY r.rule_id"
     )
+    runs = table_name(scope, prefix, RUNS)
     marks = table_name(scope, prefix, MARKS)
     mark_columns = "mark_id, dataset, period, segment, `column`, metric, mark, reason, author, valid_until, created_at"
     active_marks = (
@@ -365,19 +369,18 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
         f"  AND a.metric = r.metric AND a.last_period = r.period\n"
         f"LEFT JOIN {latest_actions} l ON l.dataset = a.dataset AND l.alert_id = a.alert_id"
     )
-    runs = table_name(scope, prefix, RUNS)
     binnings = table_name(scope, prefix, BINNINGS)
     datasets = (
         f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'datasets')} AS\n"
-        f"SELECT d.dataset, d.version, r.task_id, r.physical, b.created_at AS binning_created_at,\n"
+        f"SELECT d.dataset, d.version, r.task_id, r.physical, r.owner, r.domain, r.criticality, r.severity_score,\n"
+        f"  r.upstream, b.created_at AS binning_created_at,\n"
         f"  r.run_id AS last_run_id, r.finished_at AS last_run_at, r.status AS last_run_status, r.gate,\n"
         f"  s.period AS latest_period, s.status, s.status_rank, s.red, s.yellow, s.row_count,\n"
         f"  coalesce(o.open_alerts, 0) AS open_alerts\n"
         f"FROM (SELECT dataset, max(version) AS version FROM {binnings} GROUP BY dataset) d\n"
         f"JOIN {binnings} b ON b.dataset = d.dataset AND b.version = d.version\n"
-        f"LEFT JOIN (SELECT run_id, dataset, task_id, physical, status, gate, finished_at FROM (\n"
-        f"  SELECT run_id, dataset, task_id, physical, status, gate, finished_at, row_number() OVER (\n"
-        f"    PARTITION BY dataset ORDER BY finished_at DESC, run_id DESC) AS rn FROM {runs}) WHERE rn = 1) r\n"
+        f"LEFT JOIN (SELECT * EXCEPT (rn) FROM (SELECT x.*, row_number() OVER (\n"
+        f"    PARTITION BY dataset ORDER BY finished_at DESC, run_id DESC) AS rn FROM {runs} x) WHERE rn = 1) r\n"
         f"  ON r.dataset = d.dataset\n"
         f"LEFT JOIN (SELECT s.* FROM {dataset_status} s\n"
         f"  JOIN (SELECT dataset, version, max(period) AS period FROM {dataset_status} GROUP BY dataset, version) m\n"

@@ -59,6 +59,8 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `gate` | `{fail_on: [], on_error: "warn", periods: "latest"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`; `periods` takes `latest` or `profiled` (see [Backfills and reprocessing](#backfills-and-reprocessing)). |
 | `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity, digest, top, remind_after, material_change}`. See [Notifications](#notifications). |
 | `noise` | none | A noise budget for new alerts: `{max_alerts_per_run, fdr}`. See [Incidents and the noise budget](#incidents-and-the-noise-budget). |
+| `owner`, `domain`, `criticality` | none, none, `medium` | Who answers for the dataset and how much it matters (`low`, `medium`, `high`, `critical`). They are stamped on the run rows and on every alert and digest event, to [route and filter by responsibility](#downstream-suppression-ownership-and-routing). They never change a judgment. |
+| `suppress_downstream` | `true` | Silences the notifications of an incident caused upstream in the same run; `false` labels it but still notifies. |
 | `cadence`, `expected_by` | `none`, `0` | Expected period cadence (`day`, `week`, `month`) and the whole days after a period ends by which its data is due. See [Cadence](#cadence-late-periods-and-gaps). |
 | `settle_periods`, `settle_days` | `0`, `0` | The latest N periods, or the periods ending within N days of `as_of`, are still receiving data: judged and shown, never a baseline, trend history, alert or gate input. `settle_days` needs a `cadence`. |
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
@@ -273,6 +275,38 @@ alerts exist, so it re-judges the window like any other judgment change.
 
 When alerts were closed with a typed resolution, the run summary and the incident also report the **false-positive
 rate per rule** (`false_positive` closures over all closures of the rule's series) to drive limit tuning.
+
+## Downstream suppression, ownership and routing
+
+A broken source turns every table derived from it red. Inside one run the runner remembers, per task, the red
+incident it left (an open incident with a red result in its latest period) and the dataset where the problem
+began. A task that reads from such a task, directly or through other tasks, and has an incident of the **same
+period** gets that incident labeled `upstream:<dataset>` (`CheckResult.incident.upstream`, `upstream` on the
+outcome, the run row and the alert rows). With `suppress_downstream` (the default) its per-alert and digest
+notifications are not sent and the run message says how many were silenced; results, alerts and the incident stay
+stored and visible, and the gate is unchanged. The label never drops anything: an independent problem of the
+downstream table is still an alert, only its notification is held. Only tasks of the same plan and run are known:
+nothing is read across runs. Set `suppress_downstream: false` on a task to keep notifying while labeling.
+
+Each incident also carries a **severity score** for ranking, stored as `severity_score` on the incident and the run
+row: the summed exceedance of its causes, times the largest number of flagged periods of an open alert, times the
+criticality weight (`low` 1, `medium` 2, `high` 3, `critical` 4), times the number of distinct alerted columns.
+
+`owner`, `domain` and `criticality` ride in the `details` of every alert and digest event, and the
+`stability_datasets` view lists the latest of each per dataset, so dashboards can filter by responsibility. To route
+alerts, give the notifier routes:
+
+```python
+from bricksmith.ops.notify import AlertNotifier, AlertRoute
+
+notifier = AlertNotifier(
+    [slack, pager],
+    routes=[AlertRoute("slack", owners=("sales",)), AlertRoute("pager", min_criticality="high")],
+)
+```
+
+An adapter named by at least one route receives only the alerts one of its routes matches (a route with no `owners`
+or `domains` matches any; `min_criticality` is a floor). An adapter without a route receives everything, as before.
 
 ## Backfills and reprocessing
 
@@ -588,13 +622,13 @@ which reports never use.
 | `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body, schema |
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
 | `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper, trend_model, drift_status, change_point_suggested, mark, mark_reason |
-| `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
+| `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message, upstream |
 | `stability_marks` | dataset, mark_id | period, segment, column, metric, mark, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
 | `stability_results_history` | dataset, run_id, version, period, segment, column, metric | only with `history`: the judged columns of `stability_results`, run_id, judged_at, judgment_fingerprint, data_version; append-only |
 | `stability_alert_events` | dataset, alert_id, event, run_id, action_id | only with `history`: period, severity, state, resolution, message, occurred_at; one row per alert transition |
-| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed, schema |
+| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed, schema, owner, domain, criticality, severity_score, upstream |
 
 Table-level metrics use column `""`, and the whole population uses segment `""` (label `(all)`). Segment keys are
 canonical text, `col=value,col2=value2`, with `(null)` for nulls. `period_date` is the first day the period
@@ -612,9 +646,10 @@ denotes when it can be read as a date.
   and the days to the first action and to the closing of each alert;
 - `stability_false_positive_rate`: closures typed `false_positive` against all closures, per rule;
 - `stability_active_marks`: the period marks in force (not unmarked, not past `valid_until`);
-- `stability_datasets`: the dataset dimension, one row per dataset: the latest binning version and when it was fitted,
+- `stability_datasets`: the dataset dimension, one row per dataset: the owner, domain, criticality, severity score and
+  upstream origin of the latest run (to filter by responsibility), the latest binning version and when it was fitted,
   the task and physical table of the last run, its status and gate, and the status, red and yellow counts, row count
-  and open alerts of the latest period. No owner column: no stability table stores one;
+  and open alerts of the latest period;
 - `stability_series`: one row per series and period, ready to chart: `value`, the limits (`green_limit`,
   `red_limit`), the trend band (`trend_expected`, `trend_lower`, `trend_upper`), the `light` (`status`, or `no_rule`),
   the period `mark` and, when an alert was last seen on that series in that period, its `alert_id`, `severity`,

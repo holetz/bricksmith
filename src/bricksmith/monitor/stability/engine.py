@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -46,10 +46,12 @@ from bricksmith.monitor.stability.config import (
 )
 from bricksmith.monitor.stability.incident import (
     Incident,
+    Upstream,
     apply_noise,
     build_incident,
     digest_event,
     false_positive_rates,
+    upstream_origin,
 )
 from bricksmith.monitor.stability.marks import ACCEPTED, MarkSet, effective_marks, marks_digest
 from bricksmith.monitor.stability.metrics import Context, alerts, compute, counts_in, table_level, trend_value
@@ -167,6 +169,9 @@ class Outcome:
     output: str = ""
     suppressed: int = 0
     incident_id: str = ""
+    severity_score: float = 0.0
+    upstream: str = ""
+    silenced: int = 0
 
     @property
     def failed(self) -> bool:
@@ -178,6 +183,12 @@ class Outcome:
         extra: dict[str, Any] = {"incident_id": self.incident_id} if self.incident_id else {}
         if self.suppressed:
             extra["suppressed"] = self.suppressed
+        if self.incident_id:
+            extra["severity_score"] = self.severity_score
+        if self.upstream:
+            extra["upstream"] = self.upstream
+        if self.silenced:
+            extra["silenced"] = self.silenced
         return {
             **extra,
             "critical_alerts": self.critical_alerts,
@@ -1059,24 +1070,50 @@ def _grouped(
     rows: tuple[Sequence[Any], Sequence[Any], Sequence[Any], Sequence[Any]],
     notifications: list[AlertEvent],
     config: StabilityConfig,
-    run: tuple[str, str, str, str, str, int],
+    run: tuple[str, str, str, str, str, int, str],
 ) -> tuple[Incident | None, list[AlertEvent], dict[str, dict[str, Any]]]:
     """Return the incident of the run, the notifications (one digest when declared) and the false-positive rates."""
     results, profiles, alert_rows, actions = rows
-    dataset, target, run_id, occurred_at, latest, suppressed = run
+    dataset, target, run_id, occurred_at, latest, suppressed, upstream = run
     rates = false_positive_rates(actions, alert_rows, results) if actions else {}
     incident = build_incident(
         open_rows, results, profiles, config, dataset=dataset, period=latest, suppressed=suppressed,
-        false_positive_rates=rates,
+        false_positive_rates=rates, upstream=upstream,
     )  # fmt: skip
     if config.notify is not None and config.notify.digest and notifications:
         notifications = [
             digest_event(
                 notifications, incident, dataset=dataset, target=target, run_id=run_id, occurred_at=occurred_at,
-                top=config.notify.top,
+                top=config.notify.top, meta=ownership(config, upstream),
             )
         ]  # fmt: skip
     return incident, notifications, rates
+
+
+def ownership(config: StabilityConfig, upstream: str = "") -> dict[str, str]:
+    """Return the routing facts of a dataset: its owner, domain and criticality, and the upstream origin if any."""
+    found = {"owner": config.owner, "domain": config.domain, "criticality": config.criticality, "upstream": upstream}
+    return {k: v for k, v in found.items() if v}
+
+
+def routed(events: Sequence[AlertEvent], meta: Mapping[str, str]) -> list[AlertEvent]:
+    """Return ``events`` with the routing facts (owner, domain, criticality, upstream) added to their details."""
+    return [replace(e, details={**e.details, **meta}) for e in events]
+
+
+def _silenced(notifications: list[AlertEvent], origin: str, config: StabilityConfig) -> tuple[list[AlertEvent], int]:
+    """Return the notifications left and how many were silenced because the incident is caused upstream."""
+    if origin and config.suppress_downstream:
+        return [], len(notifications)
+    return notifications, 0
+
+
+def _labeled(alert_rows: Sequence[dict[str, Any]], origin: str, open_rows: Sequence[Any]) -> str:
+    """Stamp ``upstream`` on the alert rows (the origin on open ones) and return the origin that applies."""
+    origin = origin if open_rows else ""
+    for row in alert_rows:
+        row["upstream"] = origin if row["state"] == OPEN else ""
+    return origin
 
 
 def _held(
@@ -1087,11 +1124,21 @@ def _held(
     return human, [{**r, "state": human[str(r["alert_id"])]} if str(r["alert_id"]) in human else r for r in alert_rows]
 
 
-def _tail(accepted: int, suppressed: int, reasons: Sequence[str], rates: Mapping[str, Mapping[str, Any]]) -> str:
+def _caused(origin: str, silenced: int) -> str:
+    """Return the run message part naming the upstream origin and the notifications it silenced."""
+    if not origin:
+        return ""
+    return f"caused upstream by {origin}" + (f", {silenced} notification(s) silenced" if silenced else "")
+
+
+def _tail(
+    accepted: int, suppressed: int, reasons: Sequence[str], rates: Mapping[str, Mapping[str, Any]], caused: str = ""
+) -> str:
     """Return what the run message appends: accepted alerts, the budget's suppressions, the gate and the rates."""
     found = [
         f"{accepted} accepted" if accepted else "",
         f"{suppressed} suppressed by the noise budget" if suppressed else "",
+        caused,
         f"gate failed on {'; '.join(reasons)}" if reasons else "",
         "false positives " + ", ".join(f"{k} {v['false_positive']}/{v['closed']}" for k, v in rates.items())
         if rates
@@ -1125,6 +1172,7 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
     reprocess: Sequence[str] = (),
     skip_unknown: bool = False,
     data_version: int | None = None,
+    upstream: Sequence[Upstream] = (),
 ) -> CheckResult:
     """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write.
 
@@ -1133,6 +1181,8 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
     profiled again with the declared refresh range, the whole window is judged again and the alerts are replayed.
     An item is a period or a ``first..last`` range; ``skip_unknown`` drops what the data does not have.
     ``data_version`` is the Delta version of the monitored table this run read, stored with the history rows.
+    ``upstream`` lists the red incidents the tasks this one reads from left in the same run: one of the incident's
+    period labels it ``upstream:<origin>`` and, with ``suppress_downstream``, silences its notifications.
     """
     started = now or _now()
     as_of_date = parse_as_of(as_of) if as_of else _date_of(started)
@@ -1213,10 +1263,20 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
     )
     alert_rows, suppressed = _budgeted(alert_rows, stored_alerts, computed.results, config, latest)
     human, held = _held(alert_rows, actions, computed.results, started[:10])
-    notifications = alert_events(
-        held, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
-        occurred_at=started,
-    )  # fmt: skip
+    origin = upstream_origin(upstream, latest)
+    notifications = routed(
+        alert_events(
+            held,
+            stored_alerts,
+            config.notify,
+            dataset=dataset,
+            target=physical or dataset,
+            run_id=run_id,
+            occurred_at=started,
+        ),
+        ownership(config, origin),
+    )
+    notifications, silenced = _silenced(notifications, origin, config)
     superseded = _superseded(
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all,
         lineage=lineage,
@@ -1225,22 +1285,24 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
     judged = {latest} | (set(todo) & set(window) | set(vanished) if config.gate.periods == "profiled" else set())
     counts = _counts([*computed.results, *cadence_rows], judged)
     open_rows = [r for r in alert_rows if r["state"] == OPEN and str(r["alert_id"]) not in human]
+    origin = _labeled(alert_rows, origin, open_rows)
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
     reasons = _gate(config, counts[RED], counts[YELLOW], len(open_rows), critical)
     status = FAILED if reasons else WARNED if counts[RED] + counts[YELLOW] + len(open_rows) else PASSED
     incident, notifications, rates = _grouped(
         open_rows, (computed.results, fresh, [*alert_rows, *stored_alerts], actions), notifications, config,
-        (dataset, physical or dataset, run_id, started, latest, suppressed),
+        (dataset, physical or dataset, run_id, started, latest, suppressed, origin),
     )  # fmt: skip
     message = (
         f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)"
         + (f" over {len(judged)} periods" if len(judged) > 1 else "")
         + (f"; reprocessed {', '.join(redo)} ({len(todo)} periods profiled)" if redo else "")
-        + _tail(_accepted(alert_rows, human), suppressed, reasons, rates)
+        + _tail(_accepted(alert_rows, human), suppressed, reasons, rates, _caused(origin, silenced))
     )
     outcome = Outcome(
         dataset, status, binning.version, latest, len(todo), counts[RED], counts[YELLOW], len(open_rows), critical,
         message, config.output, suppressed, incident.incident_id if incident else "",
+        incident.severity_score if incident else 0.0, origin, silenced,
     )  # fmt: skip
     run_row = {
         "run_id": run_id, "dataset": dataset, "task_id": task_id, "physical": physical, "version": binning.version,
@@ -1249,7 +1311,9 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
         "open_alerts": len(open_rows), "critical_alerts": critical, "message": message,
         "judgment_fingerprint": judgment, "started_at": started, "finished_at": _now(),
         "schema": schema_text(schema),
-        "periods_reprocessed": ",".join(redo),
+        "periods_reprocessed": ",".join(redo), "owner": config.owner, "domain": config.domain,
+        "criticality": config.criticality, "severity_score": incident.severity_score if incident else 0.0,
+        "upstream": origin,
     }  # fmt: skip
     tables = {
         BINNINGS: binning_rows,
@@ -1291,6 +1355,8 @@ __all__ = [
     "error_outcome",
     "fit_range",
     "judgment_fingerprint",
+    "ownership",
     "reprocessed_periods",
+    "routed",
     "window_marks",
 ]

@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
     from pathlib import Path
 
+    from bricksmith.monitor.stability.incident import Upstream
     from bricksmith.ops.notify import AlertNotifier
     from bricksmith.plan.model import PlanEntry, Target
     from bricksmith.runner.context import TaskContext
@@ -229,12 +230,14 @@ def create_views(spark: Any, declaration: Declaration) -> list[str]:  # noqa: AN
     return failed
 
 
-def _check_one(
+def _check_one(  # noqa: PLR0913 - the task's context, its declaration, the run's delivery and its upstream
     ctx: TaskContext,
     declaration: Declaration,
     run_id: str,
     notifier: AlertNotifier | None,
     default: NotifyPolicy | None,
+    *,
+    upstream: Sequence[Upstream] = (),
 ) -> Outcome:
     data = ctx.io.read(declaration.physical)
     spark = None if is_rows(data) else getattr(ctx.io, "spark", None) or getattr(data, "sparkSession", None)
@@ -247,7 +250,7 @@ def _check_one(
     result = check(
         data, config, store, dataset=declaration.dataset, run_id=run_id, task_id=ctx.task_id,
         physical=declaration.physical, reprocess=ctx.reprocess, skip_unknown=True,
-        data_version=delta_version(spark, declaration.physical) if config.history else None,
+        data_version=delta_version(spark, declaration.physical) if config.history else None, upstream=upstream,
     )  # fmt: skip
     for kind in declaration.tables:
         if result.tables[kind] or not store.exists(kind):
@@ -262,24 +265,27 @@ def _check_one(
     return Outcome(**{**outcome.to_dict(), "output": declaration.output})
 
 
-def run_stability(
+def run_stability(  # noqa: PLR0913 - the task's context, the run's delivery settings and its upstream incidents
     ctx: TaskContext,
     run_id: str,
     notifier: AlertNotifier | None = None,
     notify: NotifyPolicy | None = None,
     root: Path | None = None,
+    *,
+    upstream: Sequence[Upstream] = (),
 ) -> tuple[tuple[Outcome, ...], BaseException | None]:
     """Check every declared output of the task; return the outcomes and the error that fails the task, if any.
 
     With a ``notifier``, alerts that opened, escalated or recurred are delivered after the rows are written, under
     the declaration's ``notify`` policy or, when it declares none, the project's ``notify`` default. A relative rules
-    file path resolves against the project ``root``.
+    file path resolves against the project ``root``. ``upstream`` holds the red incidents the tasks this one reads
+    from left in the same run: an incident of the same period is labeled and, by default, silenced.
     """
     outcomes: list[Outcome] = []
     failure: BaseException | None = None
     for declaration in declarations(ctx.entry, root):
         try:
-            outcome = _check_one(ctx, declaration, run_id, notifier, notify)
+            outcome = _check_one(ctx, declaration, run_id, notifier, notify, upstream=upstream)
         except Exception as error:  # noqa: BLE001 - the error policy decides
             outcomes.append(error_outcome(declaration.dataset, error, declaration.output))
             if declaration.config.gate.on_error == "fail" and failure is None:
@@ -289,6 +295,19 @@ def run_stability(
         if outcome.failed and failure is None:
             failure = StabilityGateError(outcome.message)
     return tuple(outcomes), failure
+
+
+def incidents_of(outcomes: Sequence[Outcome]) -> tuple[Upstream, ...]:
+    """Return what downstream tasks need to know of ``outcomes``: the red incidents left, with their origin.
+
+    A check counts when it ended with an open incident and a red result in its latest period. The origin is the
+    check's own dataset, or the one it inherited when the incident was caused upstream.
+    """
+    from bricksmith.monitor.stability.incident import Upstream  # noqa: PLC0415 - keeps the hook import light
+
+    return tuple(
+        Upstream(o.dataset, o.latest_period, o.upstream or o.dataset) for o in outcomes if o.incident_id and o.red
+    )
 
 
 def summary_line(outcome: Mapping[str, Any]) -> str:
@@ -305,6 +324,7 @@ __all__ = [
     "create_views",
     "declarations",
     "delta_version",
+    "incidents_of",
     "resolve",
     "run_stability",
     "stability_targets",
