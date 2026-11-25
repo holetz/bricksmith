@@ -401,7 +401,7 @@ bricksmith model-monitoring report --model churn --state exported.json --format 
 ```
 
 `--scope` reads the tables of that schema through the selected context; `--state` reads an exported
-`{"results": [...], "runs": [...], "actions": [...]}` file offline. Both write `<model>.html` and `<model>.md` (or
+`{"results": [...], "runs": [...], "alerts": [...], "actions": [...]}` file offline. Both write `<model>.html` and `<model>.md` (or
 one of them with `--format`). Only results of finished runs are read, the latest per model version and period.
 
 - The **period axis** is the sorted list of monitoring periods found in the data: nothing is hard-coded, and a
@@ -412,6 +412,10 @@ one of them with `--format`). Only results of finished runs are read, the latest
 - Each point carries its light with a text label, and a result with no value shows the reason it has none.
 - The **alerts** tab lists the alerts with their state and the human action on them (analysis, closure or risk
   acceptance with its author, reason and `valid_until`), evaluated on `--as-of` (default today).
+  They are the alerts the model's latest finished run stored, so the counts equal the run's `open_alerts` and
+  `critical_alerts`; `--scope` reads them from the alerts table, and a `--state` file carries them under `alerts`.
+  A state with no `alerts` list (an older export) replays them from the stored lights, with the persistence policy
+  of `--config` (the declaration JSON; `build_report(..., config=)` in Python) and the default policy without it.
 
 The HTML needs no script and loads nothing from outside, so it opens offline and in a review pane. In Python,
 `bricksmith.monitor.model.report.build_report` returns the report as data and `render_html` and `render_markdown`
