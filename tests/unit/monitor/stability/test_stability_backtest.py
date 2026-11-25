@@ -7,6 +7,7 @@ import copy
 from typing import Any
 
 from bricksmith.monitor.stability import backtest, parse_config
+from bricksmith.monitor.stability.backtest import noise_estimate
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
 from bricksmith.monitor.stability.tables import merge_rows
 
@@ -108,3 +109,43 @@ def test_an_unknown_dataset_has_nothing_to_replay() -> None:
     _run(store, DECLARED)
     report = backtest(parse_config(DECLARED), store, dataset="nope")
     assert report.requires_refit
+
+
+def _noisy_store() -> MemoryStore:
+    store = MemoryStore()
+    for month in range(1, 15):
+        store.tables.setdefault("results", []).append(
+            {
+                "dataset": "orders", "version": 1, "period": f"2026-{month:02d}", "segment": "", "column": "",
+                "metric": "row_count", "value": 1000.0 + (month * 37) % 90, "status": "green", "direction": "both",
+            }
+        )  # fmt: skip
+    return store
+
+
+def test_noise_estimate_is_seeded_and_close_to_the_nominal_rates() -> None:
+    store = _noisy_store()
+    config = parse_config({**DECLARED, "trend": {"window": 12, "min_points": 6}, "trend_metrics": ["row_count"]})
+    rows = store.tables["results"]
+    first = noise_estimate(config, rows, runs=400, seed=7)
+    again = noise_estimate(config, rows, runs=400, seed=7)
+    assert first == again and first.series and first.series[0].points == 14
+    assert 0.0 < first.flagged < 0.12 and first.red < 0.03
+
+
+def test_a_tighter_trend_flags_more_noise_and_a_disabled_trend_none() -> None:
+    rows = _noisy_store().tables["results"]
+    base = {**DECLARED, "trend_metrics": ["row_count"]}
+    loose = noise_estimate(parse_config({**base, "trend": {"yellow": 3.0, "red": 4.0}}), rows, runs=300, seed=1)
+    tight = noise_estimate(parse_config({**base, "trend": {"yellow": 1.0, "red": 1.5}}), rows, runs=300, seed=1)
+    assert tight.flagged > loose.flagged and tight.red > loose.red
+    off = noise_estimate(parse_config({**base, "trend": False}), rows, runs=50)
+    assert off.flagged == 0.0 and not off.series
+
+
+def test_the_report_carries_the_noise_estimate_only_when_asked() -> None:
+    store = MemoryStore()
+    _run(store, DECLARED)
+    assert backtest(parse_config(DECLARED), store, dataset="orders").noise is None
+    report = backtest(parse_config(DECLARED), store, dataset="orders", noise_runs=20, seed=3)
+    assert report.noise is not None and report.noise.runs == 20 and report.to_dict()["noise"]["seed"] == 3

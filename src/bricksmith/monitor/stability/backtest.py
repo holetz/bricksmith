@@ -8,12 +8,15 @@ and reports what would change. It has no write path: nothing it does can alter t
 
 from __future__ import annotations
 
+import math
+import random
+import statistics
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.actions import STATE_ACCEPTED, STATE_CLOSED, apply_actions
-from bricksmith.monitor.limits import RED, YELLOW
+from bricksmith.monitor.limits import COLORS, GREEN, RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN
 from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.stability.engine import (
@@ -26,6 +29,7 @@ from bricksmith.monitor.stability.engine import (
 )
 from bricksmith.monitor.stability.metrics import alerts, compute
 from bricksmith.monitor.stability.tables import ACTIONS, ALERTS, BINNINGS, PROFILES, RESULTS, RUNS
+from bricksmith.monitor.trend import INSUFFICIENT_HISTORY, TrendPolicy, trend_check
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -92,6 +96,41 @@ class PeriodGate:
         }  # fmt: skip
 
 
+@dataclass(frozen=True)
+class NoiseSeries:
+    """The false-alarm rates of the trend check on synthetic noise shaped like one stored series."""
+
+    segment: str
+    column: str
+    metric: str
+    points: int
+    judged: int
+    flagged: float
+    red: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable form."""
+        return dict(self.__dict__)
+
+
+@dataclass(frozen=True)
+class NoiseReport:
+    """The estimated false-alarm rate of a configuration on the dataset's own series sizes."""
+
+    runs: int
+    seed: int
+    flagged: float
+    red: float
+    series: tuple[NoiseSeries, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable form."""
+        return {
+            "runs": self.runs, "seed": self.seed, "flagged": self.flagged, "red": self.red,
+            "series": [s.to_dict() for s in self.series],
+        }  # fmt: skip
+
+
 @dataclass
 class BacktestReport:
     """What a candidate configuration would change over the stored profiles."""
@@ -107,6 +146,7 @@ class BacktestReport:
     alerts_opened: list[dict[str, Any]] = field(default_factory=list)
     alerts_closed: list[dict[str, Any]] = field(default_factory=list)
     gates: list[PeriodGate] = field(default_factory=list)
+    noise: NoiseReport | None = None
 
     @property
     def differences(self) -> int:
@@ -129,6 +169,7 @@ class BacktestReport:
             "alerts_opened": self.alerts_opened,
             "alerts_closed": self.alerts_closed,
             "gates": [g.to_dict() for g in self.gates],
+            "noise": None if self.noise is None else self.noise.to_dict(),
         }
 
     def summary(self) -> str:
@@ -147,6 +188,11 @@ class BacktestReport:
         lines += [f"  alert would open {a['severity']}: {a['message']}" for a in self.alerts_opened]
         lines += [f"  alert would close: {a['message']}" for a in self.alerts_closed]
         lines += [f"  gate {g.period}: {g.before} -> {g.after}" for g in self.gates if g.before != g.after]
+        if self.noise is not None:
+            lines.append(
+                f"  noise ({self.noise.runs} runs, seed {self.noise.seed}): {self.noise.flagged:.2%} flagged, "
+                f"{self.noise.red:.2%} red"
+            )
         return "\n".join(lines)
 
 
@@ -253,12 +299,14 @@ def _stored_binning(config: StabilityConfig, store: Store, dataset: str) -> Refe
     return Reference.from_json(str(max(matching, key=lambda r: int(r["version"]))["body"]))
 
 
-def backtest(
+def backtest(  # noqa: PLR0913 - one keyword per documented input
     config: StabilityConfig,
     store: Store,
     *,
     dataset: str,
     periods: Sequence[str] = (),
+    noise_runs: int = 0,
+    seed: int = 0,
     now: str | None = None,
 ) -> BacktestReport:
     """Replay ``config`` over the stored profiles of ``dataset`` and report how the judgment would change.
@@ -267,7 +315,8 @@ def backtest(
     stored values before it and the alerts are replayed with the stored ones carried (re-judged when the judgment
     fingerprint differs from the last run's). ``periods`` (items ``a`` or ``first..last``) narrows what is reported,
     not what is replayed. A configuration that needs another binning is reported as ``requires refit``, nothing
-    compared. Nothing is ever written.
+    compared. ``noise_runs`` above zero adds the synthetic-noise false-alarm estimate, seeded by ``seed``. Nothing
+    is ever written.
     """
     report = BacktestReport(dataset)
     binning = _stored_binning(config, store, dataset)
@@ -316,13 +365,78 @@ def backtest(
         before, b_counts = _gate_of(config, stored_results, stored_alerts, human_before, period)
         after, a_counts = _gate_of(config, computed.results, fresh_alerts, human_after, period)
         report.gates.append(PeriodGate(period, before, after, b_counts, a_counts))
+    if noise_runs > 0:
+        report.noise = noise_estimate(config, stored_results, runs=noise_runs, seed=seed)
     return report
+
+
+def _sizes(config: StabilityConfig, results: Sequence[Mapping[str, Any]]) -> dict[Series, tuple[str, list[float]]]:
+    """Return the stored colored values per trend-eligible series, with the direction the engine judges them in."""
+    found: dict[Series, list[tuple[str, float]]] = {}
+    directions: dict[Series, str] = {}
+    for row in results:
+        value = row.get("value")
+        if row.get("metric") not in config.trend_metrics or row.get("status") not in COLORS or not row.get("direction"):
+            continue
+        if value is None or not math.isfinite(float(value)):
+            continue
+        key = (str(row.get("segment") or ""), str(row.get("column") or ""), str(row["metric"]))
+        found.setdefault(key, []).append((str(row["period"]), float(value)))
+        directions[key] = str(row["direction"])
+    return {k: (directions[k], [v for _, v in sorted(points)]) for k, points in found.items()}
+
+
+def noise_estimate(
+    config: StabilityConfig, results: Sequence[Mapping[str, Any]], *, runs: int, seed: int = 0
+) -> NoiseReport:
+    """Estimate the false-alarm rate of the trend check of ``config`` on noise shaped like the stored series.
+
+    Each trend-eligible series is replaced, ``runs`` times, by independent Gaussian noise with its own length, mean
+    and standard deviation, and checked period by period against the noise before it, exactly as the engine does.
+    The rates are the share of judged periods flagged (yellow or red) and red; a seeded generator keeps them stable.
+    """
+    policy = config.trend
+    if policy is None:
+        return NoiseReport(runs, seed, 0.0, 0.0)
+    rng = random.Random(seed)  # noqa: S311 - a seeded simulation, not a secret
+    out: list[NoiseSeries] = []
+    for key, (direction, values) in sorted(_sizes(config, results).items()):
+        if len(values) < policy.min_points + 1:
+            continue
+        out.append(_noise_series(key, direction, values, policy, runs, rng))
+    judged = sum(s.judged for s in out)
+    flagged = sum(s.flagged * s.judged for s in out)
+    red = sum(s.red * s.judged for s in out)
+    return NoiseReport(runs, seed, flagged / judged if judged else 0.0, red / judged if judged else 0.0, tuple(out))
+
+
+def _noise_series(  # noqa: PLR0913, PLR0917 - one series and the simulation's shared inputs
+    key: Series, direction: str, values: Sequence[float], policy: TrendPolicy, runs: int, rng: random.Random
+) -> NoiseSeries:
+    mean, spread = statistics.fmean(values), statistics.stdev(values)
+    judged = flagged = red = 0
+    for _ in range(runs):
+        history: list[float] = []
+        for _ in values:
+            current = rng.gauss(mean, spread)
+            found = trend_check(history, current, policy, direction)
+            history.append(current)
+            if found.status == INSUFFICIENT_HISTORY:
+                continue
+            judged += 1
+            flagged += found.status != GREEN
+            red += found.status == RED
+    rate = (flagged / judged, red / judged) if judged else (0.0, 0.0)
+    return NoiseSeries(*key, len(values), judged, rate[0], rate[1])
 
 
 __all__ = [
     "BacktestReport",
     "Change",
+    "NoiseReport",
+    "NoiseSeries",
     "PeriodGate",
     "SeriesCount",
     "backtest",
+    "noise_estimate",
 ]
