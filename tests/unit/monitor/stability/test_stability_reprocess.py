@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 from typing import TYPE_CHECKING
 
 import pytest
 
+from bricksmith.cli.main import main
 from bricksmith.context import ExecutionContext
+from bricksmith.errors import EXIT_VALIDATION
 from bricksmith.graph import load_graph
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.stability.config import Gate, parse_config
@@ -192,3 +195,28 @@ def test_runner_reprocess_reprofiles_the_same_periods_without_the_command(tmp_pa
     assert not report.ok and outcome["status"] == "failed" and "reprocessed 2026-02" in str(outcome["message"])
     runs = io.tables["main.sales.stability_runs"]
     assert isinstance(runs, list) and [r["periods_reprocessed"] for r in runs][-1] == "2026-02"
+
+
+def test_command_reprocess_profiles_a_changed_older_period_and_fails_the_gate(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    declared = {
+        "period": "month",
+        "min_rows": 10,
+        "baseline": "previous",
+        "gate": {"fail_on": ["red"], "periods": "profiled"},
+    }
+    config.write_text(json.dumps(declared), encoding="utf-8")
+    state = tmp_path / "state.json"
+
+    def write(rows: list[dict[str, object]]) -> list[str]:
+        data = tmp_path / "orders.jsonl"
+        data.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        return ["--config", str(config), "--data", str(data), "--state", str(state), "--dataset", "orders", "--json"]
+
+    assert main(["stability", "check", *write(_rows())]) == 0
+    assert main(["stability", "check", *write(_rows("2026-02"))]) == 0  # the backfill is invisible to check
+    code = main(["stability", "reprocess", *write(_rows("2026-02")), "--periods", "2026-02..2026-03"])
+    assert code == EXIT_VALIDATION  # the red reprocessed period gates
+    stored = json.loads(state.read_text(encoding="utf-8"))
+    assert stored["runs"][-1]["periods_reprocessed"] == "2026-02,2026-03"
+    assert any(r["period"] == "2026-02" and r["metric"] == "psi" and r["status"] == "red" for r in stored["results"])
