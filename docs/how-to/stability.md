@@ -50,7 +50,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `exclude` | `[]` | A list of columns never monitored. A bare string is a plan error. |
 | `segments` | `[]` | Columns (or lists of columns) whose values are also checked separately. The whole table is always checked. |
 | `weight` | none | Numeric column: PSI uses weight shares, and `weight_change` is reported. |
-| `baseline` | `fixed` | `fixed` (`start`/`end`, default the periods the bins were fitted on), `previous` (`lag`), `rolling` (`periods`, `min_periods`). |
+| `baseline` | `fixed` | `fixed` (`start`/`end`, default the periods the bins were fitted on), `previous` (`lag`), `rolling` (`periods`, `min_periods`). `exclude: red` (default `none`) makes `previous` and `rolling` skip a period whose `volume_change` or `psi` was red in the segment and take the next eligible one. |
 | `fit_periods` | `1` | Earliest periods the bins are fitted on when no fixed range is given. |
 | `limits`, `column_limits` | see below | Per metric `{green, red, direction, center}` or `null` to disable; per column overrides. |
 | `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Prediction-interval trend check (see the trend check under [Metrics and default limits](#metrics-and-default-limits)); `false` disables it. |
@@ -282,12 +282,22 @@ window at hand, so pure noise flags at the nominal rate for any window size.
 | `min_abs_change` | `0` | A departure at most this large (original scale) is never yellow or red. |
 | `min_rel_change` | `0.01` | A departure at most this fraction of the expected value is never yellow or red. |
 | `transform` | `none` | `log` fits `log1p` of the values, so multiplicative growth is a straight line. |
+| `fit` | `ols` | `theil_sen` (median of the pairwise slopes) or `huber` (Huber-weighted least squares) resist outliers in the history; both are computed in the library without extra dependencies. `theil_sen` is the recommended robust choice. |
+| `scale` | `std` | `mad` uses 1.4826 times the median absolute deviation of the residuals instead of their standard deviation, so one past spike does not widen the band. |
+| `exclude` | `red` | Which judged values stay out of the trend history: `red` drops periods whose light or trend was red, `flagged` also yellow, `none` keeps all. The values are still stored and reported. |
 
 A flat history has no spread: the deviation is stored empty (never infinite) and the point is red only when it
 exceeds the floor. The result also carries `trend_sigma` (the prediction standard error in the fitted scale) and
 `trend_lower` / `trend_upper` (the red-level interval, in the original scale) so a dashboard can draw the band.
 The trend history of a period at the start of a rewritten window is seeded from the stored results of the `window`
 periods before it, so a re-judged window gives the same trend status as the first judgment.
+
+**Anomalous periods.** With `exclude: red` a red spike no longer enters the history, so it cannot mask a later jump
+(a clean history flagging a 5.3σ jump kept reporting it green after one earlier spike). The caveat: a genuine permanent
+level shift stays red until a human declares a regime change, because the new level is never added to the history. The
+same rule runs for the stored history that seeds a rewritten window, and for the model monitor's trend.
+`baseline.exclude: red` applies the idea to `previous` and `rolling` baselines. Periods marked by a human (a separate
+capability) plug into the same path through the `excluded` input of `compute`.
 
 **Migration note.** The trend judgment changed, so the judgment fingerprint changes: the first run after upgrading
 re-judges the whole window once, supersedes the alerts the old statistic opened, and adds the three band columns

@@ -83,7 +83,7 @@ from bricksmith.monitor.persistence import CRITICAL, OPEN, PersistencePolicy, al
 from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
 from bricksmith.monitor.stability.profile import period_date, period_text
-from bricksmith.monitor.trend import trend_check
+from bricksmith.monitor.trend import keeps, trend_check
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -901,7 +901,8 @@ def apply_trend(results: Sequence[dict[str, Any]], config: ModelMonitorConfig) -
             continue
         key = _series(row)
         found = trend_check(history.setdefault(key, []), current, policy, str(row["direction"]))
-        history[key].append(current)
+        if keeps(policy, str(row["light"]), found.status):
+            history[key].append(current)
         row.update(
             trend_status=found.status,
             trend_expected=_finite(found.expected),
