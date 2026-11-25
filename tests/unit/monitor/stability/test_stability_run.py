@@ -78,19 +78,20 @@ def test_plan_lists_the_stability_targets(tmp_path: Path) -> None:
     entry = plan.entry("main.sales.orders")
     assert [t.physical for t in entry.targets] == [
         "main.sales.orders",
+        "main.sales.stability_actions",
         "main.sales.stability_alerts",
         "main.sales.stability_binnings",
         "main.sales.stability_profiles",
         "main.sales.stability_results",
         "main.sales.stability_runs",
     ]
-    results = entry.targets[4]
+    results = entry.targets[5]
     assert results.operations == ("merge",) and results.options["keys"] == [
         "dataset", "version", "period", "segment", "column", "metric",
     ]  # fmt: skip
     assert Plan.from_json(plan.to_json()).fingerprint == plan.fingerprint
     plain = build_plan(load_graph(project(tmp_path / "plain", {"period": "month", "scope": "other.audit"})))
-    assert plain.entry("main.sales.orders").targets[1].physical == "other.audit.stability_alerts"
+    assert plain.entry("main.sales.orders").targets[2].physical == "other.audit.stability_alerts"
 
 
 def test_invalid_declaration_is_a_plan_error(tmp_path: Path) -> None:
