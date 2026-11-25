@@ -54,8 +54,9 @@ def test_incidents_group_alerts_per_dataset_and_opening_period() -> None:
     assert "GROUP BY dataset, opened_period" in _statement("incidents")
 
 
-def test_datasets_view_has_no_owner_column() -> None:
-    assert "owner" not in VIEW_COLUMNS["datasets"]
+def test_datasets_view_carries_the_ownership_columns_of_the_run() -> None:
+    assert {"owner", "domain", "criticality", "severity_score", "upstream"} <= set(VIEW_COLUMNS["datasets"])
+    assert "r.owner" in _statement("datasets")
 
 
 def test_new_views_reject_a_bad_scope() -> None:
