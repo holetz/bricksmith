@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from bricksmith.monitor.adapter import is_rows
@@ -17,7 +17,24 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
-from bricksmith.monitor.stability.config import ESCALATED, FIXED, OPENED, PREVIOUS, RECURRED, ROLLING
+from bricksmith.monitor.stability.cadence import (
+    build_calendar,
+    cadence_results,
+    gap_between,
+    has_cadence,
+    parse_as_of,
+    settling_periods,
+)
+from bricksmith.monitor.stability.config import (
+    CADENCE_METRICS,
+    ESCALATED,
+    FIXED,
+    OPENED,
+    PERIOD_LATE,
+    PREVIOUS,
+    RECURRED,
+    ROLLING,
+)
 from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
@@ -142,7 +159,7 @@ def judgment_fingerprint(config: StabilityConfig) -> str:
     data = config.to_dict()
     content = {k: data[k] for k in ("baseline", "column_limits", "limits", "min_rows", "persistence", "trend")}
     content |= {"epsilon": config.epsilon, "trend_metrics": data["trend_metrics"], "weight": config.weight}
-    for optional in ("rules", "revision"):
+    for optional in ("rules", "revision", "cadence", "expected_by", "settle_periods", "settle_days"):
         if optional in data:
             content[optional] = data[optional]
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
@@ -150,6 +167,14 @@ def judgment_fingerprint(config: StabilityConfig) -> str:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _date_of(stamp: str) -> date:
+    """Return the date of an ISO timestamp, or today when ``stamp`` is not one (tests pass labels as ``now``)."""
+    try:
+        return date.fromisoformat(stamp[:10])
+    except ValueError:
+        return parse_as_of(None)
 
 
 def _engine_periods(data: Any, period: str) -> list[str]:  # noqa: ANN401 - rows or DataFrame
@@ -287,6 +312,18 @@ def _plan_periods(
     refresh = set(window[-config.refresh_periods :]) if config.refresh_periods else set()
     todo = [p for p in loaded if p not in profiled or p in refresh]
     return window, todo, loaded
+
+
+def _gap_of(cal: Any) -> Any:  # noqa: ANN401 - the cadence calendar or None
+    """Return the ``baseline_gap`` function for ``compute`` (``None`` without a cadence)."""
+    if cal is None:
+        return None
+
+    def gap(wanted: Sequence[str], period: str) -> int:
+        known = [cal.dates[p] for p in wanted if p in cal.dates]
+        return gap_between(cal, min(known), cal.dates[period]) if known and period in cal.dates else 0
+
+    return gap
 
 
 def _gate(config: StabilityConfig, red: int, yellow: int, open_alerts: int, critical: int) -> list[str]:
@@ -471,9 +508,14 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     task_id: str = "",
     physical: str = "",
     now: str | None = None,
+    as_of: str | date | None = None,
 ) -> CheckResult:
-    """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write."""
+    """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write.
+
+    ``as_of`` is the date the cadence is judged at (an ISO date); by default the date of ``now``.
+    """
     started = now or _now()
+    as_of_date = parse_as_of(as_of) if as_of else _date_of(started)
     periods = _engine_periods(data, config.period)
     if not periods:
         msg = f"stability: {dataset} has no rows with a {config.period!r} period"
@@ -484,6 +526,8 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     stored_profiles = store.rows(
         PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
     )
+    cal = build_calendar(config, periods) if has_cadence(config) else None
+    settling = settling_periods(config, periods, as_of_date, cal)
     window, todo, loaded = _plan_periods(config, binning, periods, {str(r["period"]) for r in stored_profiles})
     keep = set(loaded) - set(todo)
     fresh = _profile(
@@ -497,7 +541,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     profiles = [r for r in stored_profiles if r["period"] in keep] + fresh + emptied
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
-        emptied=vanished,
+        emptied=vanished, settling=settling, gap=_gap_of(cal),
     )  # fmt: skip
     revision_rows = (
         _revisions(
@@ -517,11 +561,23 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     previous = store.rows(RUNS, dataset, version=binning.version)
     last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
     rewrite_all = last is None or last.get("judgment_fingerprint") != judgment
-    emitted = (set(window) if rewrite_all else set(todo) & set(window)) | set(vanished)
+    refresh_all = rewrite_all or bool(config.settle_periods or config.settle_days)
+    emitted = (set(window) if refresh_all else set(todo) & set(window)) | set(vanished)
     results = [r for r in computed.results if r["period"] in emitted]
+    cadence_rows = (
+        cadence_results(
+            config, cal, binning=binning, dataset=dataset, as_of=as_of_date, run_id=run_id, computed_at=started,
+            stored=[r for r in store.rows(RESULTS, dataset, version=binning.version, periods=window)
+                    if str(r.get("metric")) in CADENCE_METRICS],
+        )
+        if cal is not None
+        else []
+    )  # fmt: skip
+    results += cadence_rows
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
     alert_rows = alerts(
-        computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
+        [*computed.results, *cadence_rows], config, dataset=dataset, version=binning.version, run_id=run_id,
+        updated_at=started,
         stored=stored_alerts, periods=sorted({*periods, *vanished}), keep_inside=not rewrite_all,
     )  # fmt: skip
     notifications = alert_events(
@@ -531,8 +587,9 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     alert_rows += _superseded(
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
     )
-    latest = max([window[-1], *vanished])
-    counts = counts_in(computed.results, latest)
+    late = [r["period"] for r in cadence_rows if r["metric"] == PERIOD_LATE and r["value"]]
+    latest = max([window[-1], *vanished, *late])
+    counts = counts_in([*computed.results, *cadence_rows], latest)
     open_rows = [r for r in alert_rows if r["state"] == OPEN]
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
     reasons = _gate(config, counts[RED], counts[YELLOW], len(open_rows), critical)
