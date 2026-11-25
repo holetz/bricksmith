@@ -3,12 +3,19 @@
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import TYPE_CHECKING, Any
 
+from bricksmith.cli.main import main
 from bricksmith.monitor.actions import RESOLUTIONS, action_row
 from bricksmith.monitor.stability.config import parse_config
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check, judgment_fingerprint
-from bricksmith.monitor.stability.tables import ACTIONS, merge_rows
+from bricksmith.monitor.stability.tables import ACTIONS, merge_rows, view_statements
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 CRITICAL_GATE = {"period": "month", "gate": {"fail_on": ["critical"]}, "persistence": {"immediate_red": True}}
 
@@ -93,3 +100,34 @@ def test_actions_enter_the_judgment_fingerprint_only_when_present() -> None:
     decided = judgment_fingerprint(config, [_action("a1", "analysis")])
     assert decided != plain
     assert judgment_fingerprint(config, [_action("a1", "analysis")]) == decided
+
+
+def test_action_command_appends_to_the_state_and_prints_the_insert(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = tmp_path / "state.json"
+    state.write_text("{}", encoding="utf-8")
+    argv = ["stability", "action", "--dataset", "orders", "--alert-id", "a1", "--action", "risk_accepted",
+            "--reason", "known", "--author", "ana", "--valid-until", "2999-01-01", "--state", str(state),
+            "--scope", "main.monitoring", "--created-at", "2026-01-01T00:00:00+00:00"]  # fmt: skip
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "INSERT INTO main.monitoring.stability_actions" in out and "DATE '2999-01-01'" in out
+    stored = json.loads(state.read_text(encoding="utf-8"))["actions"]
+    assert [r["alert_id"] for r in stored] == ["a1"] and stored[0]["dataset"] == "orders"
+    assert main(argv) == 0  # the same decision is one row
+    assert len(json.loads(state.read_text(encoding="utf-8"))["actions"]) == 1
+
+
+def test_action_command_refuses_what_the_core_refuses(capsys: pytest.CaptureFixture[str]) -> None:
+    base = ["stability", "action", "--dataset", "orders", "--alert-id", "a1", "--reason", "r", "--author", "ana"]
+    assert main([*base, "--action", "closed"]) != 0  # a closure needs a resolution
+    assert main([*base, "--action", "closed", "--resolution", "fixed"]) == 0
+    capsys.readouterr()
+
+
+def test_views_expose_actions_and_response_measures() -> None:
+    text = ";\n".join(view_statements("main.monitoring"))
+    for name in ("actions_latest", "open_alerts", "alert_response", "response_summary", "false_positive_rate"):
+        assert f"main.monitoring.stability_{name}" in text
+    assert "effective_state" in text and "days_to_first_action" in text and "days_to_resolve" in text

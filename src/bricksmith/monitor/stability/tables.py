@@ -158,7 +158,10 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
     """Return ``CREATE OR REPLACE VIEW`` statements for the dashboard views of the tables in ``scope``.
 
     ``<prefix>latest``: results of the latest period of each dataset. ``<prefix>dataset_status``: the worst
-    status per dataset and period with red and yellow counts. ``<prefix>open_alerts``: alerts still open.
+    status per dataset and period with red and yellow counts. ``<prefix>open_alerts``: alerts still open by their automatic state, with the latest
+    human action and the ``effective_state`` it gives. ``<prefix>actions_latest``, ``<prefix>alert_response`` and
+    ``<prefix>response_summary`` hold the actions and the time to first action and to close;
+    ``<prefix>false_positive_rate`` counts the closures typed ``false_positive`` per rule.
     """
     results = table_name(scope, prefix, RESULTS)
     alerts = table_name(scope, prefix, ALERTS)
@@ -180,11 +183,59 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
         f"  max(CASE WHEN `column` = '' AND segment = '' AND metric = 'row_count' THEN value END) AS row_count\n"
         f"FROM {results} GROUP BY dataset, version, period"
     )
+    actions = table_name(scope, prefix, ACTIONS)
+    columns = "action_id, dataset, alert_id, action, resolution, reason, author, valid_until, created_at"
+    latest_actions = table_name(scope, prefix, "actions_latest")
+    actions_latest = (
+        f"CREATE OR REPLACE VIEW {latest_actions} AS\n"
+        f"SELECT {columns} FROM (\n"
+        f"  SELECT {columns}, row_number() OVER (PARTITION BY dataset, alert_id\n"
+        f"    ORDER BY created_at DESC, action_id DESC) AS rn FROM {actions}) WHERE rn = 1"
+    )
     open_alerts = (
         f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'open_alerts')} AS\n"
-        f"SELECT * FROM {alerts} WHERE state = 'open'"
+        f"SELECT a.*, l.action, l.resolution, l.reason AS action_reason, l.author AS action_author,\n"
+        f"  l.created_at AS action_at, l.valid_until,\n"
+        f"  CASE WHEN l.action = 'closed' THEN 'closed'\n"
+        f"       WHEN l.action = 'risk_accepted' AND l.valid_until >= current_date THEN 'accepted'\n"
+        f"       ELSE 'open' END AS effective_state\n"
+        f"FROM {alerts} a LEFT JOIN {latest_actions} l ON a.dataset = l.dataset AND a.alert_id = l.alert_id\n"
+        f"WHERE a.state = 'open'"
     )
-    return [latest, status, open_alerts]
+    response = table_name(scope, prefix, "alert_response")
+    alert_response = (
+        f"CREATE OR REPLACE VIEW {response} AS\n"
+        f"SELECT s.dataset, s.alert_id, s.kind, s.metric, s.first_seen, f.first_action_at, c.closed_at,\n"
+        f"  datediff(to_date(f.first_action_at), to_date(s.first_seen)) AS days_to_first_action,\n"
+        f"  datediff(to_date(c.closed_at), to_date(s.first_seen)) AS days_to_resolve\n"
+        f"FROM (SELECT dataset, alert_id, max(kind) AS kind, max(metric) AS metric, min(updated_at) AS first_seen\n"
+        f"      FROM {alerts} GROUP BY dataset, alert_id) s\n"
+        f"LEFT JOIN (SELECT dataset, alert_id, min(created_at) AS first_action_at FROM {actions}\n"
+        f"           GROUP BY dataset, alert_id) f ON s.dataset = f.dataset AND s.alert_id = f.alert_id\n"
+        f"LEFT JOIN (SELECT dataset, alert_id, min(created_at) AS closed_at FROM {actions}\n"
+        f"           WHERE action = 'closed' GROUP BY dataset, alert_id) c\n"
+        f"  ON s.dataset = c.dataset AND s.alert_id = c.alert_id"
+    )
+    response_summary = (
+        f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'response_summary')} AS\n"
+        f"SELECT dataset, count(*) AS alerts, count(first_action_at) AS acted, count(closed_at) AS resolved,\n"
+        f"  avg(days_to_first_action) AS mean_days_to_first_action, avg(days_to_resolve) AS mean_days_to_resolve\n"
+        f"FROM {response} GROUP BY dataset"
+    )
+    false_positives = (
+        f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'false_positive_rate')} AS\n"
+        f"SELECT r.rule_id, count(*) AS closed_alerts,\n"
+        f"  sum(CASE WHEN l.resolution = 'false_positive' THEN 1 ELSE 0 END) AS false_positives,\n"
+        f"  sum(CASE WHEN l.resolution = 'false_positive' THEN 1 ELSE 0 END) / count(*) AS false_positive_rate\n"
+        f"FROM {latest_actions} l\n"
+        f"JOIN (SELECT dataset, alert_id, max(`column`) AS `column`, max(metric) AS metric, max(segment) AS segment\n"
+        f"      FROM {alerts} GROUP BY dataset, alert_id) a ON l.dataset = a.dataset AND l.alert_id = a.alert_id\n"
+        f"JOIN (SELECT dataset, segment, `column`, metric, max(rule_id) AS rule_id FROM {results}\n"
+        f"      GROUP BY dataset, segment, `column`, metric) r\n"
+        f"  ON a.dataset = r.dataset AND a.segment = r.segment AND a.`column` = r.`column` AND a.metric = r.metric\n"
+        f"WHERE l.action = 'closed' AND r.rule_id IS NOT NULL GROUP BY r.rule_id"
+    )
+    return [latest, status, actions_latest, open_alerts, alert_response, response_summary, false_positives]
 
 
 __all__ = [
