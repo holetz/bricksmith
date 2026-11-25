@@ -109,3 +109,17 @@ def test_gate_profiled_judges_only_the_periods_of_the_run() -> None:
     _commit(store, _check(_rows("2026-02"), store, "r1"))  # first sight: every period is profiled
     quiet = _check(_rows("2026-02"), store, "r2", gate={"fail_on": ["red"], "periods": "profiled"})
     assert not quiet.outcome.failed  # 2026-02 is red in storage but was not profiled by this run
+
+
+def test_revision_reports_each_reprocessed_period_against_its_first_publication() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows(), store, "r1", revision=True))
+    fixed = _check(_rows("2026-02"), store, "r2", reprocess=["2026-02"], revision=True)
+    found = {
+        (r["period"], r["column"], r["metric"]): r
+        for r in fixed.tables["results"]
+        if r["segment"] == "" and r["metric"].startswith("revision_")
+    }
+    assert found[("2026-02", "amount", "revision_psi")]["status"] == "red"
+    assert found[("2026-03", "amount", "revision_psi")]["status"] == "green"
+    assert fixed.tables["revisions"] == []  # the first publication is never rewritten
