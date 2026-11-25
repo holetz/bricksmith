@@ -4,12 +4,19 @@
 from __future__ import annotations
 
 import copy
-from typing import Any
+import json
+from typing import TYPE_CHECKING, Any
 
+from bricksmith.cli.main import main
 from bricksmith.monitor.stability import backtest, parse_config
 from bricksmith.monitor.stability.backtest import noise_estimate
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
 from bricksmith.monitor.stability.tables import merge_rows
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 DECLARED: dict[str, Any] = {
     "period": "month",
@@ -149,3 +156,45 @@ def test_the_report_carries_the_noise_estimate_only_when_asked() -> None:
     assert backtest(parse_config(DECLARED), store, dataset="orders").noise is None
     report = backtest(parse_config(DECLARED), store, dataset="orders", noise_runs=20, seed=3)
     assert report.noise is not None and report.noise.runs == 20 and report.to_dict()["noise"]["seed"] == 3
+
+
+def _state(tmp_path: Path) -> Path:
+    config, data, state = tmp_path / "config.json", tmp_path / "orders.jsonl", tmp_path / "state.json"
+    config.write_text(json.dumps(DECLARED), encoding="utf-8")
+    data.write_text("".join(json.dumps(r) + "\n" for r in _rows()), encoding="utf-8")
+    argv = ["stability", "check", "--config", str(config), "--data", str(data), "--state", str(state)]
+    assert main([*argv, "--dataset", "orders", "--json"]) in (0, 4)
+    return state
+
+
+def test_command_backtest_prints_a_json_report_and_never_writes_the_state(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = _state(tmp_path)
+    capsys.readouterr()
+    candidate = tmp_path / "new.json"
+    candidate.write_text(json.dumps(_tighter()), encoding="utf-8")
+    held = state.read_text(encoding="utf-8")
+    argv = ["stability", "backtest", "--config", str(candidate), "--dataset", "orders", "--state", str(state)]
+    assert main([*argv, "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["differences"] > 0 and report["alerts_opened"] and report["gates"] and report["noise"] is None
+    assert state.read_text(encoding="utf-8") == held
+    assert main([*argv, "--periods", "2026-06", "--noise", "10", "--seed", "5", "--json"]) == 0
+    narrowed = json.loads(capsys.readouterr().out)
+    assert narrowed["periods"] == ["2026-06"] and narrowed["noise"]["seed"] == 5
+
+
+def test_command_backtest_of_the_current_configuration_has_no_differences(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = _state(tmp_path)
+    current = tmp_path / "config.json"
+    capsys.readouterr()
+    assert main(["stability", "backtest", "--config", str(current), "--dataset", "orders", "--state", str(state)]) == 0
+    assert "0 difference(s)" in capsys.readouterr().out
+
+
+def test_command_backtest_needs_a_dataset(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    assert main(["stability", "backtest", "--config", str(tmp_path / "config.json"), "--state", str(state)]) != 0
