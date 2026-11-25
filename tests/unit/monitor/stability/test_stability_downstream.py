@@ -100,6 +100,9 @@ def test_upstream_match_needs_the_same_period_and_picks_the_first_origin() -> No
     assert upstream_origin([], "2026-04") == ""
 
 
+LEGACY = {"psi_limits": "fixed", "min_rows_per_bin": 0}  # the PSI options of before the sample-size default
+
+
 def _wide_rows(months: int, broken: int) -> list[dict[str, object]]:
     rows = []
     for m in range(months):
@@ -114,7 +117,9 @@ def _wide_rows(months: int, broken: int) -> list[dict[str, object]]:
 def _run(
     dataset: str, rows: list[dict[str, object]], upstream: list[Upstream] | None = None, **declared: object
 ) -> CheckResult:
-    config = parse_config({"period": "month", "persistence": {"immediate_red": True}, "notify": True, **declared})
+    config = parse_config(
+        {"period": "month", "persistence": {"immediate_red": True}, "notify": True, **LEGACY, **declared}
+    )
     return check(rows, config, MemoryStore(), dataset=dataset, run_id="r1", upstream=upstream or [])
 
 
@@ -197,7 +202,7 @@ def _tasks() -> str:
     for owner in ("ingest", "sales", "finance"):
         declared = {
             "period": "month", "exclude": ["id"], "baseline": "previous", "persistence": {"immediate_red": True},
-            "owner": owner, "criticality": "high", "notify": True,
+            "owner": owner, "criticality": "high", "notify": True, **LEGACY,
         }  # fmt: skip
         text = text.replace(f"DECLARED_{owner}", repr(declared))
     return text

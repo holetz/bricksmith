@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -553,13 +553,11 @@ def alert_events(  # noqa: PLR0913 - one keyword per event field
     target: str,
     run_id: str,
     occurred_at: str,
-    meta: Mapping[str, str] | None = None,
 ) -> list[AlertEvent]:
     """Return one event per alert that opened, escalated or recurred, against the stored open alerts.
 
     An alert whose stored open row says the same thing yields nothing, so replays and sliding windows (a carried
     alert keeps its id) stay silent. The key ``stability:<dataset>:<alert_id>:<transition>`` is stable across runs.
-    ``meta`` (owner, domain, criticality, upstream) is added to every event's details, for routing.
     """
     if policy is None or not policy.on:
         return []
@@ -595,7 +593,6 @@ def alert_events(  # noqa: PLR0913 - one keyword per event field
                         "segment": row["segment_label"],
                         "opened_period": row["opened_period"],
                         "last_period": row["last_period"],
-                        **(meta or {}),
                     },
                 )
             )
@@ -816,6 +813,11 @@ def ownership(config: StabilityConfig, upstream: str = "") -> dict[str, str]:
     return {k: v for k, v in found.items() if v}
 
 
+def routed(events: Sequence[AlertEvent], meta: Mapping[str, str]) -> list[AlertEvent]:
+    """Return ``events`` with the routing facts (owner, domain, criticality, upstream) added to their details."""
+    return [replace(e, details={**e.details, **meta}) for e in events]
+
+
 def _silenced(notifications: list[AlertEvent], origin: str, config: StabilityConfig) -> tuple[list[AlertEvent], int]:
     """Return the notifications left and how many were silenced because the incident is caused upstream."""
     if origin and config.suppress_downstream:
@@ -977,10 +979,18 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input; one seq
     alert_rows, suppressed = _budgeted(alert_rows, stored_alerts, computed.results, config, latest)
     human, held = _held(alert_rows, actions, started[:10])
     origin = upstream_origin(upstream, latest)
-    notifications = alert_events(
-        held, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
-        occurred_at=started, meta=ownership(config, origin),
-    )  # fmt: skip
+    notifications = routed(
+        alert_events(
+            held,
+            stored_alerts,
+            config.notify,
+            dataset=dataset,
+            target=physical or dataset,
+            run_id=run_id,
+            occurred_at=started,
+        ),
+        ownership(config, origin),
+    )
     notifications, silenced = _silenced(notifications, origin, config)
     superseded = _superseded(
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
@@ -1059,4 +1069,5 @@ __all__ = [
     "judgment_fingerprint",
     "ownership",
     "reprocessed_periods",
+    "routed",
 ]
