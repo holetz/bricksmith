@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from bricksmith.features.record import EngineChoice
     from bricksmith.graph import TaskGraph
     from bricksmith.monitor.stability.config import NotifyPolicy
+    from bricksmith.monitor.stability.incident import Upstream
     from bricksmith.ops.events import EventSink
     from bricksmith.ops.notify import AlertNotifier
     from bricksmith.plan import Plan
@@ -77,6 +78,7 @@ class _Worker:
     notifier: AlertNotifier | None = None
     notify: NotifyPolicy | None = None
     reprocess: tuple[str, ...] = ()
+    incidents: dict[str, tuple[Upstream, ...]] = field(default_factory=dict)
 
     def __call__(self, entry: PlanEntry) -> TaskResult:
         result = self._execute(entry)
@@ -133,9 +135,13 @@ class _Worker:
         models: tuple[dict[str, object], ...] = ()
         reason, failure = "", None
         if any("stability" in t.options for t in entry.targets):
-            from bricksmith.monitor.stability.hook import run_stability  # noqa: PLC0415 - only for declaring tasks
+            from bricksmith.monitor.stability.hook import incidents_of, run_stability  # noqa: PLC0415 - declaring
 
-            found, failure = run_stability(ctx, self.run_id, self.notifier, self.notify, self.root)
+            seen = tuple(u for d in entry.depends_on for u in self.incidents.get(d, ()))
+            found, failure = run_stability(ctx, self.run_id, self.notifier, self.notify, self.root, upstream=seen)
+            self.incidents[entry.task_id] = incidents_of(
+                found
+            )  # read by the dependents, which start after this returns
             stability = tuple(o.to_dict() for o in found)
             reason = "stability check failed" if failure else ""
         if any("model_monitoring" in t.options for t in entry.targets):

@@ -3,13 +3,24 @@
 
 from __future__ import annotations
 
+import textwrap
+from typing import TYPE_CHECKING
+
 import pytest
 
+from bricksmith.context import ExecutionContext
+from bricksmith.graph import load_graph
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.stability.config import CRITICALITY_WEIGHTS, parse_config
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
 from bricksmith.monitor.stability.incident import Upstream, build_incident, upstream_origin
 from bricksmith.monitor.stability.tables import SCHEMAS, merge_rows, view_statements
+from bricksmith.ops.notify import AlertNotifier
+from bricksmith.plan import build_plan
+from bricksmith.runner import InMemoryTableIO, apply_plan
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_declaration_of_ownership_and_suppression() -> None:
@@ -147,3 +158,84 @@ def test_run_rows_carry_ownership_and_the_severity_score_and_the_view_exposes_it
     stored = merge_rows("runs", [], [row])
     assert set(stored[0]) == set(SCHEMAS["runs"]) and "upstream" in SCHEMAS["alerts"]
     assert any("stability_datasets" in v and "criticality" in v for v in view_statements("main.s"))
+
+
+PLAN_TASKS = """
+from bricksmith.tasks import task
+
+MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04"]
+
+
+def rows(broken):
+    return [
+        {"month": m, "amount": float(i % 20 + (80 if broken and k >= 3 else 0)), "id": i}
+        for k, m in enumerate(MONTHS)
+        for i in range(60)
+    ]
+
+
+@task(kind="table", outputs="raw", metadata={"stability": DECLARED_ingest})
+def raw(ctx):
+    ctx.write("raw", rows(ctx.execution.parameters.get("broken") == "yes"))
+
+
+@task(kind="table", outputs="orders", metadata={"stability": DECLARED_sales})
+def orders(ctx):
+    ctx.read("raw")
+    ctx.write("orders", rows(ctx.execution.parameters.get("broken") == "yes"))
+
+
+@task(kind="table", outputs="report", metadata={"stability": DECLARED_finance})
+def report(ctx):
+    ctx.read("orders")
+    ctx.write("report", rows(ctx.execution.parameters.get("broken") == "yes"))
+"""
+
+
+def _tasks() -> str:
+    text = textwrap.dedent(PLAN_TASKS)
+    for owner in ("ingest", "sales", "finance"):
+        declared = {
+            "period": "month", "exclude": ["id"], "baseline": "previous", "persistence": {"immediate_red": True},
+            "owner": owner, "criticality": "high", "notify": True,
+        }  # fmt: skip
+        text = text.replace(f"DECLARED_{owner}", repr(declared))
+    return text
+
+
+class _Sink:
+    name = "sink"
+
+    def __init__(self) -> None:
+        self.payloads: list[dict[str, object]] = []
+
+    def deliver(self, payload: object) -> None:
+        self.payloads.append(dict(payload))  # type: ignore[call-overload]
+
+
+def _plan_run(root: Path, broken: str, notifier: AlertNotifier | None = None):  # noqa: ANN202
+    path = root / "catalogs/main/sales/flow.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_tasks(), encoding="utf-8")
+    context = ExecutionContext(environment="test", parameters={"broken": broken})
+    graph = load_graph(root, context=context)
+    return apply_plan(
+        build_plan(graph), graph, project_root=root, execution=context, table_io=InMemoryTableIO(),
+        notifier=notifier, concurrency=1,
+    )  # fmt: skip
+
+
+def test_a_broken_source_yields_one_notified_incident_and_silent_labeled_ones_downstream(tmp_path: Path) -> None:
+    sink = _Sink()
+    report = _plan_run(tmp_path, "yes", AlertNotifier([sink]))
+    by_task = {r.task_id.rsplit(".", 1)[-1]: r.stability[0] for r in report.results}
+    assert "upstream" not in by_task["raw"] and by_task["raw"]["incident_id"]
+    assert by_task["orders"]["upstream"] == "main.sales.raw" and by_task["orders"]["silenced"] > 0
+    assert by_task["report"]["upstream"] == "main.sales.raw"  # transitive: the origin is inherited
+    assert {p["subject"] for p in sink.payloads} == {"main.sales.raw"}  # type: ignore[index]
+    assert {p["details"]["owner"] for p in sink.payloads} == {"ingest"}  # type: ignore[index]
+
+
+def test_downstream_notifies_when_the_source_is_healthy(tmp_path: Path) -> None:
+    report = _plan_run(tmp_path, "no", AlertNotifier([_Sink()]))
+    assert all("upstream" not in r.stability[0] for r in report.results)
