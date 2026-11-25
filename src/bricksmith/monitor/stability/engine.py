@@ -356,12 +356,18 @@ def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
     *,
     dataset: str,
     version: int,
+    excluded: Collection[str] = (),
+    regimes: Collection[str] = (),
 ) -> dict[tuple[str, str, str], list[float]]:
-    """Return the stored colored values of the ``trend.window`` periods before the window, per series."""
+    """Return the stored colored values of the ``trend.window`` periods before the window, per series.
+
+    Periods in ``excluded`` are left out, and nothing before the latest of ``regimes`` that precedes the window.
+    """
     policy = config.trend
     if policy is None or not window:
         return {}
-    before = [p for p in periods if p < window[0]][-policy.window :]
+    restart = max((r for r in regimes if r < window[0]), default="")
+    before = [p for p in periods if restart <= p < window[0] and p not in excluded][-policy.window :]
     if not before:
         return {}
     series: dict[tuple[str, str, str], list[tuple[str, float]]] = {}

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from bricksmith.monitor.stability.config import StabilityConfig
 
 OUTSIDE = frozenset({UNSEEN, BELOW, ABOVE})
+INVALID_REASON = "period marked invalid: "
 TABLE = ""
 PERSISTENCE = "persistence"
 TREND = "trend"
@@ -156,6 +157,8 @@ class _Context:
     computed_at: str
     trend_history: dict[Key, list[float]] = field(default_factory=dict)
     excluded: frozenset[str] = frozenset()
+    regimes: frozenset[str] = frozenset()
+    invalid: Mapping[str, str] = field(default_factory=dict)
     red_periods: dict[str, set[str]] = field(default_factory=dict)
 
 
@@ -177,9 +180,11 @@ def _result(  # noqa: PLR0913 - one keyword per result field
     found = ctx.config.resolve(
         dataset=ctx.dataset, column=column, segment=segment, metric=metric, period_date=period_date(period)
     )
-    limits = None if found.informational else ctx.config.limits_of(found, metric, column)
-    if found.informational and light.status in (*COLORS, NO_RULE):
-        light = Light(INFORMATIONAL, INFORMATIONAL_REASON)
+    informational = found.informational or period in ctx.invalid
+    limits = None if informational else ctx.config.limits_of(found, metric, column)
+    if informational and light.status in (*COLORS, NO_RULE):
+        reason = INVALID_REASON + ctx.invalid[period] if period in ctx.invalid else INFORMATIONAL_REASON
+        light = Light(INFORMATIONAL, reason)
     row: dict[str, Any] = {
         "dataset": ctx.dataset, "version": ctx.binning.version, "period": period, "period_date": period_date(period),
         "segment": segment, "segment_label": segment_label(segment), "column": column, "metric": metric,
@@ -265,6 +270,8 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     emptied: Collection[str] = (),
     trend_seed: Mapping[Key, Sequence[float]] | None = None,
     excluded: Collection[str] = (),
+    regimes: Collection[str] = (),
+    invalid: Mapping[str, str] | None = None,
     red_seed: Mapping[str, Collection[str]] | None = None,
 ) -> Computed:
     """Compute the result rows of every period of ``window`` and ``emptied`` (in order) from the stored profiles.
@@ -279,9 +286,17 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     input a human mark of an anomalous period plugs into). With ``baseline.exclude = red`` a period whose
     ``volume_change`` or ``psi`` was red in a segment is skipped for that segment too; ``red_seed`` carries, per
     segment, the red periods already stored before the window.
+
+    ``regimes`` lists periods where a new regime starts: the trend history is emptied there and a ``previous`` or
+    ``rolling`` baseline never reaches before the latest regime (the regime period itself has no baseline). ``invalid``
+    maps periods being reprocessed to their reason: they are judged ``informational`` and, like ``excluded`` ones,
+    feed no trend history or baseline.
     """
     history = index_profiles(binning, profiles)
-    ctx = _Context(config, binning, dataset, run_id, computed_at, excluded=frozenset(excluded))
+    ctx = _Context(
+        config, binning, dataset, run_id, computed_at, excluded=frozenset(excluded) | frozenset(invalid or ()),
+        regimes=frozenset(regimes), invalid=dict(invalid or {}),
+    )  # fmt: skip
     for segment_name, reds in (red_seed or {}).items():
         ctx.red_periods[segment_name] = set(reds)
     for key, values in (trend_seed or {}).items():
@@ -291,12 +306,18 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     in_window = [p for p in history.periods if p in {*window, *emptied}]
     eligible = [p for p in history.periods if p not in emptied]
     for period in in_window:
+        if period in ctx.regimes:
+            ctx.trend_history.clear()
+        start = max((r for r in ctx.regimes if r <= period), default="")
         ordered = sorted([*eligible, period]) if period in emptied else eligible
         for segment in sorted(history.rows):
             if period not in history.rows[segment]:
                 continue
             skip = _skipped(ctx, segment)
-            wanted = baseline_periods(config, binning, [p for p in ordered if p == period or p not in skip], period)
+            reach = [
+                p for p in ordered if p == period or (p not in skip and (config.baseline.kind == FIXED or p >= start))
+            ]
+            wanted = baseline_periods(config, binning, reach, period)
             first = len(out.results)
             present = [p for p in wanted if p in history.rows[segment]]
             enough = len(present) >= (config.baseline.min_periods if config.baseline.kind == "rolling" else 1)
