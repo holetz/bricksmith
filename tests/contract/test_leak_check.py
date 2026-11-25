@@ -2,31 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
-import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import leak_check
 import pytest
 
-if TYPE_CHECKING:
-    from types import ModuleType
-
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "leak_check.py"
-
-
-def load_script() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("leak_check", SCRIPT)
-    assert spec
-    assert spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # dataclasses resolve annotations through sys.modules
-    spec.loader.exec_module(module)
-    return module
-
-
-leak_check = load_script()
+SCRIPT = Path(leak_check.__file__)
 
 
 def run(repo: Path, *args: str) -> str:

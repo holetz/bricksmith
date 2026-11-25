@@ -7,32 +7,11 @@ The Spark cases skip where pyspark is missing or cannot start a local session. R
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
-
-import pytest
+from typing import Any
 
 from bricksmith.monitor.model.engine import frame_of
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
 NAN = float("nan")
-
-
-@pytest.fixture(scope="module")
-def spark() -> Iterator[Any]:
-    sql = pytest.importorskip("pyspark.sql")
-    try:
-        session = (
-            sql.SparkSession.builder.master("local[1]")
-            .config("spark.ui.enabled", "false")
-            .config("spark.sql.shuffle.partitions", "1")
-            .getOrCreate()
-        )
-    except Exception as exc:  # noqa: BLE001 - any refusal to start a local session skips
-        pytest.skip(f"no local Spark session: {exc}")
-    yield session
-    session.stop()
 
 
 def test_pure_decimal_is_numeric() -> None:
@@ -49,12 +28,12 @@ def test_pure_segment_names_are_canonical() -> None:
     assert frame.segment("g", "true").count() == 2
 
 
-def test_spark_segments_and_counts_equal_pure(spark: Any) -> None:  # noqa: ANN401
+def test_spark_segments_and_counts_equal_pure(local_spark: Any) -> None:  # noqa: ANN401
     rows: list[tuple[Any, ...]] = [
         (True, NAN, Decimal("1.50")), (False, 1.5, Decimal("2.25")), (None, None, None),
         (True, 1.5, Decimal("1.50")), (False, NAN, Decimal("3.00")),
     ]  # fmt: skip
-    df = spark.createDataFrame(rows, "g BOOLEAN, d DOUBLE, n DECIMAL(10,2)")
+    df = local_spark.createDataFrame(rows, "g BOOLEAN, d DOUBLE, n DECIMAL(10,2)")
     pure = frame_of([dict(zip(("g", "d", "n"), r, strict=True)) for r in rows])
     cluster = frame_of(df)
     for column in ("g", "d"):

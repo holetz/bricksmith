@@ -13,9 +13,9 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from bootstrap import ROOT
+
 PROJECT = ROOT / "jvm"
 BUILT = PROJECT / "target" / "bricksmith-kernel.jar"
 PACKAGED = ROOT / "src" / "bricksmith" / "features" / "_jars" / "bricksmith-kernel.jar"

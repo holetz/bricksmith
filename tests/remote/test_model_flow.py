@@ -11,15 +11,12 @@ in ``finally``; the schema fixture verifies that the schema, the volume and the 
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import json
 import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import pytest
 
 from bricksmith.features.kernel import install_uc_function
 from bricksmith.graph import load_graph
@@ -31,13 +28,10 @@ from bricksmith.mlops.store import ModelStore
 from bricksmith.mlops.training import register_run
 from bricksmith.monitor.model.tables import view_statements
 from bricksmith.plan import build_plan
-from bricksmith.preflight import _managed_volume_type  # pyright: ignore[reportPrivateUsage]
 from bricksmith.runner import apply_plan
 from bricksmith.storage import SparkTableIO
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from bricksmith.clients import Clients
     from bricksmith.context import ExecutionContext
     from bricksmith.runner.report import RunReport
@@ -71,21 +65,6 @@ def run_tasks(project: Path, context: Any, spark: Any, roots: list[str], *, upst
             sys.stderr.write(f"ENGINE {result.task_id}: {json.dumps(dict(choice), sort_keys=True)}\n")
     assert report.ok, report.to_json()
     return report
-
-
-@pytest.fixture
-def jar_volume(remote_context: ExecutionContext, remote_clients: Clients, test_schema: str) -> Iterator[str]:
-    """Create a managed volume for the kernel JAR in the test schema; the schema fixture verifies removal."""
-    catalog = remote_context.catalog or ""
-    workspace = remote_clients.workspace()
-    workspace.volumes.create(
-        catalog_name=catalog, schema_name=test_schema, name="jars", volume_type=_managed_volume_type()
-    )
-    try:
-        yield f"{catalog}.{test_schema}.jars"
-    finally:
-        with contextlib.suppress(Exception):  # the schema teardown verifies what is left
-            workspace.volumes.delete(f"{catalog}.{test_schema}.jars")
 
 
 def test_the_model_flow_example_runs_end_to_end(  # noqa: PLR0915 - one end-to-end scenario

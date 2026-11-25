@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 import tarfile
@@ -10,8 +9,9 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import verify_dist
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "verify_dist.py"
+SCRIPT = Path(verify_dist.__file__)
 
 
 @pytest.mark.slow
@@ -19,15 +19,6 @@ def test_built_artifacts_import_without_heavy_integrations() -> None:
     result = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.count("modules imported") == 2
-
-
-def _script() -> object:
-    spec = importlib.util.spec_from_file_location("verify_dist", SCRIPT)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _artifacts(tmp_path: Path, *, jar: bool) -> tuple[Path, Path]:
@@ -46,12 +37,10 @@ def _artifacts(tmp_path: Path, *, jar: bool) -> tuple[Path, Path]:
 
 
 def test_require_kernel_accepts_artifacts_with_the_jar(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    module = _script()
-    module.require_kernel(*_artifacts(tmp_path, jar=True))  # pyright: ignore[reportAttributeAccessIssue]
+    verify_dist.require_kernel(*_artifacts(tmp_path, jar=True))
     assert "package bricksmith/features/_jars/bricksmith-kernel.jar" in capsys.readouterr().out
 
 
 def test_require_kernel_refuses_artifacts_without_the_jar(tmp_path: Path) -> None:
-    module = _script()
     with pytest.raises(SystemExit, match="do not package"):
-        module.require_kernel(*_artifacts(tmp_path, jar=False))  # pyright: ignore[reportAttributeAccessIssue]
+        verify_dist.require_kernel(*_artifacts(tmp_path, jar=False))

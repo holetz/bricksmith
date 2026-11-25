@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import re
-import sys
 from pathlib import Path
 
+import leak_check
 import pytest
 
 from bricksmith.cli.main import build_parser
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 AGENTS = ROOT / "plugins" / "bricksmith-omnigent" / "agents"
 
 VERBS: dict[str, list[str]] = {
@@ -205,15 +204,9 @@ def test_frontmatter_grant_equals_the_config_grant(agent: str) -> None:
 
 
 def test_bundle_files_pass_the_generic_leak_scan() -> None:
-    spec = importlib.util.spec_from_file_location("leak_check", ROOT / "scripts" / "leak_check.py")
-    assert spec
-    assert spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
     findings = []
     for path in sorted((ROOT / "plugins" / "bricksmith-omnigent").rglob("*")):
         if path.is_file():
             text = path.read_text(encoding="utf-8")
-            findings += module.scan_text(str(path), text, dict(module.GENERIC_PATTERNS))
+            findings += leak_check.scan_text(str(path), text, dict(leak_check.GENERIC_PATTERNS))
     assert not findings

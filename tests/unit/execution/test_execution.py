@@ -101,7 +101,7 @@ def write(root: Path, files: dict[str, str]) -> Path:
 
 
 @pytest.fixture
-def project(tmp_path: Path) -> Path:
+def execution_project(tmp_path: Path) -> Path:
     return write(tmp_path, FILES)
 
 
@@ -138,8 +138,8 @@ def run(
     return apply_plan(plan, graph, project_root=root, execution=context, table_io=io or io_with_calendar(graph), **kw)  # type: ignore[arg-type]
 
 
-def test_closure_order_and_reasons(project: Path) -> None:
-    graph = graph_of(project)
+def test_closure_order_and_reasons(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     plan = build_plan(graph, roots=[tid("agg")])
     assert [(e.task_id, e.action, e.reason) for e in plan.entries] == [
         (tid("calendar"), "skip", "static output; not recomputed"),
@@ -161,12 +161,12 @@ def test_closure_order_and_reasons(project: Path) -> None:
     assert build_plan(graph).entry(tid("dormant")).reason == "disabled"
 
 
-def test_filters_and_incomplete_closure_never_start(project: Path) -> None:
-    graph = graph_of(project)
+def test_filters_and_incomplete_closure_never_start(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     excluded = build_plan(graph, roots=[tid("agg")], exclude=[tid("clean")])
     assert [i.code for i in excluded.errors] == ["missing_upstream"]
     with pytest.raises(PlanError, match="missing_upstream"):
-        run(project, excluded, graph, dry_run=True)
+        run(execution_project, excluded, graph, dry_run=True)
     partial = build_plan(graph, roots=[tid("agg")], exclude=[tid("clean")], partial=True)
     assert not partial.errors
     assert [i.severity for i in partial.issues] == ["warning"]
@@ -209,10 +209,10 @@ def test_disabled_upstream_and_invalid_graph(tmp_path: Path) -> None:
     assert started == []
 
 
-def test_plan_json_is_stable_and_tamper_evident(project: Path) -> None:
-    graph = graph_of(project)
+def test_plan_json_is_stable_and_tamper_evident(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     plan = build_plan(graph, roots=[tid("agg")])
-    assert plan.to_json() == build_plan(graph_of(project), roots=[tid("agg")]).to_json()
+    assert plan.to_json() == build_plan(graph_of(execution_project), roots=[tid("agg")]).to_json()
     again = Plan.from_json(plan.to_json())
     assert again == plan
     assert again.fingerprint == plan.fingerprint
@@ -225,8 +225,8 @@ def test_plan_json_is_stable_and_tamper_evident(project: Path) -> None:
     assert done.returncode == 0, done.stderr
 
 
-def test_dry_run_performs_no_writes_and_imports_nothing(project: Path) -> None:
-    graph = graph_of(project)
+def test_dry_run_performs_no_writes_and_imports_nothing(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     plan = authorized(build_plan(graph, roots=[tid("agg")]), graph, "clean_orders", "order_totals")
     io = io_with_calendar(graph)
     called: list[str] = []
@@ -235,7 +235,7 @@ def test_dry_run_performs_no_writes_and_imports_nothing(project: Path) -> None:
         called.append(str(args))
         return lambda _: None
 
-    report = run(project, plan, graph, io=io, dry_run=True, loader=loader)
+    report = run(execution_project, plan, graph, io=io, dry_run=True, loader=loader)
     assert called == []
     assert io.writes == []
     assert report.dry_run
@@ -245,11 +245,11 @@ def test_dry_run_performs_no_writes_and_imports_nothing(project: Path) -> None:
     assert effects == ((physical(graph, "order_totals"), "merge"),)
 
 
-def test_successful_run_uses_real_loader_and_runtime_context(project: Path) -> None:
-    graph = graph_of(project)
+def test_successful_run_uses_real_loader_and_runtime_context(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     plan = authorized(build_plan(graph, roots=[tid("agg"), tid("side")]), graph, "clean_orders", "order_totals")
     io = io_with_calendar(graph)
-    report = run(project, plan, graph, io=io, concurrency=1)
+    report = run(execution_project, plan, graph, io=io, concurrency=1)
     assert report.ok
     assert report.ids("succeeded") == (tid("raw"), tid("clean"), tid("agg"), tid("side"))
     assert io.tables[physical(graph, "order_totals")] == 12
@@ -257,11 +257,11 @@ def test_successful_run_uses_real_loader_and_runtime_context(project: Path) -> N
     assert RunReport.from_json(report.to_json()) == report
 
 
-def test_failure_blocks_dependents_and_keeps_independent_branch(project: Path) -> None:
-    graph = graph_of(project)
+def test_failure_blocks_dependents_and_keeps_independent_branch(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     context = ExecutionContext(environment="test", parameters={"fail": "clean"})
     plan = authorized(build_plan(graph, roots=[tid("agg"), tid("side")]), graph, "clean_orders", "order_totals")
-    report = run(project, plan, graph, context=context)
+    report = run(execution_project, plan, graph, context=context)
     states = {r.task_id: r.state for r in report.results}
     assert states == {
         tid("calendar"): "skipped",
@@ -281,20 +281,20 @@ def test_failure_blocks_dependents_and_keeps_independent_branch(project: Path) -
     assert RunReport.from_dict(loaded) == report
 
 
-def test_fail_fast_leaves_remaining_not_run(project: Path) -> None:
-    graph = graph_of(project)
+def test_fail_fast_leaves_remaining_not_run(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     context = ExecutionContext(environment="test", parameters={"fail": "raw"})
     plan = build_plan(graph, roots=[tid("raw"), tid("side")])
-    report = run(project, plan, graph, context=context, concurrency=1, fail_fast=True)
+    report = run(execution_project, plan, graph, context=context, concurrency=1, fail_fast=True)
     assert report.ids("failed") == (tid("raw"),)
     assert report.ids("not-run") == (tid("side"),)
 
 
-def test_replay_selects_only_the_undone_work(project: Path) -> None:
-    graph = graph_of(project)
+def test_replay_selects_only_the_undone_work(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     context = ExecutionContext(environment="test", parameters={"fail": "clean"})
     plan = authorized(build_plan(graph, roots=[tid("agg"), tid("side")]), graph, "clean_orders", "order_totals")
-    report = run(project, plan, graph, context=context)
+    report = run(execution_project, plan, graph, context=context)
     replay = replay_plan(plan, report, graph)
     assert [(e.task_id, e.action) for e in replay.entries if e.action == "run"] == [
         (tid("clean"), "run"),
@@ -305,45 +305,45 @@ def test_replay_selects_only_the_undone_work(project: Path) -> None:
     assert replay.grants == ()
     io = io_with_calendar(graph)
     io.tables[physical(graph, "raw_orders")] = [1, 2, 3]  # persisted by the first run
-    second = run(project, authorized(replay, graph, "clean_orders", "order_totals"), graph, io=io)
+    second = run(execution_project, authorized(replay, graph, "clean_orders", "order_totals"), graph, io=io)
     assert second.ok
     assert physical(graph, "raw_orders") not in [w[0] for w in io.writes]
     other = build_plan(graph, roots=[tid("side")])
     with pytest.raises(PlanError, match="different plan"):
         replay_plan(other, report, graph)
     with pytest.raises(PlanError, match="nothing to replay"):
-        replay_plan(other, run(project, other, graph), graph)
+        replay_plan(other, run(execution_project, other, graph), graph)
 
 
-def test_stale_plan_is_rejected(project: Path, tmp_path: Path) -> None:
-    graph = graph_of(project)
+def test_stale_plan_is_rejected(execution_project: Path, tmp_path: Path) -> None:
+    graph = graph_of(execution_project)
     plan = build_plan(graph, roots=[tid("side")])
     mapped = ExecutionContext(environment="test", schemas={"sales": "sales_dev"})
     with pytest.raises(StalePlanError, match="graph changed"):
-        validate_plan(plan, graph_of(project, mapped))
-    (project / "catalogs/main/sales/side.py").write_text(
+        validate_plan(plan, graph_of(execution_project, mapped))
+    (execution_project / "catalogs/main/sales/side.py").write_text(
         HEADER + '@task(kind="table", outputs="side_v2")\ndef side(ctx):\n    pass\n', encoding="utf-8"
     )
     with pytest.raises(StalePlanError, match="graph changed"):
-        run(project, plan, graph_of(project), dry_run=True)
+        run(execution_project, plan, graph_of(execution_project), dry_run=True)
     assert tmp_path.exists()
 
 
-def test_authorizing_one_protected_output_does_not_authorize_upstream(project: Path) -> None:
-    graph = graph_of(project)
+def test_authorizing_one_protected_output_does_not_authorize_upstream(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     plan = build_plan(graph, roots=[tid("agg")])
     with pytest.raises(AuthorizationError, match="order_totals:merge"):
-        run(project, plan, graph, dry_run=True)
+        run(execution_project, plan, graph, dry_run=True)
     only_agg = authorized(plan, graph, "order_totals")
     with pytest.raises(AuthorizationError) as caught:
-        run(project, only_agg, graph)
+        run(execution_project, only_agg, graph)
     assert "clean_orders:write" in str(caught.value)
     assert "order_totals" not in str(caught.value)
-    assert run(project, authorized(only_agg, graph, "clean_orders"), graph, dry_run=True).dry_run
+    assert run(execution_project, authorized(only_agg, graph, "clean_orders"), graph, dry_run=True).dry_run
 
 
-def test_authorization_scope_is_checked(project: Path) -> None:
-    graph = graph_of(project)
+def test_authorization_scope_is_checked(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     plan = build_plan(graph, roots=[tid("agg")])
     with pytest.raises(AuthorizationError, match="not a target"):
         plan.authorize(Authorization("main.sales.side_table", ("write",)))
@@ -353,17 +353,17 @@ def test_authorization_scope_is_checked(project: Path) -> None:
     narrower = build_plan(graph, roots=[tid("clean")])
     moved = dataclasses.replace(narrower, grants=ready.grants, granted_for=ready.granted_for)
     with pytest.raises(AuthorizationError, match="different plan"):
-        run(project, moved, graph, dry_run=True)
+        run(execution_project, moved, graph, dry_run=True)
     widened = dataclasses.replace(
         ready, grants=(*ready.grants, Authorization(physical(graph, "side_table"), ("write",)))
     )
     with pytest.raises(AuthorizationError, match="outside the reviewed plan"):
-        run(project, dataclasses.replace(widened, granted_for=widened.fingerprint), graph, dry_run=True)
+        run(execution_project, dataclasses.replace(widened, granted_for=widened.fingerprint), graph, dry_run=True)
     assert Plan.from_json(ready.to_json()).grants == ready.grants
 
 
-def test_write_guard_in_task_context(project: Path) -> None:
-    graph = graph_of(project)
+def test_write_guard_in_task_context(execution_project: Path) -> None:
+    graph = graph_of(execution_project)
     plan = build_plan(graph, roots=[tid("clean")])
     entry = plan.entry(tid("clean"))
     io = InMemoryTableIO({physical(graph, "raw_orders"): [1]})
@@ -452,33 +452,62 @@ def test_retry_policy(tmp_path: Path) -> None:
 
 
 def test_cli_plan_apply_replay_and_entrypoint(
-    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    execution_project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     plan_file = tmp_path / "plan.json"
     base = ["--json"]
     assert (
-        main([*base, "run", "plan", "--project", str(project), "--task", tid("side"), "--out", str(plan_file)])
+        main(
+            [*base, "run", "plan", "--project", str(execution_project), "--task", tid("side"), "--out", str(plan_file)]
+        )
         == EXIT_OK
     )
     shown = json.loads(capsys.readouterr().out)
     assert shown["fingerprint"] == Plan.from_json(plan_file.read_text()).fingerprint
-    assert main([*base, "run", "plan", "--project", str(project), "--task", "nope"]) == EXIT_VALIDATION
+    assert main([*base, "run", "plan", "--project", str(execution_project), "--task", "nope"]) == EXIT_VALIDATION
     capsys.readouterr()
-    assert main([*base, "run", "apply", "--project", str(project), "--plan", str(plan_file), "--dry-run"]) == EXIT_OK
+    assert (
+        main([*base, "run", "apply", "--project", str(execution_project), "--plan", str(plan_file), "--dry-run"])
+        == EXIT_OK
+    )
     assert json.loads(capsys.readouterr().out)["dry_run"] is True
     report_file = tmp_path / "report.json"
     # The default backend is unconfigured, so a task that writes fails; the report says so.
     code = main(
-        [*base, "run", "apply", "--project", str(project), "--plan", str(plan_file), "--report", str(report_file)]
+        [
+            *base,
+            "run",
+            "apply",
+            "--project",
+            str(execution_project),
+            "--plan",
+            str(plan_file),
+            "--report",
+            str(report_file),
+        ]
     )
     assert code == EXIT_RUN_FAILED
     capsys.readouterr()
     assert RunReport.from_json(report_file.read_text()).ids("failed") == (tid("side"),)
-    replay = ["run", "replay", "--project", str(project), "--plan", str(plan_file), "--report-in", str(report_file)]
+    replay = [
+        "run",
+        "replay",
+        "--project",
+        str(execution_project),
+        "--plan",
+        str(plan_file),
+        "--report-in",
+        str(report_file),
+    ]
     assert main([*base, *replay]) == EXIT_OK
     assert [e["task_id"] for e in json.loads(capsys.readouterr().out)["entries"]] == [tid("side")]
     io = InMemoryTableIO()
-    assert run_entrypoint(["--project", str(project), "--task", tid("side"), "--json"], table_io=io) == EXIT_OK
+    assert (
+        run_entrypoint(["--project", str(execution_project), "--task", tid("side"), "--json"], table_io=io) == EXIT_OK
+    )
     assert [w[1] for w in io.writes] == ["write"]
     capsys.readouterr()
-    assert run_entrypoint(["--project", str(project), "--task", tid("agg"), "--json"], table_io=io) == EXIT_VALIDATION
+    assert (
+        run_entrypoint(["--project", str(execution_project), "--task", tid("agg"), "--json"], table_io=io)
+        == EXIT_VALIDATION
+    )

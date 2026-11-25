@@ -16,7 +16,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from bootstrap import ROOT
+
 HEAVY = ("databricks", "pyspark", "mlflow", "sklearn")
 KERNEL = "bricksmith/features/_jars/bricksmith-kernel.jar"
 PROBE = """
