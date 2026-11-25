@@ -57,7 +57,8 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `trend_directions` | `row_count` and `mean` both, `null_rate` and `unseen_rate` higher | Per metric `higher`, `lower` or `both`: the direction of the trend check for a metric without limits. A limit's own direction wins. |
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
 | `gate` | `{fail_on: [], on_error: "warn", periods: "latest"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`; `periods` takes `latest` or `profiled` (see [Backfills and reprocessing](#backfills-and-reprocessing)). |
-| `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity}`. See [Notifications](#notifications). |
+| `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity, digest, top, remind_after, material_change}`. See [Notifications](#notifications). |
+| `noise` | none | A noise budget for new alerts: `{max_alerts_per_run, fdr}`. See [Incidents and the noise budget](#incidents-and-the-noise-budget). |
 | `cadence`, `expected_by` | `none`, `0` | Expected period cadence (`day`, `week`, `month`) and the whole days after a period ends by which its data is due. See [Cadence](#cadence-late-periods-and-gaps). |
 | `settle_periods`, `settle_days` | `0`, `0` | The latest N periods, or the periods ending within N days of `as_of`, are still receiving data: judged and shown, never a baseline, trend history, alert or gate input. `settle_days` needs a `cadence`. |
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
@@ -158,6 +159,36 @@ alerts with the ones stored before the run, so replaying unchanged data sends no
 drops the opening period of an open alert keeps its `alert_id` and sends nothing either. Delivery happens after the
 rows are stored, never raises, and cannot fail the task or change the gate; `bricksmith stability check` does not
 deliver.
+
+### Digest and re-notification
+
+`notify: {digest: true, top: 5}` sends **one** `statistical_alert` per dataset run instead of one per alert: it lists
+the run's incident and its `top` causes, and carries the per-alert dedup keys in `details.alert_keys`. The digest key,
+`stability:<dataset>:digest:<hash of those keys>`, is stable, so replaying unchanged data sends nothing. Per-alert
+delivery stays the default; the digest is opt-in.
+
+An open alert that did not change is never sent again. Two options re-notify one that stays open, both off by
+default: `remind_after: N` sends a `reminded` event each time the alert's flagged periods reach a multiple of `N`,
+and `material_change: R` sends a `changed` event when its last value moved by at least the relative amount `R`
+since the stored open row. Escalation always counts.
+
+## Incidents and the noise budget
+
+One bad load turns many columns and segments red at once. Every check derives an **incident** per dataset and period
+from the alerts still open: `CheckResult.incident` (and the `incident_id` of the run summary) holds the alerts ranked
+by severity and by how far their series is beyond its red limit (or, for a trend alert, beyond its red deviation),
+the segments and columns ranked by their summed scores, and the bins of the latest period ranked by the stored
+`contribution`. Incidents are derived, not stored: the per-alert rows stay the source of truth.
+
+`noise: {max_alerts_per_run: N, fdr: Q}` limits the alerts that **open** in one run (stored open alerts are never
+filtered). With `fdr`, a new warning-severity trend alert opens only when Benjamini-Hochberg at level `Q`, over the
+two-sided or one-sided normal p-values of every trend deviation of the latest period, counts its series as a
+discovery; critical alerts are never filtered. `max_alerts_per_run` then keeps the new alerts with the highest
+severity and score. The run summary reports how many alerts the budget suppressed. Declaring `noise` changes which
+alerts exist, so it re-judges the window like any other judgment change.
+
+When alerts were closed with a typed resolution, the run summary and the incident also report the **false-positive
+rate per rule** (`false_positive` closures over all closures of the rule's series) to drive limit tuning.
 
 ## Backfills and reprocessing
 
