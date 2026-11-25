@@ -216,3 +216,26 @@ def test_auto_columns_skip_with_reasons() -> None:
     assert result.skipped == {"day": "unsupported_type", "id": "excluded", "month": "excluded"}
     assert (B, "", "amount", "psi") in found and (B, "", "kind", "psi") in found
     assert result.binning is not None and result.binning.column("amount").zero
+
+
+def test_open_alert_keeps_its_identity_when_its_opening_leaves_the_window() -> None:
+    stable = {f"2026-{m:02d}": [1, 2, 1, 2] for m in range(1, 5)}
+    drifted = {f"2026-{m:02d}": [2, 2, 2, 2] for m in range(5, 13)}
+    cfg = config(max_periods=3, baseline={"kind": "fixed", "start": "2026-01", "end": "2026-04"})
+    store = MemoryStore()
+    opened: dict[str, object] = {}
+    months = [*stable, *drifted]
+    for count in range(5, len(months) + 1):
+        rows = rows_of({m: {**stable, **drifted}[m] for m in months[:count]})
+        found, _ = results_of(rows, cfg, store)
+        for kind, items in found.tables.items():
+            store.tables[kind] = merge_rows(kind, store.tables.get(kind, []), items)
+        mine = [a for a in store.tables["alerts"] if a["metric"] == "psi" and a["kind"] == "persistence"]
+        if not opened and mine:
+            opened = mine[0]
+    final = [a for a in store.tables["alerts"] if a["metric"] == "psi" and a["kind"] == "persistence"]
+    assert len(final) == 1 and final[0]["state"] == "open"
+    assert final[0]["alert_id"] == opened["alert_id"] and final[0]["opened_period"] == opened["opened_period"]
+    assert final[0]["opened_period"] < "2026-10"  # the opening period is outside the last three periods
+    assert final[0]["flagged_periods"] > 3
+    assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]

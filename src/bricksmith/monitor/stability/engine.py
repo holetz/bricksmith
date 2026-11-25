@@ -297,10 +297,12 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     rewrite_all = last is None or last.get("judgment_fingerprint") != judgment
     emitted = set(window) if rewrite_all else set(todo) & set(window)
     results = [r for r in computed.results if r["period"] in emitted]
+    stored_alerts = store.rows(ALERTS, dataset)
     alert_rows = alerts(
-        computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started
-    )
-    alert_rows += _superseded(store.rows(ALERTS, dataset), alert_rows, run_id, started)
+        computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
+        stored=stored_alerts,
+    )  # fmt: skip
+    alert_rows += _superseded(stored_alerts, alert_rows, run_id, started)
     latest = window[-1]
     counts = counts_in(computed.results, latest)
     open_rows = [r for r in alert_rows if r["state"] == OPEN]

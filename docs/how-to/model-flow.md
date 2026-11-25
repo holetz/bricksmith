@@ -155,7 +155,13 @@ score, grade from the bands, sample, sample role and the cascade columns. It als
 monitored features. A registered pin writes its version number; a run pin writes `run:<run id>`.
 
 The task declares `model_monitoring` ([model monitoring](model-monitoring.md)). It uses the `dev` and `oot` samples
-as references, the grade, the label with a three-period lag, CSI on the three features, and their null rate. Monitoring
+as references, the grade, the label with a three-period lag, CSI on the three features, and their null rate. It also
+declares a `credit` block with a three-period probability horizon (the label's horizon) and the grades A to D, best
+first, so every grade gets its observed-over-expected ratio, Jeffreys and binomial tests behind the expected-events
+volume gate, and the grade-order check ([credit-model checks](model-monitoring.md#credit-model-performance-checks)).
+Label-based results of a period read the data three periods earlier, so the latest live periods carry them and the
+first ones are `data_period_unavailable`. A synthetic unit test runs this declaration through the engine offline.
+Monitoring
 fits its own feature bins (`feature_binning` is `own`). Reusing the stability binning of `account_features` would
 need a fixed stability `dataset` name on that table, because the default name is the physical table and changes from
 one context to another.
