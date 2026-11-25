@@ -57,10 +57,14 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `trend_directions` | `row_count` and `mean` both, `null_rate` and `unseen_rate` higher | Per metric `higher`, `lower` or `both`: the direction of the trend check for a metric without limits. A limit's own direction wins. |
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
 | `gate` | `{fail_on: [], on_error: "warn", periods: "latest"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`; `periods` takes `latest` or `profiled` (see [Backfills and reprocessing](#backfills-and-reprocessing)). |
-| `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity}`. See [Notifications](#notifications). |
+| `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity, digest, top, remind_after, material_change}`. See [Notifications](#notifications). |
+| `noise` | none | A noise budget for new alerts: `{max_alerts_per_run, fdr}`. See [Incidents and the noise budget](#incidents-and-the-noise-budget). |
 | `cadence`, `expected_by` | `none`, `0` | Expected period cadence (`day`, `week`, `month`) and the whole days after a period ends by which its data is due. See [Cadence](#cadence-late-periods-and-gaps). |
 | `settle_periods`, `settle_days` | `0`, `0` | The latest N periods, or the periods ending within N days of `as_of`, are still receiving data: judged and shown, never a baseline, trend history, alert or gate input. `settle_days` needs a `cadence`. |
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
+| `psi_limits` | `sample_size` | `sample_size` raises the PSI limits to the sampling-noise floor of the sample sizes; `fixed` judges the declared limits as they are. See [Small samples](#small-samples-and-psi). |
+| `min_rows_per_bin` | `10` | A distribution metric needs `max(min_rows, min_rows_per_bin × bins)` rows, else it is `insufficient_volume`. `0` turns the per-bin rule off. |
+| `psi_smoothing` | `epsilon` | `epsilon` floors empty bin shares; `laplace` adds one count to every bin of both sides before the shares are taken. |
 | `refresh_periods` | `1` | The latest N periods are profiled again on every run (late or corrected data). |
 | `max_periods`, `max_segments` | `36`, `50` | Computation window and the most frequent segment values kept per segment set, ranked over every period the run loads (see [Profiles](#what-happens-in-a-run)). |
 | `rules` | `[]` | [Limit rules](#limit-rules): an inline list, or the path of a TOML or JSON file, that picks limits or marks segments informational per dataset, column, segment, metric and date. A rule's `metric` must be a stability metric. |
@@ -111,6 +115,25 @@ one off with `null`, and use `gate.fail_on` to fail the task. Their alerts open 
 fingerprint: when they change, the next run fits a new binning version on the latest `fit_periods` periods (the earliest
 ones may predate the new column), unless the baseline is a fixed range. The `schema_change` result of that run says which
 columns were absorbed. Like any refit, the new version profiles and judges every period of the window at once.
+
+## Small samples and PSI
+
+Between two samples of the same population, PSI is not zero: it is about `chi2(bins - 1) × (1/n + 1/m)`, with `n`
+the rows of the period and `m` the rows of the baseline. A fixed limit of `0.10` or `0.25` is therefore crossed by
+noise alone in small segments (in a simulation with 10 bins and no real change, 30 rows against 90 turn red most of
+the time and 100 against 300 turn yellow or worse more than half of the time).
+
+With `psi_limits: sample_size` (the default) the yellow limit of `psi` and `revision_psi` is
+`max(declared, chi2(0.95, bins - 1) × (1/n + 1/m))` and the red limit uses `chi2(0.99, …)`, so a PSI is colored only
+when it is both practically large and distinguishable from sampling noise. The limits that judged a row are stored
+in its `green_limit` and `red_limit`. On large tables the floor is tiny and the declared limits keep applying; the
+floor never lowers a limit and applies to every limit source (defaults, `column_limits` and rules).
+`min_rows_per_bin` also reports `insufficient_volume` when the expected rows per bin are too few, and
+`psi_smoothing: laplace` removes the inflation that empty bins cause in small samples.
+
+**Migration.** Existing declarations get the new defaults: small segments that used to turn red by noise are now
+green or `insufficient_volume`. To keep the previous behavior, declare `psi_limits: fixed` and
+`min_rows_per_bin: 0`. Model-monitoring CSI keeps its fixed limits.
 
 ## What happens in a run
 
@@ -186,6 +209,36 @@ alerts with the ones stored before the run, so replaying unchanged data sends no
 drops the opening period of an open alert keeps its `alert_id` and sends nothing either. Delivery happens after the
 rows are stored, never raises, and cannot fail the task or change the gate; `bricksmith stability check` does not
 deliver.
+
+### Digest and re-notification
+
+`notify: {digest: true, top: 5}` sends **one** `statistical_alert` per dataset run instead of one per alert: it lists
+the run's incident and its `top` causes, and carries the per-alert dedup keys in `details.alert_keys`. The digest key,
+`stability:<dataset>:digest:<hash of those keys>`, is stable, so replaying unchanged data sends nothing. Per-alert
+delivery stays the default; the digest is opt-in.
+
+An open alert that did not change is never sent again. Two options re-notify one that stays open, both off by
+default: `remind_after: N` sends a `reminded` event each time the alert's flagged periods reach a multiple of `N`,
+and `material_change: R` sends a `changed` event when its last value moved by at least the relative amount `R`
+since the stored open row. Escalation always counts.
+
+## Incidents and the noise budget
+
+One bad load turns many columns and segments red at once. Every check derives an **incident** per dataset and period
+from the alerts still open: `CheckResult.incident` (and the `incident_id` of the run summary) holds the alerts ranked
+by severity and by how far their series is beyond its red limit (or, for a trend alert, beyond its red deviation),
+the segments and columns ranked by their summed scores, and the bins of the latest period ranked by the stored
+`contribution`. Incidents are derived, not stored: the per-alert rows stay the source of truth.
+
+`noise: {max_alerts_per_run: N, fdr: Q}` limits the alerts that **open** in one run (stored open alerts are never
+filtered). With `fdr`, a new warning-severity trend alert opens only when Benjamini-Hochberg at level `Q`, over the
+two-sided or one-sided normal p-values of every trend deviation of the latest period, counts its series as a
+discovery; critical alerts are never filtered. `max_alerts_per_run` then keeps the new alerts with the highest
+severity and score. The run summary reports how many alerts the budget suppressed. Declaring `noise` changes which
+alerts exist, so it re-judges the window like any other judgment change.
+
+When alerts were closed with a typed resolution, the run summary and the incident also report the **false-positive
+rate per rule** (`false_positive` closures over all closures of the rule's series) to drive limit tuning.
 
 ## Backfills and reprocessing
 

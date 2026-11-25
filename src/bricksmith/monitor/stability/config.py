@@ -85,6 +85,14 @@ BASELINES = (FIXED, PREVIOUS, ROLLING)
 FREEZE = "freeze"
 EXTEND = "extend"
 AUTO_COLUMNS = (FREEZE, EXTEND)
+#: ``psi_limits``: the declared PSI limits as they are, or raised to the sampling-noise floor of the sample sizes.
+SAMPLE_SIZE = "sample_size"
+PSI_LIMITS = (FIXED, SAMPLE_SIZE)
+#: ``psi_smoothing``: how empty bins are kept from dominating the index: the ``epsilon`` share floor or Laplace counts.
+EPSILON_FLOOR = "epsilon"
+LAPLACE = "laplace"
+PSI_SMOOTHINGS = (EPSILON_FLOOR, LAPLACE)
+DEFAULT_MIN_ROWS_PER_BIN = 10
 GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
 GATE_PERIODS = ("latest", "profiled")
 TABLES = ("binnings", "profiles", "results", "alerts", "runs")
@@ -92,14 +100,19 @@ KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "trend_directions", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
-    "auto_columns", "cadence", "expected_by", "settle_periods", "settle_days",
+    "auto_columns", "psi_limits", "min_rows_per_bin", "psi_smoothing",
+    "noise", "cadence", "expected_by", "settle_periods", "settle_days",
     "history", "history_periods",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
 RECURRED = "recurred"
 TRANSITIONS = (OPENED, ESCALATED, RECURRED)
+#: Transitions of an alert that stays open: delivered only when ``remind_after`` or ``material_change`` is declared.
+REMINDED = "reminded"
+CHANGED = "changed"
 SEVERITIES = ("warning", "critical")
+_NOTIFY_KEYS = frozenset({"on", "min_severity", "digest", "top", "remind_after", "material_change"})
 
 
 def _fail(message: str) -> MonitorError:
@@ -191,42 +204,130 @@ class Gate:
 class NotifyPolicy:
     """Which alert transitions are delivered through the run's notifier, and from which severity.
 
-    No ``on`` transition means notifications are switched off (``notify: false``).
+    No ``on`` transition means notifications are switched off (``notify: false``). ``digest`` delivers one message
+    per run listing the incident and its ``top`` causes instead of one per alert. ``remind_after`` (periods flagged)
+    and ``material_change`` (relative change of the last value) re-notify an alert that stays open; both are off by
+    default, so an unchanged open alert never notifies.
     """
 
     on: tuple[str, ...] = TRANSITIONS
     min_severity: str = "warning"
+    digest: bool = False
+    top: int = 5
+    remind_after: int = 0
+    material_change: float = 0.0
 
     def __post_init__(self) -> None:
-        """Validate the transitions and the severity."""
+        """Validate the transitions, the severity and the digest and re-notification options."""
         if set(self.on) - set(TRANSITIONS) or self.min_severity not in SEVERITIES:
             msg = f"notify on takes {', '.join(TRANSITIONS)} and min_severity {' or '.join(SEVERITIES)}"
+            raise _fail(msg)
+        if self.top < 1 or self.remind_after < 0 or not math.isfinite(self.material_change) or self.material_change < 0:
+            msg = "notify top must be >= 1, remind_after >= 0 and material_change a finite number >= 0"
             raise _fail(msg)
 
     def wants(self, transition: str, severity: str) -> bool:
         """Tell whether a ``transition`` of an alert of ``severity`` is delivered."""
-        return transition in self.on and SEVERITIES.index(severity) >= SEVERITIES.index(self.min_severity)
+        if SEVERITIES.index(severity) < SEVERITIES.index(self.min_severity):
+            return False
+        if transition == REMINDED:
+            return self.remind_after > 0
+        if transition == CHANGED:
+            return self.material_change > 0
+        return transition in self.on
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form."""
-        return {"min_severity": self.min_severity, "on": list(self.on)}
+        """Return the serializable form (the digest and re-notification options only when declared)."""
+        data: dict[str, Any] = {"min_severity": self.min_severity, "on": list(self.on)}
+        if self.digest:
+            data["digest"] = True
+            data["top"] = self.top
+        if self.remind_after:
+            data["remind_after"] = self.remind_after
+        if self.material_change:
+            data["material_change"] = self.material_change
+        return data
+
+
+@dataclass(frozen=True)
+class NoiseBudget:
+    """How many alerts one run may open: at most ``max_alerts_per_run`` and, with ``fdr``, only the discoveries.
+
+    ``fdr`` is the Benjamini-Hochberg level applied over the trend p-values of the run: a new warning-severity
+    trend alert opens only when its series is a discovery at that level. Stored open alerts are never filtered.
+    """
+
+    max_alerts_per_run: int | None = None
+    fdr: float | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the cap and the level."""
+        if self.max_alerts_per_run is not None and self.max_alerts_per_run < 1:
+            msg = "noise max_alerts_per_run must be an integer >= 1"
+            raise _fail(msg)
+        if self.fdr is not None and not 0 < self.fdr < 1:
+            msg = "noise fdr must be a number between 0 and 1 (exclusive)"
+            raise _fail(msg)
+        if self.max_alerts_per_run is None and self.fdr is None:
+            msg = "noise needs max_alerts_per_run, fdr or both"
+            raise _fail(msg)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable form (only the declared parts)."""
+        data: dict[str, Any] = {}
+        if self.max_alerts_per_run is not None:
+            data["max_alerts_per_run"] = self.max_alerts_per_run
+        if self.fdr is not None:
+            data["fdr"] = self.fdr
+        return data
+
+
+def parse_noise(value: object) -> NoiseBudget | None:
+    """Validate a `noise` value: {max_alerts_per_run, fdr}; None or false is unset."""
+    if value is None or value is False:
+        return None
+    if not isinstance(value, dict) or set(value) - {"max_alerts_per_run", "fdr"}:
+        msg = f"noise must be a mapping with max_alerts_per_run and fdr, got {value!r}"
+        raise _fail(msg)
+    cap, level = value.get("max_alerts_per_run"), value.get("fdr")
+    if (cap is not None and (isinstance(cap, bool) or not isinstance(cap, int))) or (
+        level is not None and (isinstance(level, bool) or not isinstance(level, (int, float)))
+    ):
+        msg = f"noise max_alerts_per_run must be an integer and fdr a number, got {value!r}"
+        raise _fail(msg)
+    return NoiseBudget(cap, None if level is None else float(level))
 
 
 def parse_notify(value: object) -> NotifyPolicy | None:
-    """Validate a `notify` value: true (all transitions), false (off) or {on, min_severity}; None is unset."""
+    """Validate a `notify` value: true (all transitions), false (off) or a mapping; None is unset."""
     if value is None:
         return None
     if isinstance(value, bool):
         return NotifyPolicy() if value else NotifyPolicy(on=())
-    if not isinstance(value, dict) or set(value) - {"on", "min_severity"}:
-        msg = f"notify must be true, false or a mapping with on and min_severity, got {value!r}"
+    if not isinstance(value, dict) or set(value) - _NOTIFY_KEYS:
+        msg = f"notify must be true, false or a mapping of {', '.join(sorted(_NOTIFY_KEYS))}, got {value!r}"
         raise _fail(msg)
     on = value.get("on", list(TRANSITIONS))
     items = [on] if isinstance(on, str) else on
     if not isinstance(items, list) or not all(isinstance(i, str) for i in items):
         msg = "notify on must be a transition or a list of transitions"
         raise _fail(msg)
-    return NotifyPolicy(tuple(items), str(value.get("min_severity", "warning")))
+    digest = value.get("digest", False)
+    if not isinstance(digest, bool):
+        msg = f"notify digest must be true or false, got {digest!r}"
+        raise _fail(msg)
+    try:
+        return NotifyPolicy(
+            tuple(items),
+            str(value.get("min_severity", "warning")),
+            digest,
+            int(value.get("top", 5)),
+            int(value.get("remind_after", 0)),
+            float(value.get("material_change", 0.0)),
+        )
+    except (TypeError, ValueError):
+        msg = f"notify top and remind_after must be integers and material_change a number, got {value!r}"
+        raise _fail(msg) from None
 
 
 @dataclass(frozen=True)
@@ -261,6 +362,10 @@ class StabilityConfig:
     notify: NotifyPolicy | None = None
     revision: bool = False
     auto_columns: str = FREEZE
+    psi_limits: str = SAMPLE_SIZE
+    min_rows_per_bin: int = DEFAULT_MIN_ROWS_PER_BIN
+    psi_smoothing: str = EPSILON_FLOOR
+    noise: NoiseBudget | None = None
     cadence: str = "none"
     expected_by: int = 0
     settle_periods: int = 0
@@ -329,8 +434,7 @@ class StabilityConfig:
             data["notify"] = self.notify.to_dict()
         if self.revision:
             data["revision"] = True
-        if self.auto_columns != FREEZE:
-            data["auto_columns"] = self.auto_columns
+        data.update(self._psi_options())
         for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
             if getattr(self, name) not in ("none", 0):
                 data[name] = getattr(self, name)
@@ -340,7 +444,22 @@ class StabilityConfig:
                 data["history_periods"] = self.history_periods
         if self.trend_directions:
             data["trend_directions"] = dict(sorted(self.trend_directions.items()))
+        if self.noise is not None:
+            data["noise"] = self.noise.to_dict()
         return data
+
+    def _psi_options(self) -> dict[str, Any]:
+        """Return the PSI and column options that differ from their defaults (default declarations serialize as before)."""
+        options: dict[str, Any] = {}
+        if self.auto_columns != FREEZE:
+            options["auto_columns"] = self.auto_columns
+        if self.psi_limits != SAMPLE_SIZE:
+            options["psi_limits"] = self.psi_limits
+        if self.min_rows_per_bin != DEFAULT_MIN_ROWS_PER_BIN:
+            options["min_rows_per_bin"] = self.min_rows_per_bin
+        if self.psi_smoothing != EPSILON_FLOOR:
+            options["psi_smoothing"] = self.psi_smoothing
+        return options
 
     def _base_dict(self) -> dict[str, Any]:
         return {
@@ -510,6 +629,14 @@ def _inference(value: object) -> InferenceOptions:
     return InferenceOptions(**value)
 
 
+def _choice(data: dict[str, Any], key: str, default: str, allowed: tuple[str, ...]) -> str:
+    value = data.get(key, default)
+    if value not in allowed:
+        msg = f"{key} must be one of {', '.join(allowed)}, got {value!r}"
+        raise _fail(msg)
+    return str(value)
+
+
 def _revision(value: object) -> bool:
     if value is None:
         return False
@@ -638,11 +765,15 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
             auto_columns=_auto_columns(data.get("auto_columns"), data.get("columns", "auto")),
+            psi_limits=_choice(data, "psi_limits", SAMPLE_SIZE, PSI_LIMITS),
+            min_rows_per_bin=_int(data, "min_rows_per_bin", DEFAULT_MIN_ROWS_PER_BIN, 0),
+            psi_smoothing=_choice(data, "psi_smoothing", EPSILON_FLOOR, PSI_SMOOTHINGS),
             cadence=_cadence(data.get("cadence")),
             expected_by=_int(data, "expected_by", 0, 0),
             settle_periods=_int(data, "settle_periods", 0, 0),
             settle_days=_int(data, "settle_days", 0, 0),
             trend_directions=_trend_directions(data.get("trend_directions")),
+            noise=parse_noise(data.get("noise")),
             history=history,
             history_periods=history_periods,
         )
@@ -673,6 +804,7 @@ __all__ = [
     "CADENCES",
     "CADENCE_LIMITS",
     "CADENCE_METRICS",
+    "CHANGED",
     "COLUMN_METRICS",
     "DEFAULT_LIMITS",
     "ESCALATED",
@@ -684,6 +816,7 @@ __all__ = [
     "PERIOD_LATE",
     "PERIOD_MISSING",
     "RECURRED",
+    "REMINDED",
     "REVISION_LIMITS",
     "REVISION_METRICS",
     "SCHEMA_CHANGE",
@@ -694,9 +827,11 @@ __all__ = [
     "TRANSITIONS",
     "Baseline",
     "Gate",
+    "NoiseBudget",
     "NotifyPolicy",
     "StabilityConfig",
     "parse_config",
     "parse_declarations",
+    "parse_noise",
     "parse_notify",
 ]
