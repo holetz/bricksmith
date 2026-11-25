@@ -218,6 +218,7 @@ def _result(  # noqa: PLR0913 - one keyword per result field
         "rows": rows, "baseline_rows": _finite(baseline_rows), "in_baseline": in_baseline,
         "baseline_kind": ctx.config.baseline.kind, "baseline_label": ctx.config.baseline.label,
         "trend_status": "", "trend_expected": None, "trend_deviation": None,
+        "trend_sigma": None, "trend_lower": None, "trend_upper": None,
         "run_id": ctx.run_id, "computed_at": ctx.computed_at, "rule_id": found.rule_id,
         "rule_version": found.rule_version,
     }  # fmt: skip
@@ -246,6 +247,9 @@ def _trend(ctx: _Context, row: dict[str, Any], value: float | None, light: Light
     row["trend_status"] = found.status
     row["trend_expected"] = _finite(found.expected)
     row["trend_deviation"] = _finite(found.deviation)
+    row["trend_sigma"] = _finite(found.sigma)
+    row["trend_lower"] = _finite(found.lower)
+    row["trend_upper"] = _finite(found.upper)
 
 
 def _judge(  # noqa: PLR0913 - the metric and its suppression inputs
@@ -288,6 +292,7 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     computed_at: str = "",
     emptied: Collection[str] = (),
     earlier: Iterable[Mapping[str, Any]] = (),
+    trend_seed: Mapping[Key, Sequence[float]] | None = None,
 ) -> Computed:
     """Compute the result rows of every period of ``window`` and ``emptied`` (in order) from the stored profiles.
 
@@ -297,9 +302,14 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     The table-level metrics (``row_count``, ``volume_change``, ``weight_change``) do not depend on bins, so they
     read the totals of the whole lineage: ``earlier`` are profile rows of earlier binning versions. Periods only
     those versions know are judged too (their results feed trends and alert replays) and are the caller's to drop.
+
+    ``trend_seed`` carries, per ``(segment, column, metric)``, the stored values of the periods just before the
+    window, so a period at the start of a rewritten window is judged with the history it had the first time.
     """
     history = index_profiles(binning, profiles)
     ctx = _Context(config, binning, dataset, run_id, computed_at)
+    for key, values in (trend_seed or {}).items():
+        ctx.trend_history[key] = list(values)
     out = Computed()
     numeric = {s.column: s.kind == "numeric" for s in binning.columns}
     in_window = [p for p in history.periods if p in {*window, *emptied}]
