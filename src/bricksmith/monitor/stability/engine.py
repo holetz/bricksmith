@@ -400,6 +400,39 @@ def alert_events(  # noqa: PLR0913 - one keyword per event field
     return events
 
 
+def _vanished(
+    config: StabilityConfig, store: Store, periods: Sequence[str], *, dataset: str, version: int
+) -> list[str]:
+    """Return the snapshotted periods of the refresh range that the data no longer has, oldest first.
+
+    The range is the ``refresh_periods`` most recent periods of stored history (the periods with a first-publication
+    snapshot), the latest included. Periods older than the range are not judged.
+    """
+    if not config.revision or not config.refresh_periods:
+        return []
+    stored = sorted({str(r["period"]) for r in store.rows(REVISIONS, dataset, version=version)})
+    return [p for p in stored[-config.refresh_periods :] if p not in set(periods)]
+
+
+def _emptied(  # noqa: PLR0913 - the store read and the zeroed fields
+    store: Store, vanished: Sequence[str], *, dataset: str, version: int, weighted: bool, run_id: str
+) -> list[dict[str, Any]]:
+    """Return the stored profile rows of ``vanished`` periods replaced by zero-count rows of this run."""
+    if not vanished:
+        return []
+    return [
+        {
+            **r,
+            "count": 0,
+            "weight": 0.0 if weighted else None,
+            "value_sum": None if r.get("value_sum") is None else 0.0,
+            "value_sum_sq": None if r.get("value_sum_sq") is None else 0.0,
+            "run_id": run_id,
+        }
+        for r in store.rows(PROFILES, dataset, version=version, periods=vanished)
+    ]
+
+
 def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one snapshot
     computed: Any,  # noqa: ANN401 - the metrics.Computed being extended
     binning: Reference,
@@ -411,14 +444,16 @@ def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one
     dataset: str,
     run_id: str,
     now: str,
+    vanished: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Add the revision results to ``computed`` and return the first-publication rows of periods not seen before."""
     window, loaded = history
     stored, fresh, current = profiles
-    snapshots = store.rows(REVISIONS, dataset, version=binning.version, periods=loaded)
+    snapshots = store.rows(REVISIONS, dataset, version=binning.version, periods=[*loaded, *vanished])
     computed.results += revision_results(
-        binning, current, snapshots, config, dataset=dataset, window=window, run_id=run_id, computed_at=now
-    )
+        binning, current, snapshots, config, dataset=dataset, window=sorted({*window, *vanished}), run_id=run_id,
+        computed_at=now,
+    )  # fmt: skip
     seen = {str(r["period"]) for r in snapshots}
     stored_periods = {str(r["period"]) for r in stored}
     new = [p for p in loaded if p not in seen]
@@ -455,16 +490,21 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         binning, data, config, todo, dataset=dataset, run_id=run_id,
         segments=(loaded, carried_segments([r for r in stored_profiles if r["period"] in keep])),
     )  # fmt: skip
-    profiles = [r for r in stored_profiles if r["period"] in keep] + fresh
+    vanished = _vanished(config, store, periods, dataset=dataset, version=binning.version)
+    emptied = _emptied(
+        store, vanished, dataset=dataset, version=binning.version, weighted=bool(config.weight), run_id=run_id
+    )
+    profiles = [r for r in stored_profiles if r["period"] in keep] + fresh + emptied
     computed = compute(binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started)
     revision_rows = (
         _revisions(
             computed, binning, config, store, (window, loaded), (stored_profiles, fresh, profiles),
-            dataset=dataset, run_id=run_id, now=started,
+            dataset=dataset, run_id=run_id, now=started, vanished=vanished,
         )
         if config.revision
         else []
     )  # fmt: skip
+    fresh = fresh + emptied
     for row in fresh:
         share, base, contribution = computed.shares.get(
             (row["period"], row["segment"], row["column"], row["bin"]), (None, None, None)
@@ -474,12 +514,12 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     previous = store.rows(RUNS, dataset, version=binning.version)
     last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
     rewrite_all = last is None or last.get("judgment_fingerprint") != judgment
-    emitted = set(window) if rewrite_all else set(todo) & set(window)
+    emitted = (set(window) if rewrite_all else set(todo) & set(window)) | set(vanished)
     results = [r for r in computed.results if r["period"] in emitted]
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
     alert_rows = alerts(
         computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
-        stored=stored_alerts, periods=periods, keep_inside=not rewrite_all,
+        stored=stored_alerts, periods=sorted({*periods, *vanished}), keep_inside=not rewrite_all,
     )  # fmt: skip
     notifications = alert_events(
         alert_rows, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
@@ -488,7 +528,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     alert_rows += _superseded(
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
     )
-    latest = window[-1]
+    latest = max([window[-1], *vanished])
     counts = counts_in(computed.results, latest)
     open_rows = [r for r in alert_rows if r["state"] == OPEN]
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)

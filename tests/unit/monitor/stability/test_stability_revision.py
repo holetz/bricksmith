@@ -171,6 +171,56 @@ def test_engine_revision_alerts_use_persistence() -> None:
     assert any(a["metric"] == "revision_psi" and a["state"] == "open" for a in second.tables["alerts"])
 
 
+def _without(rows: list[dict[str, object]], month: str) -> list[dict[str, object]]:
+    return [r for r in rows if r["month"] != month]
+
+
+def _vanish(months: int, gone: str, refresh: int, **declared: object) -> tuple[MemoryStore, CheckResult]:
+    store = MemoryStore()
+    _commit(store, _check(_rows(months), store, "r1", revision=True, refresh_periods=refresh, **declared))
+    second = _check(_without(_rows(months), gone), store, "r2", revision=True, refresh_periods=refresh, **declared)
+    _commit(store, second)
+    return store, second
+
+
+def _row_change(result: CheckResult, period: str) -> list[dict]:
+    return [r for r in result.tables["results"] if r["period"] == period and r["metric"] == "revision_row_change"]
+
+
+def test_engine_a_vanished_middle_period_in_the_refresh_range_is_a_revision_change() -> None:
+    store, second = _vanish(3, "2026-02", 2)
+    found = _row_change(second, "2026-02")
+    assert [(r["segment"], r["value"], r["status"]) for r in found] == [("", -1.0, "red")]
+    profile = [r for r in store.tables["profiles"] if r["period"] == "2026-02"]
+    assert profile and sum(int(r["count"]) for r in profile) == 0 and {r["run_id"] for r in profile} == {"r2"}
+    assert {r["period"] for r in store.tables[REVISIONS]} == {"2026-01", "2026-02", "2026-03"}
+
+
+def test_engine_a_vanished_latest_period_is_reported_and_fails_the_gate() -> None:
+    _, second = _vanish(3, "2026-03", 2, gate={"fail_on": ["red"]})
+    found = _row_change(second, "2026-03")
+    assert [(r["value"], r["status"]) for r in found] == [(-1.0, "red")]
+    assert second.outcome.latest_period == "2026-03" and second.outcome.red >= 1 and second.outcome.failed
+
+
+def test_engine_a_vanished_period_older_than_the_refresh_range_is_not_judged() -> None:
+    store, second = _vanish(4, "2026-01", 2)
+    assert not _row_change(second, "2026-01")
+    assert sum(int(r["count"]) for r in store.tables["profiles"] if r["period"] == "2026-01") > 0
+
+
+def test_engine_a_vanished_period_respects_the_configured_limits() -> None:
+    _, second = _vanish(3, "2026-02", 2, limits={"revision_row_change": None})
+    assert [r["status"] for r in _row_change(second, "2026-02")] == ["no_rule"]
+
+
+def test_engine_a_vanished_period_is_not_reported_without_revision() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows(3), store, "r1"))
+    second = _check(_without(_rows(3), "2026-02"), store, "r2")
+    assert not [r for r in second.tables["results"] if r["metric"].startswith("revision_")]
+
+
 _TASKS = """
 from bricksmith.tasks import task
 
