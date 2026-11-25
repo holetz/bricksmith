@@ -198,14 +198,14 @@ def build_incident(  # noqa: PLR0913 - the rows one check holds and the run iden
 
 
 def apply_noise(  # noqa: PLR0913 - the rows of one check and the budget
-    alert_rows: Sequence[Mapping[str, Any]],
+    alert_rows: Sequence[dict[str, Any]],
     stored_ids: Collection[str],
     results: Iterable[Mapping[str, Any]],
     config: StabilityConfig,
     budget: NoiseBudget,
     *,
     latest: str,
-) -> tuple[list[Mapping[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], int]:
     """Return ``(alert rows kept, how many new alerts the budget suppressed)``.
 
     Only alerts that are open and not stored yet are candidates; stored alerts and non-open rows pass through. With

@@ -18,7 +18,23 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
-from bricksmith.monitor.stability.config import ESCALATED, FIXED, OPENED, PREVIOUS, RECURRED, ROLLING
+from bricksmith.monitor.stability.config import (
+    CHANGED,
+    ESCALATED,
+    FIXED,
+    OPENED,
+    PREVIOUS,
+    RECURRED,
+    REMINDED,
+    ROLLING,
+)
+from bricksmith.monitor.stability.incident import (
+    Incident,
+    apply_noise,
+    build_incident,
+    digest_event,
+    false_positive_rates,
+)
 from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
@@ -104,6 +120,8 @@ class Outcome:
     critical_alerts: int = 0
     message: str = ""
     output: str = ""
+    suppressed: int = 0
+    incident_id: str = ""
 
     @property
     def failed(self) -> bool:
@@ -112,7 +130,11 @@ class Outcome:
 
     def to_dict(self) -> dict[str, Any]:
         """Return the serializable form."""
+        extra: dict[str, Any] = {"incident_id": self.incident_id} if self.incident_id else {}
+        if self.suppressed:
+            extra["suppressed"] = self.suppressed
         return {
+            **extra,
             "critical_alerts": self.critical_alerts,
             "dataset": self.dataset,
             "latest_period": self.latest_period,
@@ -136,6 +158,7 @@ class CheckResult:
     skipped: dict[str, str] = field(default_factory=dict)
     binning: Reference | None = None
     notifications: list[AlertEvent] = field(default_factory=list)
+    incident: Incident | None = None
 
 
 def judgment_fingerprint(config: StabilityConfig, actions: Sequence[Mapping[str, Any]] = ()) -> str:
@@ -147,7 +170,7 @@ def judgment_fingerprint(config: StabilityConfig, actions: Sequence[Mapping[str,
     data = config.to_dict()
     content = {k: data[k] for k in ("baseline", "column_limits", "limits", "min_rows", "persistence", "trend")}
     content |= {"epsilon": config.epsilon, "trend_metrics": data["trend_metrics"], "weight": config.weight}
-    for optional in ("rules", "revision", "trend_directions"):
+    for optional in ("noise", "rules", "revision", "trend_directions"):
         if optional in data:
             content[optional] = data[optional]
     if actions:
@@ -343,8 +366,20 @@ def _superseded(  # noqa: PLR0913 - the rows to compare and where the replay sta
     ]
 
 
-def _transitions(row: Mapping[str, Any], before: Mapping[str, Any] | None) -> list[str]:
-    """Return the transitions an open alert row went through since ``before`` (its stored open row, if any)."""
+def _changed(row: Mapping[str, Any], before: Mapping[str, Any], threshold: float) -> bool:
+    """Tell whether the last value moved by at least ``threshold`` (relative) since the stored open row."""
+    new, old = row.get("last_value"), before.get("last_value")
+    if new is None or old is None:
+        return False
+    return abs(float(new) - float(old)) >= threshold * max(abs(float(old)), 1e-12)
+
+
+def _transitions(row: Mapping[str, Any], before: Mapping[str, Any] | None, policy: NotifyPolicy) -> list[str]:
+    """Return the transitions an open alert row went through since ``before`` (its stored open row, if any).
+
+    An alert that stays open adds ``reminded`` when its flagged periods grew to a multiple of ``remind_after`` and
+    ``changed`` when its value moved materially; an unchanged open alert yields nothing.
+    """
     if before is None:
         return [RECURRED if row.get("recurrence") else OPENED]
     found = []
@@ -352,6 +387,11 @@ def _transitions(row: Mapping[str, Any], before: Mapping[str, Any] | None) -> li
         found.append(ESCALATED)
     if row.get("recurrence") and not before.get("recurrence"):
         found.append(RECURRED)
+    flagged, seen = int(row.get("flagged_periods") or 0), int(before.get("flagged_periods") or 0)
+    if policy.remind_after and flagged > seen and flagged % policy.remind_after == 0:
+        found.append(REMINDED)
+    if policy.material_change and not found and _changed(row, before, policy.material_change):
+        found.append(CHANGED)
     return found
 
 
@@ -380,7 +420,7 @@ def alert_events(  # noqa: PLR0913 - one keyword per event field
     for row in sorted(fresh, key=lambda r: str(r["alert_id"])):
         if row["state"] != OPEN:
             continue
-        for transition in _transitions(row, before.get(str(row["alert_id"]))):
+        for transition in _transitions(row, before.get(str(row["alert_id"])), policy):
             severity = "critical" if row["severity"] == CRITICAL else "warning"
             if not policy.wants(transition, severity):
                 continue
@@ -471,6 +511,32 @@ def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one
     return snapshot_rows(first, new, run_id=run_id, published_at=now)
 
 
+def _budgeted(
+    alert_rows: list[dict[str, Any]],
+    stored: Sequence[Mapping[str, Any]],
+    results: Sequence[Mapping[str, Any]],
+    config: StabilityConfig,
+    latest: str,
+) -> tuple[list[dict[str, Any]], int]:
+    """Apply the declared noise budget to the alerts new in this run; no budget keeps every row."""
+    if config.noise is None:
+        return alert_rows, 0
+    return apply_noise(alert_rows, {str(r["alert_id"]) for r in stored}, results, config, config.noise, latest=latest)
+
+
+def _tail(accepted: int, suppressed: int, reasons: Sequence[str], rates: Mapping[str, Mapping[str, Any]]) -> str:
+    """Return what the run message appends: accepted alerts, the budget's suppressions, the gate and the rates."""
+    found = [
+        f"{accepted} accepted" if accepted else "",
+        f"{suppressed} suppressed by the noise budget" if suppressed else "",
+        f"gate failed on {'; '.join(reasons)}" if reasons else "",
+        "false positives " + ", ".join(f"{k} {v['false_positive']}/{v['closed']}" for k, v in rates.items())
+        if rates
+        else "",
+    ]
+    return "".join(f"; {part}" for part in found if part)
+
+
 def check(  # noqa: PLR0913 - one keyword per documented input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -535,6 +601,8 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
         stored=stored_alerts, periods=sorted({*periods, *vanished}), keep_inside=not rewrite_all,
     )  # fmt: skip
+    latest = max([window[-1], *vanished])
+    alert_rows, suppressed = _budgeted(alert_rows, stored_alerts, computed.results, config, latest)
     human = {
         str(a["alert_id"]): a["state"]
         for a in apply_actions(alert_rows, actions, started[:10], "dataset")
@@ -548,19 +616,30 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     alert_rows += _superseded(
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
     )
-    latest = max([window[-1], *vanished])
     counts = counts_in(computed.results, latest)
     open_rows = [r for r in alert_rows if r["state"] == OPEN and str(r["alert_id"]) not in human]
     accepted = sum(1 for r in alert_rows if r["state"] == OPEN and human.get(str(r["alert_id"])) == STATE_ACCEPTED)
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
     reasons = _gate(config, counts[RED], counts[YELLOW], len(open_rows), critical)
     status = FAILED if reasons else WARNED if counts[RED] + counts[YELLOW] + len(open_rows) else PASSED
+    rates = false_positive_rates(actions, [*alert_rows, *stored_alerts], computed.results) if actions else {}
+    incident = build_incident(
+        open_rows, computed.results, fresh, config, dataset=dataset, period=latest, suppressed=suppressed,
+        false_positive_rates=rates,
+    )  # fmt: skip
+    if config.notify is not None and config.notify.digest and notifications:
+        notifications = [
+            digest_event(
+                notifications, incident, dataset=dataset, target=physical or dataset, run_id=run_id,
+                occurred_at=started, top=config.notify.top,
+            )
+        ]  # fmt: skip
     message = f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)" + (
-        (f"; {accepted} accepted" if accepted else "") + (f"; gate failed on {'; '.join(reasons)}" if reasons else "")
+        _tail(accepted, suppressed, reasons, rates)
     )
     outcome = Outcome(
         dataset, status, binning.version, latest, len(todo), counts[RED], counts[YELLOW], len(open_rows), critical,
-        message, config.output,
+        message, config.output, suppressed, incident.incident_id if incident else "",
     )  # fmt: skip
     run_row = {
         "run_id": run_id, "dataset": dataset, "task_id": task_id, "physical": physical, "version": binning.version,
@@ -579,7 +658,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     }
     if config.revision:
         tables[REVISIONS] = revision_rows
-    return CheckResult(tables, outcome, skipped, binning, notifications)
+    return CheckResult(tables, outcome, skipped, binning, notifications, incident)
 
 
 def error_outcome(dataset: str, error: BaseException, output: str = "") -> Outcome:
