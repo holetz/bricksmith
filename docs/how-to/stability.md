@@ -571,13 +571,58 @@ denotes when it can be read as a date.
 - `stability_actions_latest`, `stability_alert_response` and `stability_response_summary`: the latest action per alert,
   and the days to the first action and to the closing of each alert;
 - `stability_false_positive_rate`: closures typed `false_positive` against all closures, per rule;
-- `stability_active_marks`: the period marks in force (not unmarked, not past `valid_until`).
+- `stability_active_marks`: the period marks in force (not unmarked, not past `valid_until`);
+- `stability_datasets`: the dataset dimension, one row per dataset: the latest binning version and when it was fitted,
+  the task and physical table of the last run, its status and gate, and the status, red and yellow counts, row count
+  and open alerts of the latest period. No owner column: no stability table stores one;
+- `stability_series`: one row per series and period, ready to chart: `value`, the limits (`green_limit`,
+  `red_limit`), the trend band (`trend_expected`, `trend_lower`, `trend_upper`), the `light` (`status`, or `no_rule`),
+  the period `mark` and, when an alert was last seen on that series in that period, its `alert_id`, `severity`,
+  `alert_state` and the latest human `action` and `resolution`;
+- `stability_incidents`: the alerts grouped per dataset and opening period, with open and critical counts and the
+  worst severity (an incident is derived from the alerts, never stored).
+
+`views: true` in the declaration makes the run create or replace all of these in the stability scope after it
+writes the tables (`CREATE OR REPLACE VIEW`, so a rerun is idempotent). It is off by default, and a view that fails
+to create is reported in the run message but never fails the check. Without it, run the printed statements yourself.
+
+### The AI/BI dashboard
+
+`bricksmith stability dashboard [--scope catalog.schema] [--prefix stability_] [--output stability.lvdash.json]`
+prints the definition of a Lakeview (AI/BI) dashboard over those views. It is generated from Python, so there is no
+`.lvdash.json` to maintain; the file is only an export. Its five pages are:
+
+- **Overview**: status, red, yellow and open alerts per dataset for the latest period, and red and yellow by period;
+- **Series**: the value of one dataset, column and metric against its limits and trend band, with the judgments,
+  marks and actions beside it;
+- **PSI bins**: the share against the baseline share and the contribution of each bin to the PSI;
+- **Alerts and actions**: the open-alerts queue with the latest action and the incidents;
+- **Runs and cost**: runs, periods profiled and run status from `stability_runs`.
+
+To deploy it with the project, reference the bundle resource in `databricks.yml` and set the variables per target:
+
+```yaml
+python:
+  resources:
+    - "bricksmith.monitor.stability.bundle:load_resources"
+variables:
+  dataset_catalog: {}
+  dataset_schema: {}
+  warehouse_id: {}
+```
+
+The dashboard queries unqualified view names and takes its catalog and schema from `dataset_catalog` and
+`dataset_schema`, so the same definition deploys to every target. For other choices (a prefix, a key, a folder,
+permissions), call `bricksmith.monitor.stability.bundle.stability_dashboard(...)` from a resource function of your own.
+The Lakeview widget versions it uses are pinned in `bricksmith.monitor.stability.dashboard.LVDASH_VERSION`, covered by
+a structural test; the format is validated by the workspace on deploy.
 
 A BI model on these tables works as a star:
 
 - **Facts.** `stability_results` (one row per metric judgment), `stability_profiles` (bin detail),
-  `stability_alerts` and `stability_runs`.
-- **Dimensions.** Derive them from the facts: dataset (`dataset`), period (`period`, `period_date`; relate it to a
+  `stability_alerts` and `stability_runs`; `stability_series` is the denormalized fact for series charts.
+- **Dimensions.** Use `stability_datasets` for the dataset (it carries the task, physical table, last run and latest
+  status) and derive the rest from the facts: period (`period`, `period_date`; relate it to a
   calendar on `period_date`), segment (`segment`, `segment_label`), column (`dataset`, `column`) and metric
   (`metric`, `direction`, `green_limit`, `red_limit`).
 - **Relationships.** Results and profiles join on dataset, version, period, segment and column. Alerts join results
