@@ -356,15 +356,52 @@ def _loaded_periods(config: StabilityConfig, binning: Reference, periods: Sequen
     return sorted(loaded)
 
 
+def reprocessed_periods(
+    config: StabilityConfig, periods: Sequence[str], reprocess: Sequence[str], *, skip_unknown: bool = False
+) -> list[str]:
+    """Return the periods to re-profile, sorted and unique.
+
+    Each item is a period or an inclusive ``first..last`` range of the data's periods. The ``max_periods`` window
+    bounds how much of a table a reprocess may rescan: a period of the data outside it, or not in the data at all,
+    is an error, or is dropped with ``skip_unknown`` (the runner hands one request to every declaring task).
+    """
+    window = list(periods[-config.max_periods :])
+    chosen: set[str] = set()
+    unknown: list[str] = []
+    for item in reprocess:
+        first, sep, last = item.partition("..")
+        found = [p for p in window if first <= p <= last] if sep else [p for p in window if p == item]
+        chosen.update(found)
+        if not found:
+            unknown.append(item)
+    if unknown and not skip_unknown:
+        msg = (
+            f"stability: cannot reprocess {', '.join(sorted(unknown))}: no such period of the data inside the last "
+            f"{config.max_periods} periods"
+        )
+        raise MonitorError(msg)
+    return sorted(chosen)
+
+
 def _plan_periods(
-    config: StabilityConfig, binning: Reference, periods: Sequence[str], profiled: set[str]
+    config: StabilityConfig, binning: Reference, periods: Sequence[str], profiled: set[str], reprocess: Sequence[str]
 ) -> tuple[list[str], list[str], list[str]]:
-    """Return ``(window, periods to profile, periods to load)`` for this run."""
+    """Return ``(window, periods to profile, periods to load)``: new periods, the refresh range, the reprocessed."""
     window = list(periods[-config.max_periods :])
     loaded = _loaded_periods(config, binning, periods)
-    refresh = set(window[-config.refresh_periods :]) if config.refresh_periods else set()
+    refresh = (set(window[-config.refresh_periods :]) if config.refresh_periods else set()) | set(reprocess)
     todo = [p for p in loaded if p not in profiled or p in refresh]
     return window, todo, loaded
+
+
+def _counts(results: Sequence[Mapping[str, Any]], periods: Collection[str]) -> dict[str, int]:
+    """Return how many results of ``periods`` together are red and yellow."""
+    total = {RED: 0, YELLOW: 0}
+    for period in periods:
+        found = counts_in(results, period)
+        total[RED] += found[RED]
+        total[YELLOW] += found[YELLOW]
+    return total
 
 
 def _gate(config: StabilityConfig, red: int, yellow: int, open_alerts: int, critical: int) -> list[str]:
@@ -609,13 +646,21 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     task_id: str = "",
     physical: str = "",
     now: str | None = None,
+    reprocess: Sequence[str] = (),
+    skip_unknown: bool = False,
 ) -> CheckResult:
-    """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write."""
+    """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write.
+
+    ``reprocess`` names periods rewritten since their stored profile (a backfill or a correction): they are
+    profiled again with the declared refresh range, the whole window is judged again and the alerts are replayed.
+    An item is a period or a ``first..last`` range; ``skip_unknown`` drops what the data does not have.
+    """
     started = now or _now()
     periods = _engine_periods(data, config.period)
     if not periods:
         msg = f"stability: {dataset} has no rows with a {config.period!r} period"
         raise MonitorError(msg)
+    redo = reprocessed_periods(config, periods, reprocess, skip_unknown=skip_unknown)
     schema = _schema(data)
     active = _active_binning(
         data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started,
@@ -626,7 +671,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     stored_profiles = store.rows(
         PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
     )
-    window, todo, loaded = _plan_periods(config, binning, periods, {str(r["period"]) for r in stored_profiles})
+    window, todo, loaded = _plan_periods(config, binning, periods, {str(r["period"]) for r in stored_profiles}, redo)
     keep = set(loaded) - set(todo)
     fresh = _profile(
         binning, data, config, todo, dataset=dataset, run_id=run_id,
@@ -665,7 +710,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     judgment = judgment_fingerprint(config, actions)
     previous = store.rows(RUNS, dataset, version=binning.version)
     last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
-    rewrite_all = last is None or last.get("judgment_fingerprint") != judgment
+    rewrite_all = last is None or last.get("judgment_fingerprint") != judgment or bool(redo)
     emitted = (set(window) if rewrite_all else set(todo) & set(window)) | set(vanished)
     results = [r for r in computed.results if r["period"] in emitted or r["metric"] in SCHEMA_METRICS]
     alert_rows = alerts(
@@ -694,14 +739,19 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         lineage=lineage,
     )
     latest = max([window[-1], *vanished])
-    counts = counts_in(computed.results, latest)
+    judged = {latest} | (set(todo) & set(window) | set(vanished) if config.gate.periods == "profiled" else set())
+    counts = _counts(computed.results, judged)
     open_rows = [r for r in alert_rows if r["state"] == OPEN and str(r["alert_id"]) not in human]
     accepted = sum(1 for r in alert_rows if r["state"] == OPEN and human.get(str(r["alert_id"])) == STATE_ACCEPTED)
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
     reasons = _gate(config, counts[RED], counts[YELLOW], len(open_rows), critical)
     status = FAILED if reasons else WARNED if counts[RED] + counts[YELLOW] + len(open_rows) else PASSED
-    message = f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)" + (
-        (f"; {accepted} accepted" if accepted else "") + (f"; gate failed on {'; '.join(reasons)}" if reasons else "")
+    message = (
+        f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)"
+        + (f" over {len(judged)} periods" if len(judged) > 1 else "")
+        + (f"; {accepted} accepted" if accepted else "")
+        + (f"; reprocessed {', '.join(redo)} ({len(todo)} periods profiled)" if redo else "")
+        + (f"; gate failed on {'; '.join(reasons)}" if reasons else "")
     )
     outcome = Outcome(
         dataset, status, binning.version, latest, len(todo), counts[RED], counts[YELLOW], len(open_rows), critical,
@@ -714,6 +764,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         "open_alerts": len(open_rows), "critical_alerts": critical, "message": message,
         "judgment_fingerprint": judgment, "started_at": started, "finished_at": _now(),
         "schema": schema_text(schema),
+        "periods_reprocessed": ",".join(redo),
     }  # fmt: skip
     tables = {
         BINNINGS: binning_rows,
@@ -748,4 +799,5 @@ __all__ = [
     "error_outcome",
     "fit_range",
     "judgment_fingerprint",
+    "reprocessed_periods",
 ]

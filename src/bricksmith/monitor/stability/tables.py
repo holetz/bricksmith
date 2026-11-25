@@ -72,7 +72,8 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "run_id": "STRING", "dataset": "STRING", "task_id": "STRING", "physical": "STRING", "version": "INT",
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
         "red": "INT", "yellow": "INT", "open_alerts": "INT", "critical_alerts": "INT", "message": "STRING",
-        "judgment_fingerprint": "STRING", "started_at": "STRING", "finished_at": "STRING", "schema": "STRING",
+        "judgment_fingerprint": "STRING", "started_at": "STRING", "finished_at": "STRING",
+        "periods_reprocessed": "STRING", "schema": "STRING",
     },
 }  # fmt: skip
 KEYS: dict[str, tuple[str, ...]] = {
