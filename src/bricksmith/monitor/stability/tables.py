@@ -72,6 +72,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
         "red": "INT", "yellow": "INT", "open_alerts": "INT", "critical_alerts": "INT", "message": "STRING",
         "judgment_fingerprint": "STRING", "started_at": "STRING", "finished_at": "STRING",
+        "periods_reprocessed": "STRING",
     },
 }  # fmt: skip
 KEYS: dict[str, tuple[str, ...]] = {

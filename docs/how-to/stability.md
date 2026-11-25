@@ -56,7 +56,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Least-squares trend check; `false` disables it. |
 | `trend_directions` | `row_count` and `mean` both, `null_rate` and `unseen_rate` higher | Per metric `higher`, `lower` or `both`: the direction of the trend check for a metric without limits. A limit's own direction wins. |
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
-| `gate` | `{fail_on: [], on_error: "warn"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`. |
+| `gate` | `{fail_on: [], on_error: "warn", periods: "latest"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`; `periods` takes `latest` or `profiled` (see [Backfills and reprocessing](#backfills-and-reprocessing)). |
 | `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity, digest, top, remind_after, material_change}`. See [Notifications](#notifications). |
 | `noise` | none | A noise budget for new alerts: `{max_alerts_per_run, fdr}`. See [Incidents and the noise budget](#incidents-and-the-noise-budget). |
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
@@ -105,7 +105,7 @@ columns and text with very many values are skipped. The reason for each skip is 
 5. **Alerts.** Status histories are replayed into alerts. A replay produces the same `alert_id`, an open alert whose
    opening left the window, or opened inside it before the window's red run, is carried (see Persistence), a closed alert
    stays closed while the judgment is unchanged, and other stored alerts it no longer produces become `superseded`.
-6. **Gate.** The gate is evaluated on the latest period. A failing gate marks the task `failed` with error code
+6. **Gate.** The gate is evaluated on the latest period (or on every period profiled in the run with `gate.periods`). A failing gate marks the task `failed` with error code
    `stability_gate`, and its dependents become `blocked`. The output itself is already published: the gate protects
    downstream tasks, it does not roll back. The task result (`--json` reports and `task_finished` events) carries a
    `stability` summary, and the text summary prints one line per checked output.
@@ -161,6 +161,36 @@ alerts exist, so it re-judges the window like any other judgment change.
 
 When alerts were closed with a typed resolution, the run summary and the incident also report the **false-positive
 rate per rule** (`false_positive` closures over all closures of the rule's series) to drive limit tuning.
+
+## Backfills and reprocessing
+
+A backfill or a correction of an older period is invisible to a run: only periods without a stored profile and the
+latest `refresh_periods` are profiled, so the stored profile, results and alerts of the older period stay stale.
+Name the rewritten periods instead of raising `refresh_periods` for every run (which rescans the table each time):
+
+```bash
+bricksmith stability reprocess --config stability.json --table catalog.schema.sales --dataset sales \
+  --periods 2026-01..2026-03 --state stability-state.json   # a list (a,b) or an inclusive first..last range
+```
+
+`check(data, config, store, dataset=..., run_id=..., reprocess=["2026-01..2026-03"])` is the same input in the API.
+The named periods are profiled again together with the declared refresh range, the whole window is judged again
+and the alerts are replayed (an alert the new data no longer produces becomes `superseded`; notifications still
+fire only for real transitions). A period that is not in the data, or lies outside the `max_periods` window, is an
+error: the window bounds how much of the table a reprocess may rescan, and the run message reports how many periods
+were profiled. With `revision` on, each reprocessed period is compared with its first publication like any
+re-profiled period.
+
+When the runner rewrites a range, pass it to the run and every task that declares `stability` profiles again the
+periods it has (the ones it lacks are ignored, so one request can serve several datasets):
+
+```python
+run_plan(plan, project_root=root, execution=execution, table_io=io, reprocess=["2026-01..2026-03"])
+```
+
+`gate.periods: profiled` makes the gate count the red (and yellow) results of every period profiled in this run,
+not only the latest, so a reprocessed older period that turns red fails the task. The default `latest` is
+unchanged. `stability_runs.periods_reprocessed` records the reprocessed periods of a run (empty when none).
 
 ## Human actions
 
@@ -332,7 +362,7 @@ which reports never use.
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
 | `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
-| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at |
+| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed |
 
 Table-level metrics use column `""`, and the whole population uses segment `""` (label `(all)`). Segment keys are
 canonical text, `col=value,col2=value2`, with `(null)` for nulls. `period_date` is the first day the period

@@ -26,7 +26,7 @@ from bricksmith.runner.loader import load_task_function
 from bricksmith.runner.report import BLOCKED, FAILED, NOT_RUN, SKIPPED, SUCCEEDED, RunReport, TaskResult
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from bricksmith.context import ExecutionContext
     from bricksmith.features.record import EngineChoice
@@ -76,6 +76,7 @@ class _Worker:
     run_id: str = ""
     notifier: AlertNotifier | None = None
     notify: NotifyPolicy | None = None
+    reprocess: tuple[str, ...] = ()
 
     def __call__(self, entry: PlanEntry) -> TaskResult:
         result = self._execute(entry)
@@ -97,7 +98,9 @@ class _Worker:
             attempts += 1
             if events:
                 events.emit(TASK_STARTED, task_id=entry.task_id, attempt=attempts, targets=_targets(entry))
-            ctx = TaskContext(entry, self.execution, self.table_io, self.granted, self.externals)
+            ctx = TaskContext(
+                entry, self.execution, self.table_io, self.granted, self.externals, reprocess=self.reprocess
+            )
             choices: list[EngineChoice] = []
             try:
                 with collecting() as choices:
@@ -210,6 +213,7 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
     run_id: str | None = None,
     notifier: AlertNotifier | None = None,
     notify: object = None,
+    reprocess: Sequence[str] = (),
 ) -> RunReport:
     """Execute a plan that passed :func:`validate_plan`; it is re-checked here for errors and grants.
 
@@ -226,6 +230,9 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
     rows are stored. ``notify`` is the project default policy (``True``, ``False`` or ``{on, min_severity}``) for
     tasks whose ``stability`` declaration has no ``notify`` of its own; without it only declared tasks notify.
     Delivery never fails a task and never changes the report.
+
+    ``reprocess`` lists the periods (or ``first..last`` ranges) the run rewrites: every task that declares
+    ``stability`` re-profiles those it has, so a backfill is judged again without raising ``refresh_periods``.
     """
     if plan.errors:
         msg = "the plan has errors and cannot start: " + "; ".join(f"{i.code}: {i.message}" for i in plan.errors)
@@ -252,7 +259,7 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
     granted = frozenset((g.object, op) for g in plan.grants for op in g.operations)
     worker = _Worker(
         Path(project_root), execution, table_io, granted, retry or RetryPolicy(), loader, sleep, externals, stream,
-        stream.run_id if stream else run_id or uuid.uuid4().hex, notifier, _policy(notify),
+        stream.run_id if stream else run_id or uuid.uuid4().hex, notifier, _policy(notify), tuple(reprocess),
     )  # fmt: skip
     _drive(worker, pending, results, {e.task_id for e in plan.entries}, limit, fail_fast=fail_fast)
     for entry in pending:
