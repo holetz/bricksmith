@@ -400,12 +400,30 @@ window at hand, so pure noise flags at the nominal rate for any window size.
 | `fit` | `ols` | `theil_sen` (median of the pairwise slopes) or `huber` (Huber-weighted least squares) resist outliers in the history; both are computed in the library without extra dependencies. `theil_sen` is the recommended robust choice. |
 | `scale` | `std` | `mad` uses 1.4826 times the median absolute deviation of the residuals instead of their standard deviation, so one past spike does not widen the band. |
 | `exclude` | `red` | Which judged values stay out of the trend history: `red` drops periods whose light or trend was red, `flagged` also yellow, `none` keeps all. The values are still stored and reported. |
+| `season` | `0` (off) | A season length `>= 2` (12 for monthly, 7 for daily). The line and additive seasonal effects (mean of the detrended values of each phase, median for a robust `fit`) are fitted together and the expectation adds the effect of the phase being judged; `transform: log` makes it multiplicative. It needs two observations in every phase: below that the plain line is used and `trend_model` says `line:insufficient_history`. The history read is `max(window, 2 * season)` periods; use `window` of three cycles to survive an excluded period. |
+| `per` | `period` | `business_day` trends `row_count` divided by the number of business days of its period (day or month periods), so a short month with the same per-day volume is green. |
+| `calendar` | Saturday and Sunday, no holidays | With `per: business_day`: `{"weekend": [5, 6], "holidays": ["2025-12-25"]}`, weekday numbers from Monday 0 and ISO dates. The library ships no holiday list. |
+| `drift` | `none` | `cusum` (Page, k = 0.5, h = 5) or `ewma` (lambda = 0.2, 3-sigma limit) over the standardized deviations of every judged period, in the direction the metric calls worse (both sides for `both`). Fills `drift_status` (`green` or `red`) next to the point check. |
+| `change_point` | `false` | Searches the same deviations for a level shift (an exact penalized least-squares segmentation, BIC penalty). `change_point_suggested` is true while the latest change point leaves at least two periods and moves the level in the worse direction: confirm it as a regime change instead of living with alerts for a whole window. |
 
 A flat history has no spread: the deviation is stored empty (never infinite) and the point is red only when it
 exceeds the floor. The result also carries `trend_sigma` (the prediction standard error in the fitted scale) and
 `trend_lower` / `trend_upper` (the red-level interval, in the original scale) so a dashboard can draw the band.
 The trend history of a period at the start of a rewritten window is seeded from the stored results of the `window`
 periods before it, so a re-judged window gives the same trend status as the first judgment.
+
+**Seasonality, calendar and sustained shifts.** A straight line flags every seasonal peak: with `season: 12` the expected
+December of a monthly table is green and a real December break is red, and `trend_model` records what was fitted
+(`line`, `seasonal` or `line:insufficient_history`, with `+business_day` when `row_count` was divided by business
+days; `trend_expected` is then per business day). While the history is shorter than two cycles a peak judged by the
+fallback line never excludes its period from the history (only its light does), so the first cycles do not hide the
+seasonal pattern from the model. A series with a gap (a segment absent in some period) should be contiguous, because the
+phase is the position in the series. `drift` and `change_point` are reported, not alerted: they never open an alert by
+themselves. A point rule needs about 44 periods on average to signal a 1σ shift; CUSUM and EWMA need about 10 at a
+similar in-control run length. The detectors read deviations from the adaptive line, so they flag a sustained
+departure the line keeps lagging (accelerating growth, a repeated same-sign miss); a step the line absorbs within a few
+periods is what `change_point_suggested` is for. `per`, `drift` and `change_point` belong to the stability monitor; the
+model monitor takes `season` and rejects the others.
 
 **Anomalous periods.** With `exclude: red` a red spike no longer enters the history, so it cannot mask a later jump
 (a clean history flagging a 5.3σ jump kept reporting it green after one earlier spike). The caveat: a genuine permanent
@@ -503,7 +521,7 @@ which reports never use.
 |---|---|---|
 | `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body |
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
-| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper |
+| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper, trend_model, drift_status, change_point_suggested |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message, upstream |
 | `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
