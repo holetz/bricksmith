@@ -52,7 +52,8 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "development_value": "DOUBLE", "out_of_time_value": "DOUBLE", "binning_version": "INT",
         "computed_at": "STRING", "limit_kind": "STRING", "limit_reference": "STRING", "compared_value": "DOUBLE",
         "baseline_mean": "DOUBLE", "baseline_sd": "DOUBLE", "baseline_points": "INT", "trend_status": "STRING",
-        "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE",
+        "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE", "trend_sigma": "DOUBLE", "trend_lower": "DOUBLE",
+        "trend_upper": "DOUBLE",
         "lag": "INT", "lag_unit": "STRING", "rule_id": "STRING", "rule_version": "INT",
     },
     DETAILS: {
