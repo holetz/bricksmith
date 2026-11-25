@@ -84,12 +84,19 @@ keyed on one engine matches on the other:
 - null and NaN are null: the `null` bin, the `(null)` segment, and an unlabeled row when the label is NaN;
 - doubles are spelled as Python spells them (`10000000.0`, `1e-05`), which is how stored references already keep
   their categories. The Spark engine matches double categories by value instead of casting them to text, and names
-  segments from their distinct values on the driver.
+  segments from their distinct values on the driver;
+- `-0.0` and `0.0` are one category (numeric equality, as Spark applies it): new fits spell the category `0.0`, and
+  a stored fit that spells it `-0.0` keeps matching both zeros on both engines.
 
 Migration: earlier releases named boolean segments `True`/`False` on the pure engine (the Spark engine already wrote
 `true`/`false`). Per-segment measurements, baselines and segment-specific alert rules recorded by the pure engine
 under the capitalized names do not match the new names; rename those segment values to `true`/`false`, or let the
 history rebuild from the next runs.
+
+Migration: earlier pure-engine fits kept the sign of zero, so a column holding both `-0.0` and `0.0` fitted `-0.0`
+(or `0.0`) as its category and sent the other zero to `unseen`, while Spark matched both. A reference stored with a
+`-0.0` category now matches both zeros on both engines with no change; a new fit spells it `0.0`. Segment names
+spell either zero `0.0`, so a baseline or alert rule keyed on a `-0.0` segment must be renamed to `0.0`.
 
 ## Limits
 
