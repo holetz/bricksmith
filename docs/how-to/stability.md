@@ -54,6 +54,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `fit_periods` | `1` | Earliest periods the bins are fitted on when no fixed range is given. |
 | `limits`, `column_limits` | see below | Per metric `{green, red, direction, center}` or `null` to disable; per column overrides. |
 | `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Least-squares trend check; `false` disables it. |
+| `trend_directions` | `row_count` and `mean` both, `null_rate` and `unseen_rate` higher | Per metric `higher`, `lower` or `both`: the direction of the trend check for a metric without limits. A limit's own direction wins. |
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
 | `gate` | `{fail_on: [], on_error: "warn"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`. |
 | `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity}`. See [Notifications](#notifications). |
@@ -217,6 +218,14 @@ never count as green.
 **Trend check.** An ordinary-least-squares line is fitted through the last `window` earlier values of the same
 series. The current residual is standardized by the residual standard deviation: beyond 2σ is yellow, beyond 3σ is
 red, and only the worse side counts.
+
+The trend needs a direction but not traffic-light limits. A metric with limits is trended in the direction of its
+limits; any other metric in `trend_metrics` (`row_count`, `mean`, `null_rate`, `unseen_rate`) is trended in its
+`trend_directions` entry or default. Its light stays `no_rule`, its `trend_status` is filled and a red trend opens a
+`trend` alert (never a persistence alert). A `trend_metrics` entry with no direction is a plan error. Absolute counts
+are the natural series for a trend, since a fixed limit does not generalize across tables. With a `fixed` baseline the
+trend on `volume_change` equals the trend on `row_count` (the change is an affine function of the count), so prefer
+`row_count` with a `rolling` or `previous` baseline.
 
 **Persistence.** `yellow` consecutive yellow-or-worse periods open a warning. `red` consecutive reds open a
 critical alert, or escalate an open warning to critical. Severity never goes down. `close_after` greens close the

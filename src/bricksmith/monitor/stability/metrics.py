@@ -221,8 +221,12 @@ def _result(  # noqa: PLR0913 - one keyword per result field
         "run_id": ctx.run_id, "computed_at": ctx.computed_at, "rule_id": found.rule_id,
         "rule_version": found.rule_version,
     }  # fmt: skip
-    _trend(ctx, row, value, light, limits.direction if limits else "")
+    _trend(ctx, row, value, light, (limits.direction if limits else "") or ctx.config.trend_direction(metric))
     return row
+
+
+def _key_of(row: Mapping[str, Any]) -> Key:
+    return (str(row["segment"]), str(row["column"]), str(row["metric"]))
 
 
 def _finite(value: float | None) -> float | None:
@@ -233,7 +237,7 @@ def _trend(ctx: _Context, row: dict[str, Any], value: float | None, light: Light
     policy = ctx.config.trend
     if policy is None or row["metric"] not in ctx.config.trend_metrics or not direction:
         return
-    if light.status not in COLORS or value is None or not math.isfinite(value):
+    if light.status not in (*COLORS, NO_RULE) or value is None or not math.isfinite(value):
         return
     key = (row["segment"], row["column"], row["metric"])
     history = ctx.trend_history.setdefault(key, [])
@@ -535,6 +539,29 @@ def _resume(
     return stored_open, [(p, status) for p, status in series if p >= opened]
 
 
+def _series(
+    results: Iterable[Mapping[str, Any]],
+) -> tuple[dict[Key, list[tuple[str, str]]], dict[Key, list[tuple[str, str]]], dict[tuple[Key, str], float | None]]:
+    """Group results into the status series, the trend series and the values, by series key and period.
+
+    A series without limits (``direction`` empty) is judged by its trend alone: it never opens persistence alerts.
+    """
+    rows = list(results)
+    statuses: dict[Key, list[tuple[str, str]]] = {}
+    trends: dict[Key, list[tuple[str, str]]] = {}
+    values: dict[tuple[Key, str], float | None] = {}
+    trend_only = {_key_of(r) for r in rows if r["direction"] == "" and r["trend_status"]}
+    for row in rows:
+        key = _key_of(row)
+        if row["direction"] == "" and key not in trend_only:
+            continue
+        if row["direction"] != "":
+            statuses.setdefault(key, []).append((row["period"], row["status"]))
+        trends.setdefault(key, []).append((row["period"], row["trend_status"] or "skipped"))
+        values[(key, row["period"])] = row["value"]
+    return statuses, trends, values
+
+
 def alerts(  # noqa: PLR0913 - one keyword per alert field
     results: Iterable[Mapping[str, Any]],
     config: StabilityConfig,
@@ -565,18 +592,9 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     """
     carried, closes = _stored_by_key(stored, version, lineage)
     anchor = min([version, *lineage])
-    statuses: dict[Key, list[tuple[str, str]]] = {}
-    trends: dict[Key, list[tuple[str, str]]] = {}
-    values: dict[tuple[Key, str], float | None] = {}
-    reasons: dict[tuple[Key, str], str] = {}
-    for row in results:
-        if row["direction"] == "":
-            continue
-        key = (str(row["segment"]), str(row["column"]), str(row["metric"]))
-        statuses.setdefault(key, []).append((row["period"], row["status"]))
-        trends.setdefault(key, []).append((row["period"], row["trend_status"] or "skipped"))
-        values[(key, row["period"])] = row["value"]
-        reasons[(key, row["period"])] = str(row["reason"] or "")
+    rows = list(results)
+    statuses, trends, values = _series(rows)
+    reasons = {(_key_of(r), r["period"]): str(r["reason"] or "") for r in rows}
     persistence = config.persistence
     trend_policy = PersistencePolicy(
         yellow=0, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
@@ -585,11 +603,13 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
         yellow=1, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
     )
     out: list[dict[str, Any]] = []
-    for key in sorted(statuses):
+    for key in sorted(trends):
         for kind, series, policy in (
-            (PERSISTENCE, statuses[key], schema_policy if key[2] in SCHEMA_METRICS else persistence),
+            (PERSISTENCE, statuses.get(key, []), schema_policy if key[2] in SCHEMA_METRICS else persistence),
             (TREND, trends[key], trend_policy),
         ):
+            if not series:
+                continue
             first_period = min((p for p, _ in series), default="")
             stored_open, replayed = _resume(
                 carried.get((*key, kind)), series, policy, first_period, keep_inside=keep_inside
