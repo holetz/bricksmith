@@ -158,7 +158,8 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
     """Return ``CREATE OR REPLACE VIEW`` statements for the dashboard views of the tables in ``scope``.
 
     ``<prefix>latest``: results of the latest period of each dataset. ``<prefix>dataset_status``: the worst
-    status per dataset and period with red and yellow counts. ``<prefix>open_alerts``: alerts still open by their automatic state, with the latest
+    status per dataset and period with red and yellow counts. ``<prefix>open_alerts``: alerts still open by their
+    automatic state, with the latest
     human action and the ``effective_state`` it gives. ``<prefix>actions_latest``, ``<prefix>alert_response`` and
     ``<prefix>response_summary`` hold the actions and the time to first action and to close;
     ``<prefix>false_positive_rate`` counts the closures typed ``false_positive`` per rule.
