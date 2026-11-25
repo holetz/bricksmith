@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.limits import BOTH, HIGHER, LOWER
 from bricksmith.monitor.persistence import CRITICAL, OPEN
+from bricksmith.monitor.stability.config import CRITICALITY_WEIGHTS
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -119,11 +120,16 @@ class Incident:
     bins: tuple[dict[str, Any], ...] = ()
     suppressed: int = 0
     false_positive_rates: dict[str, dict[str, Any]] = field(default_factory=dict)
+    severity_score: float = 0.0
+    upstream: str = ""
 
     def to_dict(self, top: int | None = None) -> dict[str, Any]:
         """Return the serializable form, limited to the ``top`` entries of each ranking when given."""
         cut = slice(None, top)
+        extra: dict[str, Any] = {"upstream": self.upstream} if self.upstream else {}
         return {
+            **extra,
+            "severity_score": self.severity_score,
             "alerts": len(self.causes),
             "bins": list(self.bins[cut]),
             "causes": [c.to_dict() for c in self.causes[cut]],
@@ -136,6 +142,36 @@ class Incident:
             "severity": self.severity,
             "suppressed": self.suppressed,
         }
+
+
+@dataclass(frozen=True)
+class Upstream:
+    """The red incident a task of the same run left for one period, and the dataset that started it.
+
+    ``dataset`` is the task's own dataset; ``origin`` is the dataset where the problem began: the same one when the
+    task had no upstream incident, else the origin the task inherited.
+    """
+
+    dataset: str
+    period: str
+    origin: str
+
+
+def upstream_origin(records: Iterable[Upstream], period: str) -> str:
+    """Return the origin dataset of the upstream incidents of ``period`` (the first by name), or ``""`` when none."""
+    return min((r.origin for r in records if r.period == period), default="")
+
+
+def severity_score(causes: Sequence[Cause], open_alerts: Sequence[Mapping[str, Any]], criticality: str) -> float:
+    """Return the ranking score of an incident: exceedance * persistence * criticality weight * correlated columns.
+
+    Exceedance is the sum of the cause scores, persistence the largest number of flagged periods of an open alert
+    (at least 1) and the correlated columns are the distinct alerted columns (at least 1).
+    """
+    persistence = max((int(a.get("flagged_periods") or 0) for a in open_alerts), default=0) or 1
+    columns = len({c.column for c in causes if c.column}) or 1
+    weight = CRITICALITY_WEIGHTS.get(criticality, CRITICALITY_WEIGHTS["medium"])
+    return round(sum(c.score for c in causes) * persistence * weight * columns, 6)
 
 
 def _ranked(scores: Mapping[str, float]) -> tuple[tuple[str, float], ...]:
@@ -168,6 +204,7 @@ def build_incident(  # noqa: PLR0913 - the rows one check holds and the run iden
     period: str,
     suppressed: int = 0,
     false_positive_rates: dict[str, dict[str, Any]] | None = None,
+    upstream: str = "",
 ) -> Incident | None:
     """Group the open alerts of ``dataset`` into one incident of ``period``; ``None`` when none is open."""
     if not open_alerts:
@@ -193,7 +230,7 @@ def build_incident(  # noqa: PLR0913 - the rows one check holds and the run iden
         f"stability:{dataset}:{period}:{identity}", dataset, period,
         CRITICAL if any(c.severity == CRITICAL for c in causes) else "warning",
         tuple(causes), _ranked(by_segment), _ranked(by_column), _bins(profiles, causes, period),
-        suppressed, false_positive_rates or {},
+        suppressed, false_positive_rates or {}, severity_score(causes, open_alerts, config.criticality), upstream,
     )  # fmt: skip
 
 
@@ -320,11 +357,14 @@ def digest_event(  # noqa: PLR0913 - one keyword per event field
 __all__ = [
     "Cause",
     "Incident",
+    "Upstream",
     "alert_score",
     "apply_noise",
     "benjamini_hochberg",
     "build_incident",
     "digest_event",
     "false_positive_rates",
+    "severity_score",
     "trend_p_value",
+    "upstream_origin",
 ]
