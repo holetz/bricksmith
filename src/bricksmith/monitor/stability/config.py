@@ -81,7 +81,7 @@ KEYS = frozenset({
     "column_limits", "trend", "trend_metrics", "trend_directions", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
     "noise", "cadence", "expected_by", "settle_periods", "settle_days",
-    "history", "history_periods",
+    "history", "history_periods", "owner", "domain", "criticality", "suppress_downstream",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
@@ -91,6 +91,9 @@ TRANSITIONS = (OPENED, ESCALATED, RECURRED)
 REMINDED = "reminded"
 CHANGED = "changed"
 SEVERITIES = ("warning", "critical")
+#: How much a dataset matters, lowest first; the weight multiplies the severity score of its incidents.
+CRITICALITIES = ("low", "medium", "high", "critical")
+CRITICALITY_WEIGHTS = {name: rank for rank, name in enumerate(CRITICALITIES, start=1)}
 _NOTIFY_KEYS = frozenset({"on", "min_severity", "digest", "top", "remind_after", "material_change"})
 
 
@@ -347,6 +350,10 @@ class StabilityConfig:
     settle_days: int = 0
     history: bool = False
     history_periods: int = 0
+    owner: str = ""
+    domain: str = ""
+    criticality: str = "medium"
+    suppress_downstream: bool = True
 
     @property
     def auto(self) -> bool:
@@ -420,7 +427,12 @@ class StabilityConfig:
             data["trend_directions"] = dict(sorted(self.trend_directions.items()))
         if self.noise is not None:
             data["noise"] = self.noise.to_dict()
-        return data
+        return data | self._ownership_dict()
+
+    def _ownership_dict(self) -> dict[str, Any]:
+        """Return the ownership and suppression keys that differ from their defaults."""
+        defaults = (("owner", ""), ("domain", ""), ("criticality", "medium"), ("suppress_downstream", True))
+        return {name: getattr(self, name) for name, default in defaults if getattr(self, name) != default}
 
     def _base_dict(self) -> dict[str, Any]:
         return {
@@ -626,6 +638,34 @@ def _history(data: dict[str, Any]) -> tuple[bool, int]:
     return bool(value), periods
 
 
+def _text(data: dict[str, Any], key: str) -> str:
+    value = data.get(key, "")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        msg = f"{key} must be text, got {value!r}"
+        raise _fail(msg)
+    return value.strip()
+
+
+def _criticality(value: object) -> str:
+    if value is None:
+        return "medium"
+    if value not in CRITICALITIES:
+        msg = f"criticality must be one of {', '.join(CRITICALITIES)}, got {value!r}"
+        raise _fail(msg)
+    return str(value)
+
+
+def _suppress(value: object) -> bool:
+    if value is None:
+        return True
+    if not isinstance(value, bool):
+        msg = f"suppress_downstream must be true or false, got {value!r}"
+        raise _fail(msg)
+    return value
+
+
 def _trend_directions(value: object) -> dict[str, str]:
     if value is None:
         return {}
@@ -713,6 +753,10 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             noise=parse_noise(data.get("noise")),
             history=history,
             history_periods=history_periods,
+            owner=_text(data, "owner"),
+            domain=_text(data, "domain"),
+            criticality=_criticality(data.get("criticality")),
+            suppress_downstream=_suppress(data.get("suppress_downstream")),
         )
         _check_cadence(config)
     except (TypeError, ValueError) as error:
@@ -743,6 +787,8 @@ __all__ = [
     "CADENCE_METRICS",
     "CHANGED",
     "COLUMN_METRICS",
+    "CRITICALITIES",
+    "CRITICALITY_WEIGHTS",
     "DEFAULT_LIMITS",
     "ESCALATED",
     "METRICS",
