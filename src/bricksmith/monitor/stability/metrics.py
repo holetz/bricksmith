@@ -20,9 +20,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN
+from bricksmith.monitor.business import business_days
 from bricksmith.monitor.limits import COLORS, GREEN, INFORMATIONAL, NO_RULE, RED, YELLOW, Light, classify, rank
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, WARNING, AlertSpan, PersistencePolicy, alert_spans
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
+from bricksmith.monitor.shifts import change_point_suggested, drift_status
 from bricksmith.monitor.stability.config import (
     DISTRIBUTION_METRICS,
     FIXED,
@@ -40,7 +42,7 @@ from bricksmith.monitor.stability.config import (
 )
 from bricksmith.monitor.stability.profile import fit_periods_of, period_date, segment_label
 from bricksmith.monitor.stats import psi_terms
-from bricksmith.monitor.trend import keeps, trend_check
+from bricksmith.monitor.trend import TrendPolicy, keeps, remember, trend_check
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -155,6 +157,7 @@ class _Context:
     run_id: str
     computed_at: str
     trend_history: dict[Key, list[float]] = field(default_factory=dict)
+    scores: dict[Key, list[float]] = field(default_factory=dict)
     excluded: frozenset[str] = frozenset()
     red_periods: dict[str, set[str]] = field(default_factory=dict)
 
@@ -190,6 +193,7 @@ def _result(  # noqa: PLR0913 - one keyword per result field
         "baseline_kind": ctx.config.baseline.kind, "baseline_label": ctx.config.baseline.label,
         "trend_status": "", "trend_expected": None, "trend_deviation": None,
         "trend_sigma": None, "trend_lower": None, "trend_upper": None,
+        "trend_model": "", "drift_status": "", "change_point_suggested": None,
         "run_id": ctx.run_id, "computed_at": ctx.computed_at, "rule_id": found.rule_id,
         "rule_version": found.rule_version,
     }  # fmt: skip
@@ -205,23 +209,57 @@ def _finite(value: float | None) -> float | None:
     return value if value is None or math.isfinite(value) else None
 
 
+def trend_value(policy: TrendPolicy, metric: str, period: str, value: float) -> float | None:
+    """Return the value the trend sees: ``row_count`` per business day with ``per: business_day``, else ``value``.
+
+    ``None`` when the period has no business day (or is not a day or month): such a period is not trended.
+    """
+    if policy.per != "business_day" or metric != ROW_COUNT:
+        return value
+    days = business_days(period, policy.business_calendar)
+    return value / days if days else None
+
+
 def _trend(ctx: _Context, row: dict[str, Any], value: float | None, light: Light, direction: str) -> None:
     policy = ctx.config.trend
     if policy is None or row["metric"] not in ctx.config.trend_metrics or not direction:
         return
-    if light.status not in (*COLORS, NO_RULE) or value is None or not math.isfinite(value):
-        return
     key = (row["segment"], row["column"], row["metric"])
     history = ctx.trend_history.setdefault(key, [])
-    found = trend_check(history, value, policy, direction)
-    if row["period"] not in ctx.excluded and keeps(policy, light.status, found.status):
-        history.append(value)
+    seen = (
+        None if value is None or not math.isfinite(value) else trend_value(policy, row["metric"], row["period"], value)
+    )
+    if light.status not in (*COLORS, NO_RULE) or seen is None:
+        remember(history, math.nan, kept=False, policy=policy)
+        return
+    found = trend_check(history, seen, policy, direction)
+    kept = row["period"] not in ctx.excluded and keeps(policy, light.status, found.status, found.model)
+    remember(history, seen, kept=kept, policy=policy)
     row["trend_status"] = found.status
     row["trend_expected"] = _finite(found.expected)
     row["trend_deviation"] = _finite(found.deviation)
     row["trend_sigma"] = _finite(found.sigma)
     row["trend_lower"] = _finite(found.lower)
     row["trend_upper"] = _finite(found.upper)
+    normalized = policy.per == "business_day" and row["metric"] == ROW_COUNT
+    row["trend_model"] = found.model + ("+business_day" if normalized else "")
+    if policy.drift != "none" or policy.change_point:
+        _shifts(ctx, row, key, found.deviation, direction)
+
+
+def _shifts(ctx: _Context, row: dict[str, Any], key: Key, deviation: float | None, direction: str) -> None:
+    """Add the period's standardized deviation to its series and fill the drift and change-point columns."""
+    policy = ctx.config.trend
+    if policy is None:
+        return
+    scores = ctx.scores.setdefault(key, [])
+    if deviation is not None and math.isfinite(deviation):
+        scores.append(deviation)
+    recent = scores[-policy.span :]
+    if policy.drift != "none":
+        row["drift_status"] = drift_status(recent, policy.drift, direction)
+    if policy.change_point:
+        row["change_point_suggested"] = change_point_suggested(recent, direction)
 
 
 def _judge(  # noqa: PLR0913 - the metric and its suppression inputs
@@ -266,6 +304,7 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     trend_seed: Mapping[Key, Sequence[float]] | None = None,
     excluded: Collection[str] = (),
     red_seed: Mapping[str, Collection[str]] | None = None,
+    score_seed: Mapping[Key, Sequence[float]] | None = None,
 ) -> Computed:
     """Compute the result rows of every period of ``window`` and ``emptied`` (in order) from the stored profiles.
 
@@ -278,7 +317,8 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     ``excluded`` lists periods kept out of every trend history and every ``previous``/``rolling`` baseline (the one
     input a human mark of an anomalous period plugs into). With ``baseline.exclude = red`` a period whose
     ``volume_change`` or ``psi`` was red in a segment is skipped for that segment too; ``red_seed`` carries, per
-    segment, the red periods already stored before the window.
+    segment, the red periods already stored before the window. ``score_seed`` carries, per series, the stored
+    standardized trend deviations before the window, which the drift and change-point detectors read.
     """
     history = index_profiles(binning, profiles)
     ctx = _Context(config, binning, dataset, run_id, computed_at, excluded=frozenset(excluded))
@@ -286,6 +326,8 @@ def compute(  # noqa: PLR0913 - one keyword per result field
         ctx.red_periods[segment_name] = set(reds)
     for key, values in (trend_seed or {}).items():
         ctx.trend_history[key] = list(values)
+    for key, values in (score_seed or {}).items():
+        ctx.scores[key] = list(values)
     out = Computed()
     numeric = {s.column: s.kind == "numeric" for s in binning.columns}
     in_window = [p for p in history.periods if p in {*window, *emptied}]
