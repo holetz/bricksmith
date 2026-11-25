@@ -170,6 +170,26 @@ def _trusted(scope: str, prefix: str, table: str) -> str:
     )
 
 
+def _latest_alerts(scope: str, prefix: str) -> str:
+    """Return the SQL selecting, for each model and alert id, the row of the latest finished run that stored it.
+
+    An alert id is the stable identity of a span: a later run moves its period or closes it, so only its latest
+    stored row says what state it is in.
+    """
+    runs = table_name(scope, prefix, RUNS)
+    alerts = table_name(scope, prefix, ALERTS)
+    finished = ", ".join(f"'{s}'" for s in FINISHED)
+    return (
+        f"SELECT t.* FROM {alerts} t\n"  # noqa: S608 - names checked by table_name
+        f"JOIN {runs} r ON t.run_id = r.run_id AND t.model = r.model AND r.status IN ({finished})\n"
+        f"JOIN (SELECT x.model, x.alert_id, max(y.finished_at) AS finished_at\n"
+        f"      FROM {alerts} x JOIN {runs} y\n"
+        f"        ON x.run_id = y.run_id AND x.model = y.model AND y.status IN ({finished})\n"
+        f"      GROUP BY x.model, x.alert_id) l\n"
+        f"  ON t.model = l.model AND t.alert_id = l.alert_id AND r.finished_at = l.finished_at"
+    )
+
+
 def _finished(scope: str, prefix: str) -> str:
     runs = table_name(scope, prefix, RUNS)
     statuses = ", ".join(repr(s) for s in FINISHED)
@@ -286,7 +306,7 @@ def _governance_summaries(scope: str, prefix: str, declared: Sequence[str]) -> l
             "SELECT model, metric, count(DISTINCT alert_id) AS alerts,",
             "  count(DISTINCT CASE WHEN recurrence THEN alert_id END) AS recurring,",
             "  max(flagged_periods) AS max_flagged_periods",
-            f"FROM ({_trusted(scope, prefix, ALERTS)}) a GROUP BY model, metric",
+            f"FROM ({_latest_alerts(scope, prefix)}) a GROUP BY model, metric",
         ),
         _view(
             table_name(scope, prefix, "acceptance_summary"),
@@ -331,7 +351,7 @@ def view_statements(scope: str, prefix: str = "model_monitoring_", declared: Seq
     )
     open_alerts = (
         f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'open_alerts')} AS\n"
-        f"SELECT * FROM ({_trusted(scope, prefix, ALERTS)}) a\nWHERE coalesce(a.state, 'open') = 'open'"
+        f"SELECT * FROM ({_latest_alerts(scope, prefix)}) a\nWHERE coalesce(a.state, 'open') = 'open'"
     )
     return [
         f"CREATE OR REPLACE VIEW {latest} AS\n{_trusted(scope, prefix, RESULTS)}",
