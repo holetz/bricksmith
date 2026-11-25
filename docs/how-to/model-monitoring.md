@@ -78,6 +78,13 @@ def churn_scores(ctx):
 | `scope`, `prefix` | Where the tables live (default: the output's schema) and their name prefix (default `model_monitoring_`). |
 | `credit` | Enables the [credit-model performance checks](#credit-model-performance-checks): probability horizons, grade order, the expected-events gate, early-warning labels and the exclusion column. |
 
+Segment names and categories use the same canonical text on both engines (pure rows and Spark), as in
+[data monitoring](monitoring.md): booleans are `true`/`false`, and null or NaN is the `(null)` segment. A feature
+without bin settings is quantile-binned when it is numeric, and a `Decimal` value counts as numeric on both engines
+(a Spark `decimal` column already did); every other feature is binned as categorical. A per-segment baseline stored
+by an earlier Spark run keyed a NaN segment as `NaN` and a boolean segment as `true`/`false`; the `NaN` key has no
+rows now, so rerun the monitoring to rebuild that baseline.
+
 Unknown keys and invalid values are plan errors (`invalid_model_monitoring`), so a typo fails `bricksmith plan`
 instead of silently watching nothing.
 

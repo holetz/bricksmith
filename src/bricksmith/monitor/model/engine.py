@@ -28,6 +28,7 @@ import statistics
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol
 
 from bricksmith.monitor.adapter import is_rows, measure
@@ -304,7 +305,7 @@ class _RowsFrame:
 
     def numeric(self, column: str) -> bool:
         values = [r.get(column) for r in self.data if not is_null(r.get(column))]
-        return bool(values) and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values)
+        return bool(values) and all(isinstance(v, (int, float, Decimal)) and not isinstance(v, bool) for v in values)
 
     def segments(self, column: str) -> list[str]:
         return sorted({segment_name(r.get(column)) for r in self.data})
@@ -362,28 +363,23 @@ class _SparkFrame:
         return {r[column]: int(r["count"]) for r in self.data.groupBy(column).count().collect()}
 
     def null_count(self, column: str) -> int:
-        f = self._f()
-        missing = f.col(column).isNull()
-        if self.numeric(column):
-            missing = missing | f.isnan(f.col(column))
-        return int(self.data.where(missing).count())
+        from bricksmith.monitor.spark import null_condition  # noqa: PLC0415 - heavy integration
+
+        return int(self.data.where(null_condition(self.data, column)).count())
 
     def numeric(self, column: str) -> bool:
         kind = dict(self.data.dtypes).get(column, "")
         return kind in ("tinyint", "smallint", "int", "bigint", "float", "double") or kind.startswith("decimal")
 
-    def _segment_text(self, column: str) -> Any:  # noqa: ANN401 - a pyspark Column
-        from bricksmith.monitor.measure import NULL_SEGMENT  # noqa: PLC0415
-
-        f = self._f()
-        return f.coalesce(f.col(column).cast("string"), f.lit(NULL_SEGMENT))
-
     def segments(self, column: str) -> list[str]:
-        rows = self.data.select(self._segment_text(column).alias("g")).distinct().collect()
-        return sorted(str(r["g"]) for r in rows)
+        from bricksmith.monitor.spark import segment_values  # noqa: PLC0415 - heavy integration
+
+        return list(segment_values(self.data, column))
 
     def segment(self, column: str, name: str) -> _SparkFrame:
-        return _SparkFrame(self.data.where(self._segment_text(column) == name))
+        from bricksmith.monitor.spark import segment_frame, segment_values  # noqa: PLC0415 - heavy integration
+
+        return _SparkFrame(segment_frame(self.data, column, segment_values(self.data, column).get(name, [])))
 
     def texts(self, column: str) -> list[str]:
         from bricksmith.monitor.stability.spark import period_column  # noqa: PLC0415
