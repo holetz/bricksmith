@@ -36,7 +36,11 @@ COLUMN_METRICS = (PSI, NULL_RATE, NULL_RATE_DELTA, UNSEEN_RATE, UNSEEN_RATE_DELT
 TABLE_METRICS = (ROW_COUNT, VOLUME_CHANGE, WEIGHT_CHANGE)
 #: Metrics comparing a period with its own first publication; judged only when ``revision`` is declared.
 REVISION_METRICS = (REVISION_ROW_CHANGE, REVISION_PSI, REVISION_MEAN_SHIFT)
-METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS)
+PERIOD_MISSING = "period_missing"
+PERIOD_LATE = "period_late"
+#: Metrics judged against the expected cadence; written only when ``cadence`` is declared.
+CADENCE_METRICS = (PERIOD_MISSING, PERIOD_LATE)
+METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS, *CADENCE_METRICS)
 #: Metrics computed from bin shares, so too few rows make them unreliable (``min_rows``).
 DISTRIBUTION_METRICS = frozenset({
     PSI, NULL_RATE_DELTA, UNSEEN_RATE_DELTA, MEAN_SHIFT, REVISION_PSI, REVISION_MEAN_SHIFT,
@@ -55,6 +59,12 @@ REVISION_LIMITS: dict[str, Limits] = {
     REVISION_PSI: Limits(0.05, 0.10, HIGHER),
     REVISION_MEAN_SHIFT: Limits(0.10, 0.25, BOTH),
 }
+#: Used only for the cadence metrics (value 1 when a period is missing or late), so serialized limits stay.
+CADENCE_LIMITS: dict[str, Limits] = {
+    PERIOD_MISSING: Limits(0.0, 0.5, HIGHER),
+    PERIOD_LATE: Limits(0.0, 0.5, HIGHER),
+}
+CADENCES = ("day", "week", "month", "none")
 DEFAULT_TREND_METRICS = (PSI, VOLUME_CHANGE)
 FIXED = "fixed"
 PREVIOUS = "previous"
@@ -66,6 +76,7 @@ KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
+    "cadence", "expected_by", "settle_periods", "settle_days",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
@@ -216,6 +227,10 @@ class StabilityConfig:
     rules: tuple[LimitRule, ...] = ()
     notify: NotifyPolicy | None = None
     revision: bool = False
+    cadence: str = "none"
+    expected_by: int = 0
+    settle_periods: int = 0
+    settle_days: int = 0
 
     @property
     def auto(self) -> bool:
@@ -231,7 +246,9 @@ class StabilityConfig:
         override = self.column_limits.get(column, {})
         if metric in override:
             return override[metric]
-        return self.limits[metric] if metric in self.limits else REVISION_LIMITS.get(metric)
+        if metric in self.limits:
+            return self.limits[metric]
+        return REVISION_LIMITS.get(metric) or CADENCE_LIMITS.get(metric)
 
     def resolve(self, *, dataset: str, column: str, segment: str, metric: str, period_date: str | None) -> Resolution:
         """Return the rules that apply to one result (see :func:`bricksmith.monitor.rules.resolve`)."""
@@ -272,6 +289,9 @@ class StabilityConfig:
             data["notify"] = self.notify.to_dict()
         if self.revision:
             data["revision"] = True
+        for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
+            if getattr(self, name) not in ("none", 0):
+                data[name] = getattr(self, name)
         return data
 
     def _base_dict(self) -> dict[str, Any]:
@@ -445,6 +465,21 @@ def _revision(value: object) -> bool:
     return value
 
 
+def _cadence(value: object) -> str:
+    if value is None:
+        return "none"
+    if value not in CADENCES:
+        msg = f"cadence must be one of {', '.join(CADENCES)}, got {value!r}"
+        raise _fail(msg)
+    return str(value)
+
+
+def _check_cadence(config: StabilityConfig) -> None:
+    if config.cadence == "none" and (config.expected_by or config.settle_days):
+        msg = "expected_by and settle_days need a cadence (day, week or month)"
+        raise _fail(msg)
+
+
 def parse_config(data: object, root: Path | str | None = None) -> StabilityConfig:
     """Validate one declaration mapping into a :class:`StabilityConfig` (unknown keys are errors)."""
     if not isinstance(data, dict):
@@ -471,7 +506,7 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
         msg = f"prefix must be letters, digits and underscores, got {prefix!r}"
         raise _fail(msg)
     try:
-        return StabilityConfig(
+        config = StabilityConfig(
             period=_name(data["period"], "period"),
             output=str(data.get("output", "")),
             dataset=str(data.get("dataset", "")),
@@ -498,10 +533,16 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             rules=_rules(data.get("rules"), root),
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
+            cadence=_cadence(data.get("cadence")),
+            expected_by=_int(data, "expected_by", 0, 0),
+            settle_periods=_int(data, "settle_periods", 0, 0),
+            settle_days=_int(data, "settle_days", 0, 0),
         )
+        _check_cadence(config)
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
         raise _fail(msg) from None
+    return config
 
 
 def parse_declarations(value: object, root: Path | str | None = None) -> tuple[StabilityConfig, ...]:
@@ -517,11 +558,16 @@ def parse_declarations(value: object, root: Path | str | None = None) -> tuple[S
 
 __all__ = [
     "BASELINES",
+    "CADENCES",
+    "CADENCE_LIMITS",
+    "CADENCE_METRICS",
     "COLUMN_METRICS",
     "DEFAULT_LIMITS",
     "ESCALATED",
     "METRICS",
     "OPENED",
+    "PERIOD_LATE",
+    "PERIOD_MISSING",
     "RECURRED",
     "REVISION_LIMITS",
     "REVISION_METRICS",
