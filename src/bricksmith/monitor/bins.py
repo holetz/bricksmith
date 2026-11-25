@@ -18,6 +18,8 @@ BELOW = "below"
 ABOVE = "above"
 UNSEEN = "unseen"
 ZERO = "zero"
+ZERO_TEXT = "0.0"
+NEGATIVE_ZERO_TEXT = "-0.0"
 OUTLIERS = ("separate", "clip")
 NUMERIC_METHODS = ("quantile", "fixed")
 
@@ -28,9 +30,11 @@ def is_null(value: object) -> bool:
 
 
 def category_text(value: object) -> str:
-    """Return the category spelling: booleans are ``true``/``false``, everything else ``str``."""
+    """Return the category spelling: booleans are ``true``/``false``, either zero is ``0.0``, else ``str``."""
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, float) and value == 0:
+        return ZERO_TEXT
     return str(value)
 
 
@@ -62,6 +66,8 @@ class BinSpec:
             return NULL
         if self.kind == "categorical":
             text = category_text(value)
+            if text == ZERO_TEXT and text not in self.categories and NEGATIVE_ZERO_TEXT in self.categories:
+                text = NEGATIVE_ZERO_TEXT
             return f"cat:{text}" if text in self.categories else UNSEEN
         x = float(value)  # type: ignore[arg-type]
         if self.zero and x == 0:

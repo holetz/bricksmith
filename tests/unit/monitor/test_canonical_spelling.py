@@ -25,3 +25,15 @@ def test_boolean_segments_are_measured_under_lowercase_names() -> None:
     reference = fit_reference(rows, {"x": {"bins": 2}}, name="r", version=1, segment="g")
     segments = {m.segment for m in measure_rows(reference, rows)}
     assert segments == {"", "true", "false", NULL_SEGMENT}
+
+
+def test_both_zero_signs_are_one_category() -> None:
+    from bricksmith.monitor.bins import BinSpec, fit_bins  # noqa: PLC0415
+
+    assert category_text(-0.0) == category_text(0.0) == "0.0"
+    fitted = fit_bins("x", {-0.0: 2, 1.5: 1}, {"type": "categorical"})
+    assert fitted.categories == ("0.0", "1.5")
+    assert {fitted.assign(0.0), fitted.assign(-0.0)} == {"cat:0.0"}
+    stored = BinSpec("x", "categorical", categories=("-0.0", "1.5"))
+    assert {stored.assign(0.0), stored.assign(-0.0)} == {"cat:-0.0"}
+    assert stored.assign(2.5) == "unseen"
