@@ -17,6 +17,7 @@ from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN, ZERO, BinSpec, c
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.infer import Inference, infer_columns, python_type
 from bricksmith.monitor.reference import Reference
+from bricksmith.monitor.stability.config import DISTINCT_PREFIX, KEYS_COLUMN
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -323,7 +324,61 @@ def profile_rows(  # noqa: PLR0913 - one keyword per profile field
                 if x is not None:
                     slot[2] += x
                     slot[3] += x * x
-    return complete_rows(binning, totals, config, dataset=dataset, run_id=run_id, first=first, periods=wanted), info
+    rows_out = complete_rows(binning, totals, config, dataset=dataset, run_id=run_id, first=first, periods=wanted)
+    return [*rows_out, *scan_rows(binning, scoped, config, dataset=dataset, run_id=run_id)], info
+
+
+def scan_row(  # noqa: PLR0913 - one keyword per stored field
+    binning: Reference, period: str, column: str, counts: tuple[int, int], *, dataset: str, run_id: str
+) -> dict[str, Any]:
+    """Return the stored row of a scan statistic: ``count`` rows and ``distinct`` values (or key tuples).
+
+    The reserved ``column`` (``~keys`` or ``~distinct:<column>``) keeps it out of every bin reader; ``value_sum``
+    carries the distinct count so the row has the shape of any profile row.
+    """
+    count, distinct = counts
+    return {
+        "dataset": dataset, "version": binning.version, "period": period, "period_date": period_date(period),
+        "segment": ALL_SEGMENTS, "segment_label": ALL_LABEL, "column": column, "bin": column.partition(":")[0][1:],
+        "bin_order": 0, "bin_label": column, "count": count, "weight": None, "value_sum": float(distinct),
+        "value_sum_sq": None, "run_id": run_id,
+    }  # fmt: skip
+
+
+def scan_rows(
+    binning: Reference,
+    scoped: Iterable[tuple[str, Mapping[str, Any]]],
+    config: StabilityConfig,
+    *,
+    dataset: str,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    """Return the ``~keys`` and ``~distinct:<column>`` rows of every profiled period (whole population, exact)."""
+    if not config.keys and not config.distinct:
+        return []
+    keys: dict[str, set[tuple[object, ...]]] = {}
+    seen: dict[tuple[str, str], set[object]] = {}
+    rows: Counter[str] = Counter()
+    present: Counter[tuple[str, str]] = Counter()
+    for period, row in scoped:
+        rows[period] += 1
+        if config.keys:
+            keys.setdefault(period, set()).add(
+                tuple(category_text(row.get(c)) if not is_null(row.get(c)) else None for c in config.keys)
+            )
+        for column in config.distinct:
+            value = row.get(column)
+            if not is_null(value):
+                seen.setdefault((period, column), set()).add(category_text(value))
+                present[period, column] += 1
+    out = [
+        scan_row(binning, period, KEYS_COLUMN, (rows[period], len(found)), dataset=dataset, run_id=run_id)
+        for period, found in sorted(keys.items())
+    ]
+    for (period, column), found in sorted(seen.items()):
+        counts = (present[period, column], len(found))
+        out.append(scan_row(binning, period, f"{DISTINCT_PREFIX}{column}", counts, dataset=dataset, run_id=run_id))
+    return out
 
 
 def complete_rows(  # noqa: PLR0913 - one keyword per profile field
