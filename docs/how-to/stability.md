@@ -13,7 +13,7 @@ authority: current
 Data stability tells you, on every run, whether a table still looks like the data it was designed and validated on.
 You declare it on the task that writes the table. After the write, the shared runner profiles the table period by
 period and compares each period with a baseline. It judges every metric with a traffic light, a trend check and
-persistence alerts, stores the results in five dashboard-ready tables, and applies the gate you declared: warn
+persistence alerts, stores the results in six dashboard-ready tables, and applies the gate you declared: warn
 (the default) or fail the task and block its dependents.
 
 It shares its statistical core with [model monitoring](monitoring.md): bins (`BinSpec`), PSI, versioned references,
@@ -54,6 +54,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `fit_periods` | `1` | Earliest periods the bins are fitted on when no fixed range is given. |
 | `limits`, `column_limits` | see below | Per metric `{green, red, direction, center}` or `null` to disable; per column overrides. |
 | `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Prediction-interval trend check (see the trend check under [Metrics and default limits](#metrics-and-default-limits)); `false` disables it. |
+| `trend_directions` | `row_count` and `mean` both, `null_rate` and `unseen_rate` higher | Per metric `higher`, `lower` or `both`: the direction of the trend check for a metric without limits. A limit's own direction wins. |
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
 | `gate` | `{fail_on: [], on_error: "warn"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`. |
 | `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity}`. See [Notifications](#notifications). |
@@ -129,6 +130,29 @@ alerts with the ones stored before the run, so replaying unchanged data sends no
 drops the opening period of an open alert keeps its `alert_id` and sends nothing either. Delivery happens after the
 rows are stored, never raises, and cannot fail the task or change the gate; `bricksmith stability check` does not
 deliver.
+
+## Human actions
+
+Alerts are rebuilt on every run, so what people decide about them lives in the append-only `stability_actions`
+table. Record a decision with `bricksmith stability action`:
+
+```bash
+bricksmith stability action --dataset orders --alert-id <alert_id> --action risk_accepted \
+  --reason "known migration drift" --author ana --valid-until 2026-12-31 --scope catalog.schema
+```
+
+The command prints the `INSERT` statement to run (or appends the row to a `--state` file). The actions are:
+
+- `analysis` records who is looking at the alert and changes nothing else;
+- `risk_accepted` keeps the alert out of the gate and out of notifications until `--valid-until` (inclusive); the day
+  after, it counts again while the action stays visible;
+- `closed` takes the alert out of the gate and requires a `--resolution`: `fixed`, `expected`, `new_normal` or
+  `false_positive`.
+
+The latest action of each alert wins. Stored alerts keep their automatic state; the run folds the actions into the gate
+counts and the notifications on the run date, and the message reports how many alerts are accepted. Actions enter the
+judgment fingerprint, so a new decision re-judges the window and a replay stays deterministic. Resolutions are stored
+and counted by `stability_false_positive_rate`; their effect on baselines belongs to period marks, which are separate.
 
 ## Revision reliability
 
@@ -206,6 +230,14 @@ periods before it, so a re-judged window gives the same trend status as the firs
 **Migration note.** The trend judgment changed, so the judgment fingerprint changes: the first run after upgrading
 re-judges the whole window once, supersedes the alerts the old statistic opened, and adds the three band columns
 to `stability_results` through table evolution. Expect fewer `trend` alerts.
+
+The trend needs a direction but not traffic-light limits. A metric with limits is trended in the direction of its
+limits; any other metric in `trend_metrics` (`row_count`, `mean`, `null_rate`, `unseen_rate`) is trended in its
+`trend_directions` entry or default. Its light stays `no_rule`, its `trend_status` is filled and a red trend opens a
+`trend` alert (never a persistence alert). A `trend_metrics` entry with no direction is a plan error. Absolute counts
+are the natural series for a trend, since a fixed limit does not generalize across tables. With a `fixed` baseline the
+trend on `volume_change` equals the trend on `row_count` (the change is an affine function of the count), so prefer
+`row_count` with a `rolling` or `previous` baseline.
 
 **Persistence.** `yellow` consecutive yellow-or-worse periods open a warning. `red` consecutive reds open a
 critical alert, or escalate an open warning to critical. Severity never goes down. `close_after` greens close the
@@ -286,6 +318,7 @@ which reports never use.
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
 | `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
+| `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
 | `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at |
 
@@ -295,11 +328,15 @@ denotes when it can be read as a date.
 
 ## Dashboards
 
-`bricksmith stability views --scope catalog.schema` prints three views to create next to the tables:
+`bricksmith stability views --scope catalog.schema` prints the views to create next to the tables:
 
 - `stability_latest`: results of the latest period of the latest version of each dataset;
 - `stability_dataset_status`: worst status, red and yellow counts and row count per dataset and period;
-- `stability_open_alerts`: alerts still open.
+- `stability_open_alerts`: alerts still open by their automatic state, with the latest human action and the
+  `effective_state` it gives (`open`, `accepted` or `closed`);
+- `stability_actions_latest`, `stability_alert_response` and `stability_response_summary`: the latest action per alert,
+  and the days to the first action and to the closing of each alert;
+- `stability_false_positive_rate`: closures typed `false_positive` against all closures, per rule.
 
 A BI model on these tables works as a star:
 
