@@ -24,9 +24,13 @@ ALERTS = "alerts"
 ACTIONS = "actions"
 RUNS = "runs"
 REVISIONS = "revisions"
+RESULTS_HISTORY = "results_history"
+ALERT_EVENTS = "alert_events"
 KINDS = (BINNINGS, PROFILES, RESULTS, ALERTS, ACTIONS, RUNS)
-#: The tables a declaration can have: the revisions table exists only with ``revision`` on.
-ALL_KINDS = (*KINDS, REVISIONS)
+#: The tables that exist only with ``history`` on: every judgment ever reported, and every alert transition.
+HISTORY_KINDS = (RESULTS_HISTORY, ALERT_EVENTS)
+#: The tables a declaration can have: ``revisions`` only with ``revision`` on, the history kinds with ``history``.
+ALL_KINDS = (*KINDS, REVISIONS, *HISTORY_KINDS)
 SCHEMAS: dict[str, dict[str, str]] = {
     BINNINGS: {
         "dataset": "STRING", "version": "INT", "config_fingerprint": "STRING", "fingerprint": "STRING",
@@ -67,6 +71,20 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "count": "BIGINT", "weight": "DOUBLE", "value_sum": "DOUBLE", "value_sum_sq": "DOUBLE", "run_id": "STRING",
         "published_at": "STRING",
     },
+    RESULTS_HISTORY: {
+        "dataset": "STRING", "version": "INT", "period": "STRING", "period_date": "DATE", "segment": "STRING",
+        "segment_label": "STRING", "column": "STRING", "metric": "STRING", "value": "DOUBLE", "current": "DOUBLE",
+        "baseline": "DOUBLE", "status": "STRING", "status_rank": "INT", "reason": "STRING",
+        "green_limit": "DOUBLE", "red_limit": "DOUBLE", "direction": "STRING", "rows": "BIGINT",
+        "baseline_kind": "STRING", "baseline_label": "STRING", "trend_status": "STRING", "rule_id": "STRING",
+        "rule_version": "INT", "run_id": "STRING", "judged_at": "STRING", "judgment_fingerprint": "STRING",
+        "data_version": "BIGINT",
+    },
+    ALERT_EVENTS: {
+        "dataset": "STRING", "alert_id": "STRING", "event": "STRING", "run_id": "STRING", "period": "STRING",
+        "severity": "STRING", "state": "STRING", "resolution": "STRING", "action_id": "STRING",
+        "message": "STRING", "occurred_at": "STRING",
+    },
     RUNS: {
         "run_id": "STRING", "dataset": "STRING", "task_id": "STRING", "physical": "STRING", "version": "INT",
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
@@ -83,6 +101,8 @@ KEYS: dict[str, tuple[str, ...]] = {
     ACTIONS: ("dataset", "action_id"),
     RUNS: ("run_id", "dataset"),
     REVISIONS: ("dataset", "version", "period", "segment", "column", "bin"),
+    RESULTS_HISTORY: ("dataset", "run_id", "version", "period", "segment", "column", "metric"),
+    ALERT_EVENTS: ("dataset", "alert_id", "event", "run_id", "action_id"),
 }
 _SCOPE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
 _PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
@@ -243,12 +263,15 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
 __all__ = [
     "ACTIONS",
     "ALERTS",
+    "ALERT_EVENTS",
     "ALL_KINDS",
     "BINNINGS",
+    "HISTORY_KINDS",
     "KEYS",
     "KINDS",
     "PROFILES",
     "RESULTS",
+    "RESULTS_HISTORY",
     "REVISIONS",
     "RUNS",
     "SCHEMAS",

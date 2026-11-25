@@ -25,8 +25,9 @@ from bricksmith.monitor.stability.engine import (
     error_outcome,
 )
 from bricksmith.monitor.stability.tables import (
-    ALL_KINDS,
+    HISTORY_KINDS,
     KINDS,
+    REVISIONS,
     SCHEMAS,
     merge_rows,
     table_name,
@@ -80,7 +81,8 @@ def resolve(value: object, outputs: Mapping[str, str], root: Path | None = None)
         if scope == physical:
             msg = f"stability: {physical!r} has no schema; declare scope as catalog.schema"
             raise MonitorError(msg)
-        tables = {kind: table_name(scope, config.prefix, kind) for kind in (ALL_KINDS if config.revision else KINDS)}
+        kinds = (*KINDS, *((REVISIONS,) if config.revision else ()), *(HISTORY_KINDS if config.history else ()))
+        tables = {kind: table_name(scope, config.prefix, kind) for kind in kinds}
         found.append(Declaration(config, names[0], physical, tables))
     return tuple(found)
 
