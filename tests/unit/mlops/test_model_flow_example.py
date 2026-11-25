@@ -300,3 +300,62 @@ def test_a_run_model_downloads_file_by_file(tmp_path: Path) -> None:
     path = module_function("model.py", "download_model")(FakeClient(files), "abc123", tmp_path)
     assert path == tmp_path / "model"
     assert {f"model/{p.name}": p.read_bytes() for p in path.iterdir()} == files
+
+
+DEV_PERIODS = ("2024-07-31", "2024-08-31", "2024-09-30", "2024-10-31", "2024-11-30", "2024-12-31")
+OOT_PERIODS = ("2025-02-28", "2025-03-31", "2025-04-30")
+LIVE_PERIODS = ("2025-07-31", "2025-08-31", "2025-09-30", "2025-10-31", "2025-11-30", "2025-12-31")
+#: Grade -> (calibrated probability over the three-period label horizon, rows per period).
+GRADE_MIX = {"A": (0.02, 400), "B": (0.05, 300), "C": (0.12, 200), "D": (0.35, 100)}
+
+
+def synthetic_scores() -> list[dict[str, Any]]:
+    """Return rows shaped like ``attrition_scores``: calibrated grades, the last live labels still immature."""
+    rows: list[dict[str, Any]] = []
+    for sample, periods in (("dev", DEV_PERIODS), ("oot", OOT_PERIODS), ("live", LIVE_PERIODS)):
+        for index, period in enumerate(periods):
+            matured = sample != "live" or index < len(LIVE_PERIODS) - 3
+            for grade, (pd, count) in GRADE_MIX.items():
+                events = round(count * pd)
+                for i in range(count):
+                    spread = 0.9 + 0.2 * (i % 10) / 9
+                    rows.append({
+                        "closing_date": period, "sample": sample, "grade": grade, "model_version": "4",
+                        "score": pd * spread, "attrited": (int(i < events) if matured else None),
+                        "balance_mean_3p": 100.0 * (1 + i % 7) * (1.05 if sample == "live" else 1.0),
+                        "days_past_due_max_3p": float(i % 5), "payment_ratio_3p": 0.5 + 0.05 * (i % 9),
+                    })  # fmt: skip
+    return rows
+
+
+def test_the_declared_monitoring_measures_stability_performance_and_calibration_offline() -> None:
+    from bricksmith.monitor.model.config import parse_config as parse_monitoring  # noqa: PLC0415
+    from bricksmith.monitor.model.engine import MemoryStore, check  # noqa: PLC0415
+
+    declared = declaration_of(module_function("model.py", "attrition_scores"))
+    assert declared is not None
+    config = parse_monitoring(declared.metadata["model_monitoring"])
+    assert config.credit is not None and config.credit.grades == ("A", "B", "C", "D")
+    results = check(synthetic_scores(), config, MemoryStore(), run_id="r1", now="t0").tables["results"]
+
+    def valued(metric: str, period: str, column: str = "") -> dict[str, Any]:
+        found = [r for r in results if r["metric"] == metric and r["monitoring_period"] == period
+                 and r["column"] == column]  # fmt: skip
+        assert len(found) == 1, (metric, period, column, found)
+        assert found[0]["value"] is not None, found[0]
+        return found[0]
+
+    assert {r["monitoring_period"] for r in results} == set(LIVE_PERIODS)
+    first, last = LIVE_PERIODS[0], LIVE_PERIODS[-1]
+    valued("psi", first, "score")
+    valued("csi", first, "balance_mean_3p")
+    # A label metric of period P reads the data of P minus ``label_lag``: the last live periods read matured labels.
+    for metric, column in (("ks", "score"), ("auc", "score"), ("gini", "score"), ("grade_inversions", "grade")):
+        valued(metric, last, column)
+    for grade in "ABCD":
+        for metric in ("grade_oe", "grade_jeffreys_p", "grade_binomial_p"):
+            valued(metric, last, f"grade={grade}")
+    unavailable = [
+        r for r in results if r["monitoring_period"] == first and r["family"] in {"discrimination", "grade_calibration"}
+    ]
+    assert unavailable and all(r["reason"] == "data_period_unavailable" for r in unavailable)

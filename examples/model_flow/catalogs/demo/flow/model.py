@@ -236,6 +236,7 @@ def attrition_train(ctx):
             "critical_fields": ["balance_mean_3p"],
             "model_version_column": "model_version",
             "label_lag": 3,
+            "credit": {"horizon": 3, "grades": ["A", "B", "C", "D"]},
         },
     },
 )
