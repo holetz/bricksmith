@@ -12,7 +12,7 @@ from bricksmith.errors import EXIT_OK, EXIT_VALIDATION, UsageError
 from bricksmith.monitor.cli import _data, _json, _source  # pyright: ignore[reportPrivateUsage]
 from bricksmith.monitor.stability.config import parse_config
 from bricksmith.monitor.stability.engine import MemoryStore, check
-from bricksmith.monitor.stability.tables import KINDS, merge_rows, view_statements
+from bricksmith.monitor.stability.tables import ALL_KINDS, merge_rows, view_statements
 
 if TYPE_CHECKING:
     import argparse
@@ -31,11 +31,11 @@ def _check(args: argparse.Namespace) -> int:
         if not isinstance(loaded, dict):
             msg = f"{state} must hold a mapping of stability table to rows"
             raise UsageError(msg)
-        tables = {k: list(v) for k, v in loaded.items() if k in KINDS}
+        tables = {k: list(v) for k, v in loaded.items() if k in ALL_KINDS}
     dataset = args.dataset or config.dataset or args.table or Path(args.data).stem
     result = check(_data(args), config, MemoryStore(tables), dataset=dataset, run_id=args.run_id)
     if state is not None:
-        merged = {k: merge_rows(k, tables.get(k, []), result.tables[k]) for k in KINDS}
+        merged = {k: merge_rows(k, tables.get(k, []), result.tables[k]) for k in result.tables}
         plain = {k: [{c: _plain(v) for c, v in r.items()} for r in rows] for k, rows in merged.items()}
         state.write_text(json.dumps(plain, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     outcome = result.outcome
