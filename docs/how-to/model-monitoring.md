@@ -71,7 +71,7 @@ def churn_scores(ctx):
 | `lags` | Per metric or family, how far back it reads: an integer or `{"periods": n}` (observed periods) or `{"months": n}` (calendar months). See [Periods and maturation](#periods-and-maturation). |
 | `limits` | Per metric `{"green", "red", "direction", "center", "kind", "reference"}` overriding the defaults; `null` drops a light. See [Limit kinds](#limit-kinds). |
 | `control_min_points` | Reference periods a control-chart baseline needs (default 3). |
-| `trend`, `trend_metrics` | Trend check `{"window", "min_points", "yellow", "red"}` (default 12, 6, 2, 3; `null` disables) and the metrics it applies to (default `psi`, `ks`, `auc`, `calibration_ratio`). |
+| `trend`, `trend_metrics` | Trend check `{"window", "min_points", "yellow", "red", "min_abs_change", "min_rel_change", "transform"}` (default 12, 6, 2, 3, 0, 0.01, `none`; `null` disables) and the metrics it applies to (default `psi`, `ks`, `auc`, `calibration_ratio`). |
 | `persistence` | When alerts open, escalate and close: `{"yellow", "red", "close_after", "immediate_red", "recurrence"}` (default 3, 2, 3, false, 12). |
 | `gate` | `fail_on` (`red`, `yellow`, `critical`, `alert`) and `on_error` (`warn`, the default, or `fail`). |
 | `min_rows`, `max_periods`, `score_bins`, `calibration_bins`, `epsilon` | Volume floor for a light, monitored periods kept (default 24), score bins (default 10), calibration bins, PSI smoothing (`epsilon`, default `1e-4`, a finite number greater than 0). |
@@ -232,6 +232,11 @@ Each model version, segment, column and metric is a series over the monitoring p
 with a light, the trend check fits a least-squares line through the previous compared values (up to `window`, at
 least `min_points`) and judges how far the current one departs from it, in the limit's direction: `trend_status`,
 `trend_expected` and `trend_deviation` on the result (`insufficient_history` while the series is short).
+The judgment is the same prediction-interval check as in [stability](stability.md#metrics-and-default-limits): the deviation is
+standardized by the prediction standard error and compared with Student-t quantiles, a departure within the
+`min_abs_change` / `min_rel_change` floor is never colored, `transform: log` fits growth series, and the result also
+carries `trend_sigma`, `trend_lower` and `trend_upper` (the band in the original scale). Changing the trend policy
+changes the judgment, so existing windows are re-judged once.
 
 The series of lights is then replayed into **persistence** alerts: `yellow` consecutive yellow-or-red periods open
 a warning, `red` consecutive red periods open (or escalate to) critical, `close_after` green periods close it, and
