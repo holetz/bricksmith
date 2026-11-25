@@ -115,3 +115,20 @@ def test_stored_unparsable_created_at_still_folds() -> None:
     legacy = {**make("closed", T1), "created_at": "yesterday"}
     assert apply_actions([alert()], [legacy], "2026-03-01")[0]["state"] == "closed"
     assert latest_actions([legacy, make("analysis", T1)])["a1"]["action"] == "analysis"
+
+
+OVERFLOWING = ("9999-12-31T23:00:00-03:00", "0001-01-01T00:00:00+01:00")  # valid ISO, outside the range in UTC
+
+
+@pytest.mark.parametrize("value", OVERFLOWING)
+def test_created_at_outside_the_utc_range_is_refused_on_write(value: str) -> None:
+    with pytest.raises(MonitorError, match="created_at must be an ISO-8601 timestamp"):
+        make("analysis", value)
+
+
+@pytest.mark.parametrize("value", OVERFLOWING)
+def test_stored_created_at_outside_the_utc_range_folds_by_raw_text(value: str) -> None:
+    stored = {**make("closed", T1), "created_at": value}
+    assert latest_actions([stored])["a1"]["action"] == "closed"
+    assert latest_actions([stored, make("analysis", T1)])["a1"]["action"] == "analysis"  # a real instant wins
+    assert apply_actions([alert()], [stored], "2026-03-01")[0]["state"] == "closed"

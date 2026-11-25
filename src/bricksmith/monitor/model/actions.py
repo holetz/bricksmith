@@ -45,11 +45,11 @@ def _utc_instant(value: object) -> datetime | None:
     """Return ``value`` parsed as an ISO-8601 instant in UTC (a naive one is read as UTC), or None."""
     try:
         moment = datetime.fromisoformat(str(value))
-    except ValueError:
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        return moment.astimezone(UTC)
+    except (ValueError, OverflowError):  # unparsable, or outside the date range once converted to UTC
         return None
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=UTC)
-    return moment.astimezone(UTC)
 
 
 def _utc_text(moment: datetime) -> str:
