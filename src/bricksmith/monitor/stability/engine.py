@@ -40,7 +40,18 @@ from bricksmith.monitor.stability.config import (
 from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
-from bricksmith.monitor.stability.tables import ACTIONS, ALERTS, BINNINGS, PROFILES, RESULTS, REVISIONS, RUNS
+from bricksmith.monitor.stability.tables import (
+    ACTIONS,
+    ALERT_EVENTS,
+    ALERTS,
+    BINNINGS,
+    PROFILES,
+    RESULTS,
+    RESULTS_HISTORY,
+    REVISIONS,
+    RUNS,
+    SCHEMAS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -550,6 +561,115 @@ def _emptied(  # noqa: PLR0913 - the store read and the zeroed fields
     ]
 
 
+def _history_rows(  # noqa: PLR0913 - the run's facts stamped on every row
+    results: Sequence[Mapping[str, Any]],
+    config: StabilityConfig,
+    periods: Sequence[str],
+    *,
+    judged_at: str,
+    judgment: str,
+    data_version: int | None,
+) -> list[dict[str, Any]]:
+    """Return the results this run emitted as history rows, limited to the latest ``history_periods`` periods."""
+    kept = set(sorted(set(periods))[-config.history_periods :]) if config.history_periods else set(periods)
+    return [
+        {
+            **{c: r.get(c) for c in SCHEMAS[RESULTS_HISTORY]},
+            "judged_at": judged_at,
+            "judgment_fingerprint": judgment,
+            "data_version": data_version,
+        }
+        for r in results
+        if r["period"] in kept
+    ]
+
+
+def _event_row(kind: str, alert: Mapping[str, Any], run_id: str, occurred_at: str, **extra: str) -> dict[str, Any]:
+    state = str(alert.get("state") or "")
+    period = alert.get("closed_period") if state == CLOSED else alert.get("last_period")
+    row = {
+        "dataset": alert.get("dataset"), "alert_id": alert["alert_id"], "event": kind, "run_id": run_id,
+        "period": period or "", "severity": alert.get("severity") or "", "state": state, "resolution": "",
+        "action_id": "", "message": alert.get("message") or "", "occurred_at": occurred_at,
+    }  # fmt: skip
+    return {**row, **extra}
+
+
+def _alert_event_rows(  # noqa: PLR0913 - the alert sets compared and the run's identity
+    fresh: Sequence[Mapping[str, Any]],
+    stored: Sequence[Mapping[str, Any]],
+    superseded: Sequence[Mapping[str, Any]],
+    actions: Sequence[Mapping[str, Any]],
+    recorded: Collection[str],
+    *,
+    run_id: str,
+    occurred_at: str,
+) -> list[dict[str, Any]]:
+    """Return one row per alert transition of this run, and per human action not recorded before.
+
+    Transitions compare the automatic alert rows with the stored ones: ``opened`` (no stored open row),
+    ``escalated`` (became critical), ``closed`` (an open alert now closed) and ``superseded`` (a stored alert the
+    replay no longer produces). An action yields ``action_applied`` once, keyed by its ``action_id``.
+    """
+    before = {str(r["alert_id"]): r for r in stored if r.get("state") == OPEN}
+    events: list[dict[str, Any]] = []
+    for row in sorted(fresh, key=lambda r: str(r["alert_id"])):
+        prior = before.get(str(row["alert_id"]))
+        if row["state"] == OPEN:
+            if prior is None:
+                events.append(_event_row(OPENED, row, run_id, occurred_at))
+            elif str(prior.get("severity")) != CRITICAL and str(row["severity"]) == CRITICAL:
+                events.append(_event_row(ESCALATED, row, run_id, occurred_at))
+        elif row["state"] == CLOSED and prior is not None:
+            events.append(_event_row(CLOSED, row, run_id, occurred_at))
+    events += [
+        _event_row(SUPERSEDED, r, run_id, occurred_at) for r in sorted(superseded, key=lambda r: str(r["alert_id"]))
+    ]
+    known = {str(r["alert_id"]): r for r in [*stored, *fresh]}
+    for action in sorted(actions, key=lambda a: str(a["action_id"])):
+        if str(action["action_id"]) in recorded:
+            continue
+        alert = {**known.get(str(action["alert_id"]), {}), "alert_id": action["alert_id"], "dataset": action["dataset"]}
+        events.append(
+            _event_row(
+                "action_applied",
+                {**alert, "state": action["action"], "message": action.get("reason") or ""},
+                run_id,
+                occurred_at,
+                resolution=str(action.get("resolution") or ""),
+                action_id=str(action["action_id"]),
+            )
+        )
+    return events
+
+
+def _history_tables(  # noqa: PLR0913, PLR0917 - the run's rows and the facts stamped on the history
+    config: StabilityConfig,
+    store: Store,
+    results: Sequence[Mapping[str, Any]],
+    judged: tuple[Sequence[str], Sequence[Mapping[str, Any]], Sequence[Mapping[str, Any]]],
+    superseded: Sequence[Mapping[str, Any]],
+    actions: Sequence[Mapping[str, Any]],
+    *,
+    dataset: str,
+    run_id: str,
+    judged_at: str,
+    judgment: str,
+    data_version: int | None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return the ``history`` tables of one run: its emitted results and its alert transitions."""
+    periods, fresh, stored = judged
+    recorded = {str(r["action_id"]) for r in store.rows(ALERT_EVENTS, dataset) if r.get("action_id")}
+    return {
+        RESULTS_HISTORY: _history_rows(
+            results, config, periods, judged_at=judged_at, judgment=judgment, data_version=data_version
+        ),
+        ALERT_EVENTS: _alert_event_rows(
+            fresh, stored, superseded, actions, recorded, run_id=run_id, occurred_at=judged_at
+        ),
+    }
+
+
 def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one snapshot
     computed: Any,  # noqa: ANN401 - the metrics.Computed being extended
     binning: Reference,
@@ -590,6 +710,17 @@ def _held(
     return human, [{**r, "state": human[str(r["alert_id"])]} if str(r["alert_id"]) in human else r for r in alert_rows]
 
 
+def _accepted(alert_rows: Sequence[Mapping[str, Any]], human: Mapping[str, str]) -> int:
+    """Count the open alerts a human accepted."""
+    return sum(1 for r in alert_rows if r["state"] == OPEN and human.get(str(r["alert_id"])) == STATE_ACCEPTED)
+
+
+def _rewrites(previous: Sequence[Mapping[str, Any]], judgment: str) -> bool:
+    """Tell whether the whole window is judged again: no earlier run, or its judgment fingerprint differs."""
+    last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
+    return last is None or last.get("judgment_fingerprint") != judgment
+
+
 def check(  # noqa: PLR0913 - one keyword per documented input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -603,6 +734,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     as_of: str | date | None = None,
     reprocess: Sequence[str] = (),
     skip_unknown: bool = False,
+    data_version: int | None = None,
 ) -> CheckResult:
     """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write.
 
@@ -610,6 +742,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     ``reprocess`` names periods rewritten since their stored profile (a backfill or a correction): they are
     profiled again with the declared refresh range, the whole window is judged again and the alerts are replayed.
     An item is a period or a ``first..last`` range; ``skip_unknown`` drops what the data does not have.
+    ``data_version`` is the Delta version of the monitored table this run read, stored with the history rows.
     """
     started = now or _now()
     as_of_date = parse_as_of(as_of) if as_of else _date_of(started)
@@ -657,13 +790,8 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         )
         row.update(share=share, baseline_share=base, contribution=contribution)
     actions = store.rows(ACTIONS, dataset)
-    previous = store.rows(RUNS, dataset, version=binning.version)
-    last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
-    rewrite_all = (
-        last is None or last.get("judgment_fingerprint") != judgment_fingerprint(config, actions) or bool(redo)
-    )
-    refresh_all = rewrite_all or bool(config.settle_periods or config.settle_days)
-    emitted = (set(window) if refresh_all else set(todo) & set(window)) | set(vanished)
+    judgment = judgment_fingerprint(config, actions)
+    rewrite_all = _rewrites(store.rows(RUNS, dataset, version=binning.version), judgment) or bool(redo)
     cadence_rows = (
         cadence_results(
             config, cal, binning=binning, dataset=dataset, as_of=as_of_date, run_id=run_id, computed_at=started,
@@ -673,6 +801,9 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         if cal is not None
         else []
     )  # fmt: skip
+    emitted = (
+        set(window) if rewrite_all or config.settle_periods or config.settle_days else set(todo) & set(window)
+    ) | set(vanished)
     results = [r for r in computed.results if r["period"] in emitted] + cadence_rows
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
     alert_rows = alerts(
@@ -685,23 +816,23 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         held, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
         occurred_at=started,
     )  # fmt: skip
-    alert_rows += _superseded(
+    superseded = _superseded(
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
     )
+    alert_rows += superseded
     latest = max(
         [window[-1], *vanished, *(r["period"] for r in cadence_rows if r["metric"] == PERIOD_LATE and r["value"])]
     )
     judged = {latest} | (set(todo) & set(window) | set(vanished) if config.gate.periods == "profiled" else set())
     counts = _counts([*computed.results, *cadence_rows], judged)
     open_rows = [r for r in alert_rows if r["state"] == OPEN and str(r["alert_id"]) not in human]
-    accepted = sum(1 for r in alert_rows if r["state"] == OPEN and human.get(str(r["alert_id"])) == STATE_ACCEPTED)
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
     reasons = _gate(config, counts[RED], counts[YELLOW], len(open_rows), critical)
     status = FAILED if reasons else WARNED if counts[RED] + counts[YELLOW] + len(open_rows) else PASSED
     message = (
         f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)"
         + (f" over {len(judged)} periods" if len(judged) > 1 else "")
-        + (f"; {accepted} accepted" if accepted else "")
+        + (f"; {accepted} accepted" if (accepted := _accepted(alert_rows, human)) else "")
         + (f"; reprocessed {', '.join(redo)} ({len(todo)} periods profiled)" if redo else "")
         + (f"; gate failed on {'; '.join(reasons)}" if reasons else "")
     )
@@ -714,7 +845,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         "latest_period": latest, "periods_profiled": len(todo), "status": status,
         "gate": ",".join(config.gate.fail_on), "red": counts[RED], "yellow": counts[YELLOW],
         "open_alerts": len(open_rows), "critical_alerts": critical, "message": message,
-        "judgment_fingerprint": judgment_fingerprint(config, actions), "started_at": started, "finished_at": _now(),
+        "judgment_fingerprint": judgment, "started_at": started, "finished_at": _now(),
         "periods_reprocessed": ",".join(redo),
     }  # fmt: skip
     tables = {
@@ -727,6 +858,13 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     }
     if config.revision:
         tables[REVISIONS] = revision_rows
+    if config.history:
+        tables |= _history_tables(
+            config, store, results,
+            (sorted({*window, *vanished}), alert_rows[: len(alert_rows) - len(superseded)], stored_alerts),
+            superseded, actions, dataset=dataset, run_id=run_id, judged_at=started, judgment=judgment,
+            data_version=data_version,
+        )  # fmt: skip
     return CheckResult(tables, outcome, skipped, binning, notifications)
 
 
