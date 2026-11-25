@@ -208,6 +208,10 @@ informational_segments = ["channel=pilot"]   # or controlled_segments = [...]: e
 "stability": {"period": "month", "segments": ["channel"], "rules": "monitoring/rules.toml"}
 ```
 
+- **Path base.** A relative rules file path resolves against the project root (the `--project` of the plan and run
+  commands), not the working directory, so plan build and a worker running elsewhere read the same file. An absolute
+  path is used as given. Without a project root (the standalone `stability check` command) it resolves against the
+  working directory.
 - **Specificity.** Among the rules that match a result, the highest score wins: a set `dataset` scores 4, `segment` 2
   and `column` 1. Equal scores go to the highest `version`, then to the smallest `id`. `metric` is a required filter of
   limits rules. With no matching rule, `column_limits`, `limits` and the defaults apply as before.
