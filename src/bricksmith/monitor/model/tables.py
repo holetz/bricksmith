@@ -174,10 +174,14 @@ def _latest_alerts(scope: str, prefix: str) -> str:
     """Return the SQL selecting, for each model and alert id, the row of the latest finished run that stored it.
 
     An alert id is the stable identity of a span: a later run moves its period or closes it, so only its latest
-    stored row says what state it is in.
+    stored row says what state it is in. A row is dropped when a finished run newer than the one that stored it
+    covered the alert's monitoring period (stored results for that model version and period) and stored no row of
+    the alert: a rerun of the period stopped raising it (a light alert is written only while red or yellow, and a
+    span a rerun no longer opens is not written at all), so it is cleared, not open.
     """
     runs = table_name(scope, prefix, RUNS)
     alerts = table_name(scope, prefix, ALERTS)
+    results = table_name(scope, prefix, RESULTS)
     finished = ", ".join(f"'{s}'" for s in FINISHED)
     return (
         f"SELECT t.* FROM {alerts} t\n"  # noqa: S608 - names checked by table_name
@@ -186,7 +190,11 @@ def _latest_alerts(scope: str, prefix: str) -> str:
         f"      FROM {alerts} x JOIN {runs} y\n"
         f"        ON x.run_id = y.run_id AND x.model = y.model AND y.status IN ({finished})\n"
         f"      GROUP BY x.model, x.alert_id) l\n"
-        f"  ON t.model = l.model AND t.alert_id = l.alert_id AND r.finished_at = l.finished_at"
+        f"  ON t.model = l.model AND t.alert_id = l.alert_id AND r.finished_at = l.finished_at\n"
+        f"WHERE NOT EXISTS (SELECT 1 FROM {results} c JOIN {runs} n\n"
+        f"    ON c.run_id = n.run_id AND c.model = n.model AND n.status IN ({finished})\n"
+        f"  WHERE c.model = t.model AND c.model_version = t.model_version\n"
+        f"    AND c.monitoring_period = t.monitoring_period AND n.finished_at > r.finished_at)"
     )
 
 
@@ -325,9 +333,11 @@ def view_statements(scope: str, prefix: str = "model_monitoring_", declared: Seq
     ``<prefix>latest``: results of the latest finished run per model, version and monitoring period.
     ``<prefix>latest_details``: the per-bin details of the same runs. ``<prefix>model_status``: the worst light
     per model, version and monitoring period with red, yellow and error counts. ``<prefix>open_alerts``: the open
-    alerts (light alerts, and persistence and trend spans still open) of the latest finished run per model, version
-    and monitoring period; alerts written before alert states existed count as open, and alerts a person closed or
-    accepted are not. The governance views follow: ``<prefix>actions_latest`` (the latest action per alert),
+    alerts (light alerts, and persistence and trend spans still open), each in its latest stored state: an alert is
+    open only if the newest finished run covering its monitoring period still stored it (a rerun that stops raising
+    it clears it), and its latest stored state is open; alerts written before alert states existed count as open,
+    and alerts a person closed or accepted are not. The governance views follow: ``<prefix>actions_latest`` (the
+    latest action per alert),
     ``<prefix>acceptances`` (each risk acceptance as active, expired or superseded, with the days left),
     ``<prefix>coverage`` (periods monitored and days since the last finished run), ``<prefix>alert_response``
     (days from first seen to first action and to closure) and ``<prefix>response_summary`` (their means per model).

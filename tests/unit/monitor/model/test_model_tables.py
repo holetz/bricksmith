@@ -167,6 +167,66 @@ def test_open_alerts_lists_a_moving_span_once_in_its_latest_state() -> None:
     assert db.execute("SELECT alerts FROM main.model_monitoring_alert_recurrence").fetchone() == (2,)
 
 
+def _rerun_history(*, span: bool) -> sqlite3.Connection:
+    """Run r0 stores alerts L and M for 2025-05; rerun r1 of 2025-05 stores only M (L's psi is green now)."""
+    db = sqlite3.connect(":memory:")
+    for kind in KINDS:
+        _create(db, kind)
+    base = {"model": "m", "model_version": "1", "metric": "psi", "monitoring_period": "2025-05", "state": "open"}
+    kind = "persistence" if span else "light"
+    _insert(db, ALERTS, [
+        {**base, "kind": kind, "run_id": "r0", "alert_id": "L", "severity": "warning"},
+        {**base, "kind": kind, "run_id": "r0", "alert_id": "M", "severity": "critical"},
+        {**base, "kind": kind, "run_id": "r1", "alert_id": "M", "severity": "critical"},
+    ])  # fmt: skip
+    _insert(db, RESULTS, [_result(run, "2025-05", 0.1, "green", 0) for run in ("r0", "r1")])
+    _insert(db, RUNS, [
+        {"run_id": "r0", "model": "m", "status": "success", "finished_at": "2025-06-01T00:00:00"},
+        {"run_id": "r1", "model": "m", "status": "success", "finished_at": "2025-06-02T00:00:00"},
+    ])  # fmt: skip
+    for statement in view_statements("main"):
+        db.execute(statement.replace("CREATE OR REPLACE VIEW", "CREATE VIEW"))
+    return db
+
+
+@pytest.mark.parametrize("span", [False, True])
+def test_open_alerts_drops_an_alert_a_rerun_of_its_period_stopped_raising(*, span: bool) -> None:
+    db = _rerun_history(span=span)
+    found = db.execute("SELECT alert_id, run_id FROM main.model_monitoring_open_alerts ORDER BY 1").fetchall()
+    assert found == [("M", "r1")]
+    by_severity = db.execute("SELECT model, severity, open_alerts FROM main.model_monitoring_open_alerts_by_severity")
+    assert by_severity.fetchall() == [("m", "critical", 1)]
+    assert db.execute("SELECT alerts FROM main.model_monitoring_alert_recurrence").fetchone() == (1,)
+
+
+def test_open_alerts_keeps_an_alert_when_a_run_of_another_period_or_a_failed_rerun_did_not_store_it() -> None:
+    db = _rerun_history(span=False)
+    db.execute("DROP VIEW main.model_monitoring_open_alerts")
+    _insert(db, RESULTS, [
+        _result("r2", "2025-06", 0.1, "green", 0),  # a newer run of another period
+        _result("r3", "2025-05", 0.1, "green", 0),  # a failed rerun of the same period
+    ])  # fmt: skip
+    _insert(db, RUNS, [
+        {"run_id": "r2", "model": "m", "status": "success", "finished_at": "2025-06-03T00:00:00"},
+        {"run_id": "r3", "model": "m", "status": "failed", "finished_at": "2025-06-04T00:00:00"},
+    ])  # fmt: skip
+    db.execute(next(s for s in view_statements("main") if "open_alerts AS" in s).replace(
+        "CREATE OR REPLACE VIEW", "CREATE VIEW"))  # fmt: skip
+    found = db.execute("SELECT alert_id FROM main.model_monitoring_open_alerts ORDER BY 1").fetchall()
+    assert found == [("M",)]
+
+
+def test_open_alerts_lists_a_moving_span_once_when_its_old_period_was_rerun_without_it() -> None:
+    db = _span_history(closes=False)
+    _insert(db, RESULTS, [_result(run, period, 0.1, "green", 0)
+                          for run, period in (("r0", "2025-04"), ("r1", "2025-05"), ("r2", "2025-06"))])  # fmt: skip
+    db.execute("DROP VIEW main.model_monitoring_open_alerts")
+    db.execute(next(s for s in view_statements("main") if "open_alerts AS" in s).replace(
+        "CREATE OR REPLACE VIEW", "CREATE VIEW"))  # fmt: skip
+    found = db.execute("SELECT alert_id, run_id FROM main.model_monitoring_open_alerts ORDER BY 1").fetchall()
+    assert found == [("light", "r1"), ("span", "r2")]
+
+
 def test_actions_table_is_keyed_by_the_action_and_alerts_carry_the_applied_one() -> None:
     assert KEYS[ACTIONS] == ("model", "action_id") and "run_id" not in SCHEMAS[ACTIONS]
     assert {"alert_id", "action", "reason", "author", "valid_until", "created_at"} <= set(SCHEMAS[ACTIONS])
@@ -194,6 +254,8 @@ def _governed(declared: tuple[str, ...] = ()) -> sqlite3.Connection:
         {**alert, "alert_id": "b", "kind": "light", "state": "open", "created_at": "2026-03-01T00:00:00"},
         {**alert, "alert_id": "a", "run_id": "r2", "kind": "persistence", "state": "closed",
          "created_at": "2026-03-10T00:00:00"},
+        {**alert, "alert_id": "b", "run_id": "r2", "kind": "light", "state": "open",
+         "created_at": "2026-03-10T00:00:00"},  # r2 reran 2026-01 and still raised b
     ])  # fmt: skip
     _insert(db, RUNS, [
         {"run_id": "r1", "model": "m", "status": "success", "finished_at": "2026-03-01T00:00:00"},
