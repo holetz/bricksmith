@@ -116,6 +116,40 @@ fingerprint: when they change, the next run fits a new binning version on the la
 ones may predate the new column), unless the baseline is a fixed range. The `schema_change` result of that run says which
 columns were absorbed. Like any refit, the new version profiles and judges every period of the window at once.
 
+## Shape, duplicate keys and distinct counts
+
+PSI floors a vanished low-share category at its epsilon and does not see a shifted tail around an unchanged mean.
+Every run therefore also judges the shape of each column from the **stored bins** (no extra scan):
+
+- `vanished_rate` (categorical): the baseline's share of rows in categories the period no longer has. Removing a 2%
+  category is yellow with the default `higher: 0.01 / 0.05`.
+- `js_distance` (categorical): Jensen-Shannon distance of the two share vectors, 0 to 1 (`higher: 0.10 / 0.20`).
+- `p05_shift`, `p50_shift`, `p95_shift` (numeric): the quantile moved, over the baseline standard deviation
+  (`both: 0.25 / 0.50`). The quantiles are interpolated from the bins, so they are approximations bounded by the bin
+  width; the outer bins sit at the fitted range's edge.
+- `wasserstein` (numeric): approximate Wasserstein distance of the bin shares over the baseline standard deviation
+  (`higher: 0.10 / 0.25`).
+
+Two metrics need a scan and are opt-in. Declare the grain with `keys` and the identifiers whose cardinality matters
+with `distinct` (cost grows with the columns listed):
+
+```yaml
+stability:
+  period: month
+  keys: [order_id, line_no]
+  distinct: [customer_id]
+```
+
+- `duplicate_key_rate` (table): `1 - distinct key tuples / rows` of the period (`higher: 0.01 / 0.02`). A partly
+  duplicated load turns it red while `volume_change` barely moves.
+- `distinct_count` (per `distinct` column, no limits) and `distinct_change` (`both: 0.20 / 0.50`): the distinct values
+  against the mean of the baseline periods.
+
+The pure engine counts exactly; Spark uses `approx_count_distinct` (relative error around 5%), so keep `keys` limits
+above that noise. The statistics are stored as `profiles` rows whose `column` starts with `~` (`~keys`,
+`~distinct:<column>`) and cover the whole population (segment `(all)`) only. Like any metric they take `limits`,
+`column_limits`, `rules` and `trend_metrics`; set a limit to `null` to switch one off.
+
 ## Small samples and PSI
 
 Between two samples of the same population, PSI is not zero: it is about `chi2(bins - 1) × (1/n + 1/m)`, with `n`
@@ -375,6 +409,12 @@ of the table, so it works on every engine.
 | `schema_change` | table | columns added, dropped or retyped since the binning was fitted | higher: 0 / 2 |
 | `missing_column` | column | 1 while a monitored column is absent (0 when it returned) | higher: 0 / 0 |
 | `revision_mean_shift` | numeric column | (mean − first-publication mean) / first-publication std | both: 0.10 / 0.25 |
+| `vanished_rate` | categorical column | baseline share of rows in categories absent from the period | higher: 0.01 / 0.05 |
+| `js_distance` | categorical column | Jensen-Shannon distance between the bin shares | higher: 0.10 / 0.20 |
+| `p05_shift`, `p50_shift`, `p95_shift` | numeric column | quantile (interpolated from bins) minus baseline, over baseline std | both: 0.25 / 0.50 |
+| `wasserstein` | numeric column | approximate Wasserstein distance over baseline std | higher: 0.10 / 0.25 |
+| `duplicate_key_rate` | table | 1 − distinct `keys` tuples / rows (only with `keys`) | higher: 0.01 / 0.02 |
+| `distinct_count`, `distinct_change` | `distinct` column | distinct values; change against the baseline mean | change both: 0.20 / 0.50 |
 
 Bounds are inclusive. With `higher`, a value up to `green` is green, up to `red` is yellow, and above `red` is red.
 `lower` mirrors this, and `both` judges the distance from `center`. Values that cannot be judged get an explicit
