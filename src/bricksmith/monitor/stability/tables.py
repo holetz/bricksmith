@@ -21,9 +21,10 @@ BINNINGS = "binnings"
 PROFILES = "profiles"
 RESULTS = "results"
 ALERTS = "alerts"
+ACTIONS = "actions"
 RUNS = "runs"
 REVISIONS = "revisions"
-KINDS = (BINNINGS, PROFILES, RESULTS, ALERTS, RUNS)
+KINDS = (BINNINGS, PROFILES, RESULTS, ALERTS, ACTIONS, RUNS)
 #: The tables a declaration can have: the revisions table exists only with ``revision`` on.
 ALL_KINDS = (*KINDS, REVISIONS)
 SCHEMAS: dict[str, dict[str, str]] = {
@@ -55,6 +56,11 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "flagged_periods": "INT", "recurrence": "BOOLEAN", "message": "STRING", "run_id": "STRING",
         "updated_at": "STRING",
     },
+    ACTIONS: {
+        "action_id": "STRING", "dataset": "STRING", "alert_id": "STRING", "action": "STRING",
+        "resolution": "STRING", "reason": "STRING", "author": "STRING", "valid_until": "DATE",
+        "created_at": "STRING",
+    },
     REVISIONS: {
         "dataset": "STRING", "version": "INT", "period": "STRING", "period_date": "DATE", "segment": "STRING",
         "segment_label": "STRING", "column": "STRING", "bin": "STRING", "bin_order": "INT", "bin_label": "STRING",
@@ -73,6 +79,7 @@ KEYS: dict[str, tuple[str, ...]] = {
     PROFILES: ("dataset", "version", "period", "segment", "column", "bin"),
     RESULTS: ("dataset", "version", "period", "segment", "column", "metric"),
     ALERTS: ("dataset", "alert_id"),
+    ACTIONS: ("dataset", "action_id"),
     RUNS: ("run_id", "dataset"),
     REVISIONS: ("dataset", "version", "period", "segment", "column", "bin"),
 }
@@ -181,6 +188,7 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
 
 
 __all__ = [
+    "ACTIONS",
     "ALERTS",
     "ALL_KINDS",
     "BINNINGS",
