@@ -48,8 +48,13 @@ TABLES = ("binnings", "profiles", "results", "alerts", "runs")
 KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "persistence", "gate", "min_rows", "refresh_periods",
-    "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules",
+    "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify",
 })  # fmt: skip
+OPENED = "opened"
+ESCALATED = "escalated"
+RECURRED = "recurred"
+TRANSITIONS = (OPENED, ESCALATED, RECURRED)
+SEVERITIES = ("warning", "critical")
 
 
 def _fail(message: str) -> MonitorError:
@@ -123,6 +128,48 @@ class Gate:
 
 
 @dataclass(frozen=True)
+class NotifyPolicy:
+    """Which alert transitions are delivered through the run's notifier, and from which severity.
+
+    No ``on`` transition means notifications are switched off (``notify: false``).
+    """
+
+    on: tuple[str, ...] = TRANSITIONS
+    min_severity: str = "warning"
+
+    def __post_init__(self) -> None:
+        """Validate the transitions and the severity."""
+        if set(self.on) - set(TRANSITIONS) or self.min_severity not in SEVERITIES:
+            msg = f"notify on takes {', '.join(TRANSITIONS)} and min_severity {' or '.join(SEVERITIES)}"
+            raise _fail(msg)
+
+    def wants(self, transition: str, severity: str) -> bool:
+        """Tell whether a ``transition`` of an alert of ``severity`` is delivered."""
+        return transition in self.on and SEVERITIES.index(severity) >= SEVERITIES.index(self.min_severity)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable form."""
+        return {"min_severity": self.min_severity, "on": list(self.on)}
+
+
+def parse_notify(value: object) -> NotifyPolicy | None:
+    """Validate a `notify` value: true (all transitions), false (off) or {on, min_severity}; None is unset."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return NotifyPolicy() if value else NotifyPolicy(on=())
+    if not isinstance(value, dict) or set(value) - {"on", "min_severity"}:
+        msg = f"notify must be true, false or a mapping with on and min_severity, got {value!r}"
+        raise _fail(msg)
+    on = value.get("on", list(TRANSITIONS))
+    items = [on] if isinstance(on, str) else on
+    if not isinstance(items, list) or not all(isinstance(i, str) for i in items):
+        msg = "notify on must be a transition or a list of transitions"
+        raise _fail(msg)
+    return NotifyPolicy(tuple(items), str(value.get("min_severity", "warning")))
+
+
+@dataclass(frozen=True)
 class StabilityConfig:
     """A validated ``stability`` declaration for one output of a task."""
 
@@ -150,6 +197,7 @@ class StabilityConfig:
     inference: InferenceOptions = field(default_factory=InferenceOptions)
     epsilon: float = 1e-4
     rules: tuple[LimitRule, ...] = ()
+    notify: NotifyPolicy | None = None
 
     @property
     def auto(self) -> bool:
@@ -196,10 +244,12 @@ class StabilityConfig:
         return hashlib.sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form (``rules`` only when declared, so existing fingerprints stay)."""
+        """Return the serializable form (``rules`` and ``notify`` only when declared, so fingerprints stay)."""
         data = self._base_dict()
         if self.rules:
             data["rules"] = [r.to_dict() for r in self.rules]
+        if self.notify is not None:
+            data["notify"] = self.notify.to_dict()
         return data
 
     def _base_dict(self) -> dict[str, Any]:
@@ -386,6 +436,7 @@ def parse_config(data: object) -> StabilityConfig:
             inference=_inference(data.get("inference")),
             epsilon=float(data.get("epsilon", 1e-4)),
             rules=parse_rules(data.get("rules"), owner="stability"),
+            notify=parse_notify(data.get("notify")),
         )
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
@@ -407,12 +458,18 @@ __all__ = [
     "BASELINES",
     "COLUMN_METRICS",
     "DEFAULT_LIMITS",
+    "ESCALATED",
     "METRICS",
+    "OPENED",
+    "RECURRED",
     "TABLES",
     "TABLE_METRICS",
+    "TRANSITIONS",
     "Baseline",
     "Gate",
+    "NotifyPolicy",
     "StabilityConfig",
     "parse_config",
     "parse_declarations",
+    "parse_notify",
 ]
