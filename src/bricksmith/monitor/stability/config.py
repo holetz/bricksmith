@@ -33,6 +33,15 @@ REVISION_PSI = "revision_psi"
 REVISION_MEAN_SHIFT = "revision_mean_shift"
 SCHEMA_CHANGE = "schema_change"
 MISSING_COLUMN = "missing_column"
+VANISHED_RATE = "vanished_rate"
+P05_SHIFT = "p05_shift"
+P50_SHIFT = "p50_shift"
+P95_SHIFT = "p95_shift"
+JS_DISTANCE = "js_distance"
+WASSERSTEIN = "wasserstein"
+DUPLICATE_KEY_RATE = "duplicate_key_rate"
+DISTINCT_COUNT = "distinct_count"
+DISTINCT_CHANGE = "distinct_change"
 #: Metrics judged per column, and per period and segment for the whole table (column ``""``).
 COLUMN_METRICS = (PSI, NULL_RATE, NULL_RATE_DELTA, UNSEEN_RATE, UNSEEN_RATE_DELTA, MEAN, MEAN_SHIFT)
 TABLE_METRICS = (ROW_COUNT, VOLUME_CHANGE, WEIGHT_CHANGE)
@@ -40,14 +49,29 @@ TABLE_METRICS = (ROW_COUNT, VOLUME_CHANGE, WEIGHT_CHANGE)
 REVISION_METRICS = (REVISION_ROW_CHANGE, REVISION_PSI, REVISION_MEAN_SHIFT)
 #: Metrics about the table schema: ``schema_change`` for the whole table, ``missing_column`` per dropped column.
 SCHEMA_METRICS = (SCHEMA_CHANGE, MISSING_COLUMN)
+#: Metrics derived from the stored bins alone (no scan): judged per column, categorical or numeric ones only.
+QUANTILE_METRICS = (P05_SHIFT, P50_SHIFT, P95_SHIFT)
+CATEGORICAL_SHAPE_METRICS = (VANISHED_RATE, JS_DISTANCE)
+NUMERIC_SHAPE_METRICS = (*QUANTILE_METRICS, WASSERSTEIN)
+SHAPE_METRICS = (*CATEGORICAL_SHAPE_METRICS, *NUMERIC_SHAPE_METRICS)
+#: Metrics from the scan statistics of declared ``keys`` (table level) and ``distinct`` columns.
+KEY_METRICS = (DUPLICATE_KEY_RATE,)
+DISTINCT_METRICS = (DISTINCT_COUNT, DISTINCT_CHANGE)
+#: Reserved profile column prefix of the scan statistics: no bin reader treats such a column as a monitored one.
+EXTRA_PREFIX = "~"
+KEYS_COLUMN = f"{EXTRA_PREFIX}keys"
+DISTINCT_PREFIX = f"{EXTRA_PREFIX}distinct:"
 PERIOD_MISSING = "period_missing"
 PERIOD_LATE = "period_late"
 #: Metrics judged against the expected cadence; written only when ``cadence`` is declared.
 CADENCE_METRICS = (PERIOD_MISSING, PERIOD_LATE)
-METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS, *SCHEMA_METRICS, *CADENCE_METRICS)
+METRICS = (
+    *COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS, *SCHEMA_METRICS, *CADENCE_METRICS, *SHAPE_METRICS,
+    *KEY_METRICS, *DISTINCT_METRICS,
+)  # fmt: skip
 #: Metrics computed from bin shares, so too few rows make them unreliable (``min_rows``).
 DISTRIBUTION_METRICS = frozenset({
-    PSI, NULL_RATE_DELTA, UNSEEN_RATE_DELTA, MEAN_SHIFT, REVISION_PSI, REVISION_MEAN_SHIFT,
+    PSI, NULL_RATE_DELTA, UNSEEN_RATE_DELTA, MEAN_SHIFT, REVISION_PSI, REVISION_MEAN_SHIFT, *SHAPE_METRICS,
 })  # fmt: skip
 DEFAULT_LIMITS: dict[str, Limits | None] = {
     PSI: Limits(0.10, 0.25, HIGHER),
@@ -72,6 +96,17 @@ SCHEMA_LIMITS: dict[str, Limits] = {
 CADENCE_LIMITS: dict[str, Limits] = {
     PERIOD_MISSING: Limits(0.0, 0.5, HIGHER),
     PERIOD_LATE: Limits(0.0, 0.5, HIGHER),
+}
+#: Used only for the shape, key and distinct metrics, so declarations without them keep their serialized limits.
+SHAPE_LIMITS: dict[str, Limits] = {
+    VANISHED_RATE: Limits(0.01, 0.05, HIGHER),
+    P05_SHIFT: Limits(0.25, 0.50, BOTH),
+    P50_SHIFT: Limits(0.25, 0.50, BOTH),
+    P95_SHIFT: Limits(0.25, 0.50, BOTH),
+    JS_DISTANCE: Limits(0.10, 0.20, HIGHER),
+    WASSERSTEIN: Limits(0.10, 0.25, HIGHER),
+    DUPLICATE_KEY_RATE: Limits(0.01, 0.02, HIGHER),
+    DISTINCT_CHANGE: Limits(0.20, 0.50, BOTH),
 }
 CADENCES = ("day", "week", "month", "none")
 DEFAULT_TREND_METRICS = (PSI, VOLUME_CHANGE)
@@ -102,7 +137,7 @@ KEYS = frozenset({
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
     "auto_columns", "psi_limits", "min_rows_per_bin", "psi_smoothing",
     "noise", "cadence", "expected_by", "settle_periods", "settle_days",
-    "history", "history_periods", "owner", "domain", "criticality", "suppress_downstream",
+    "history", "history_periods", "keys", "distinct", "owner", "domain", "criticality", "suppress_downstream",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
@@ -375,6 +410,8 @@ class StabilityConfig:
     settle_days: int = 0
     history: bool = False
     history_periods: int = 0
+    keys: tuple[str, ...] = ()
+    distinct: tuple[str, ...] = ()
     owner: str = ""
     domain: str = ""
     criticality: str = "medium"
@@ -396,7 +433,12 @@ class StabilityConfig:
             return override[metric]
         if metric in self.limits:
             return self.limits[metric]
-        return REVISION_LIMITS.get(metric) or SCHEMA_LIMITS.get(metric) or CADENCE_LIMITS.get(metric)
+        return (
+            REVISION_LIMITS.get(metric)
+            or SCHEMA_LIMITS.get(metric)
+            or CADENCE_LIMITS.get(metric)
+            or SHAPE_LIMITS.get(metric)
+        )
 
     def trend_direction(self, metric: str) -> str:
         """Return the trend direction of a metric without limits: the declared one, else the default, else ``""``."""
@@ -441,7 +483,7 @@ class StabilityConfig:
             data["notify"] = self.notify.to_dict()
         if self.revision:
             data["revision"] = True
-        data.update(self._psi_options())
+        data.update(self._psi_options(), **self._scan_options())
         for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
             if getattr(self, name) not in ("none", 0):
                 data[name] = getattr(self, name)
@@ -459,6 +501,10 @@ class StabilityConfig:
         """Return the ownership and suppression keys that differ from their defaults."""
         defaults = (("owner", ""), ("domain", ""), ("criticality", "medium"), ("suppress_downstream", True))
         return {name: getattr(self, name) for name, default in defaults if getattr(self, name) != default}
+
+    def _scan_options(self) -> dict[str, Any]:
+        """Return the declared ``keys`` and ``distinct`` columns (absent when unset: serialized forms stay)."""
+        return {name: list(getattr(self, name)) for name in ("keys", "distinct") if getattr(self, name)}
 
     def _psi_options(self) -> dict[str, Any]:
         """Return the PSI and column options that differ from their defaults (the rest serialize as before)."""
@@ -535,6 +581,13 @@ def _exclude(value: object) -> tuple[str, ...]:
         msg = f"exclude must be a list of column names, got {value!r}"
         raise _fail(msg)
     return tuple(_name(c, "exclude item") for c in value)
+
+
+def _names(value: object, what: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        msg = f"{what} must be a list of column names, got {value!r}"
+        raise _fail(msg)
+    return tuple(dict.fromkeys(_name(c, f"{what} item") for c in value))
 
 
 def _epsilon(value: object) -> float:
@@ -816,6 +869,8 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             noise=parse_noise(data.get("noise")),
             history=history,
             history_periods=history_periods,
+            keys=_names(data.get("keys", []), "keys"),
+            distinct=_names(data.get("distinct", []), "distinct"),
             owner=_text(data, "owner"),
             domain=_text(data, "domain"),
             criticality=_criticality(data.get("criticality")),
