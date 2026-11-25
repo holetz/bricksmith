@@ -141,7 +141,10 @@ example `grade=C`, so a [limit rule](#limit-rules) can target one grade.
 **Expected-events volume gate.** A grade whose expected events are below `min_expected_events` is
 `insufficient_volume` ("expected events 0.4 < min 5"), however many events it observed. `min_rows` does not apply to
 per-grade results, so a small grade cannot hide behind a low row count, and a large grade with few expected events
-is not judged by chance. `grade_inversions` counts the consecutive grades, best to worst, whose observed rate falls.
+is not judged by chance. Replaying alerts with a declaration keeps the gate: a stored "expected events" gate stays
+`insufficient_volume` while its expected events are below the declaration's current `min_expected_events` (a raised
+minimum needs a new run, since a row that passed the gate stores no expected events), and `min_rows` does not apply
+there either. `grade_inversions` counts the consecutive grades, best to worst, whose observed rate falls.
 It compares only the grades that pass the gate. Its details rows hold the calibration table of every grade: `count`,
 `mean_score` (mean expected probability) and `observed_rate`.
 

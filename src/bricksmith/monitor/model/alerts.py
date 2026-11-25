@@ -12,10 +12,26 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
-from bricksmith.monitor.limits import CONTROL, INFORMATIONAL, NO_RULE, RELATIVE, Light, Limits, judge, rank
+from bricksmith.monitor.limits import (
+    CONTROL,
+    INFORMATIONAL,
+    INSUFFICIENT_VOLUME,
+    NO_RULE,
+    RELATIVE,
+    Light,
+    Limits,
+    judge,
+    rank,
+)
 from bricksmith.monitor.model.actions import apply_actions
 from bricksmith.monitor.model.config import OUT_OF_TIME
-from bricksmith.monitor.model.engine import VOLUME_METRICS, alert_rows, apply_trend
+from bricksmith.monitor.model.engine import (
+    EXPECTED_METRICS,
+    VOLUME_METRICS,
+    alert_rows,
+    apply_trend,
+    stored_expected_events,
+)
 from bricksmith.monitor.model.tables import FINISHED
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
 
@@ -69,9 +85,13 @@ def relight(row: Mapping[str, Any], config: ModelMonitorConfig) -> dict[str, Any
         period_date=str(row.get("period_date") or "") or None,
     )
     limits = None if found.informational else config.limits_of(found, metric)
-    minimum = 0 if row["metric"] in VOLUME_METRICS else config.min_rows
+    minimum = 0 if metric in VOLUME_METRICS or metric in EXPECTED_METRICS else config.min_rows
     reason = str(row.get("reason") or "")
     reason = "" if reason == INFORMATIONAL_REASON else reason
+    events = stored_expected_events(reason) if metric in EXPECTED_METRICS and row.get("value") is not None else None
+    gated = events is not None and events < config.credit_options.min_expected_events
+    if events is not None and not gated:
+        reason = ""  # the gate no longer applies under the declaration's current minimum
     value = row.get("value")
     baseline, spread, points = _baseline(row, config, limits)
     control = limits is not None and limits.kind == CONTROL
@@ -79,6 +99,8 @@ def relight(row: Mapping[str, Any], config: ModelMonitorConfig) -> dict[str, Any
         value, limits, baseline=baseline, spread=spread, count=int(row.get("rows") or 0), min_count=minimum,
         reason=reason,
     )  # fmt: skip
+    if gated:
+        light = Light(INSUFFICIENT_VOLUME, reason)
     if found.informational and light.status == NO_RULE:
         light = Light(INFORMATIONAL, INFORMATIONAL_REASON)
     return {
