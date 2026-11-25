@@ -119,11 +119,17 @@ def _trigger(policy: PersistencePolicy, status: str, yellows: int, reds: int) ->
     return ""
 
 
-def alert_spans(series: Sequence[tuple[str, str]], policy: PersistencePolicy | None = None) -> list[AlertSpan]:
-    """Replay ``(period, status)`` pairs (sorted by period here) into alert spans, oldest first."""
+def alert_spans(
+    series: Sequence[tuple[str, str]], policy: PersistencePolicy | None = None, *, carry: AlertSpan | None = None
+) -> list[AlertSpan]:
+    """Replay ``(period, status)`` pairs (sorted by period here) into alert spans, oldest first.
+
+    ``carry`` is an alert already open before the series starts: the replay resumes it as the first span, so its
+    statuses escalate and close it, and a span opened after its close can be flagged as a recurrence.
+    """
     rule = policy or PersistencePolicy()
-    spans: list[AlertSpan] = []
-    current: AlertSpan | None = None
+    spans: list[AlertSpan] = [carry] if carry is not None else []
+    current: AlertSpan | None = carry
     yellows = reds = greens = 0
     index = 0
     last_close = -1

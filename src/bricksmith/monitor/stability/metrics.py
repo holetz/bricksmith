@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN
 from bricksmith.monitor.limits import COLORS, GREEN, INFORMATIONAL, NO_RULE, RED, YELLOW, Light, classify, rank
-from bricksmith.monitor.persistence import CRITICAL, OPEN, PersistencePolicy, alert_spans
+from bricksmith.monitor.persistence import CRITICAL, OPEN, WARNING, AlertSpan, PersistencePolicy, alert_spans
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
 from bricksmith.monitor.stability.config import (
     DISTRIBUTION_METRICS,
@@ -433,8 +433,9 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
 ) -> list[dict[str, Any]]:
     """Replay the status and trend series of every judged metric into alert rows (persistence and trend kinds).
 
-    An alert still ``open`` in ``stored`` whose opening period left the window keeps its identity: the first
-    replayed span of its metric adopts the stored id, opening period, escalation and recurrence.
+    An alert still ``open`` in ``stored`` whose opening period is at or before the window start is carried: the
+    replay resumes it before the first status, so it keeps its id, opening period, escalation and recurrence,
+    and closes after ``close_after`` greens even when the window alone would not open it.
     """
     carried = {
         (str(r["segment"]), str(r["column"]), str(r["metric"]), str(r["kind"])): r
@@ -462,10 +463,19 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
             (TREND, trends[key], trend_policy),
         ):
             first_period = min((p for p, _ in series), default="")
-            for number, span in enumerate(alert_spans(series, policy)):
-                old = carried.get((*key, kind)) if number == 0 else None
-                if old is not None and str(old["opened_period"]) > first_period:
-                    old = None
+            stored_open = carried.get((*key, kind))
+            if stored_open is not None and str(stored_open["opened_period"]) > first_period:
+                stored_open = None  # it opened inside the window, so the replay reproduces it
+            seed = None
+            if stored_open is not None:
+                seed = AlertSpan(
+                    str(stored_open.get("severity") or WARNING),
+                    str(stored_open["opened_period"]),
+                    last_period=str(stored_open.get("last_period") or ""),
+                    last_status=str(stored_open.get("last_status") or ""),
+                )
+            for number, span in enumerate(alert_spans(series, policy, carry=seed)):
+                old = stored_open if number == 0 else None
                 flagged = len(span.flagged)
                 if old is not None:
                     span.opened = str(old["opened_period"])

@@ -241,6 +241,30 @@ def test_open_alert_keeps_its_identity_when_its_opening_leaves_the_window() -> N
     assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]
 
 
+def test_carried_open_alert_closes_instead_of_being_superseded() -> None:
+    # A closed alert leaving the window is spec 106's case, so the history stops at the close.
+    stable = {f"2026-{m:02d}": [1, 2, 1, 2] for m in (1, 2, 3, 4, 8, 9, 10)}
+    drifted = {f"2026-{m:02d}": [2, 2, 2, 2] for m in (5, 6, 7)}
+    history = {**stable, **drifted}
+    cfg = config(max_periods=3, baseline={"kind": "fixed", "start": "2026-01", "end": "2026-04"})
+    store = MemoryStore()
+    seen: dict[str, tuple[str, str, str, str]] = {}
+    months = sorted(history)
+    for count in range(5, len(months) + 1):
+        found, _ = results_of(rows_of({m: history[m] for m in months[:count]}), cfg, store)
+        for kind, items in found.tables.items():
+            store.tables[kind] = merge_rows(kind, store.tables.get(kind, []), items)
+        mine = [a for a in store.tables["alerts"] if a["metric"] == "psi" and a["kind"] == "persistence"]
+        if mine:
+            assert len(mine) == 1
+            alert = mine[0]
+            seen[months[count - 1]] = (alert["alert_id"], alert["state"], alert["closed_period"], alert["last_period"])
+    assert len({identity for identity, *_ in seen.values()}) == 1  # one episode, one identity
+    assert seen["2026-09"][1:] == ("open", "", "2026-09")  # two greens < close_after
+    assert seen["2026-10"][1:] == ("closed", "2026-10", "2026-10")
+    assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]
+
+
 class _SpyStore(MemoryStore):
     """A MemoryStore that records the filters of every read and the rows it returned."""
 
