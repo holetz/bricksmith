@@ -61,13 +61,18 @@ def _utc_text(moment: datetime) -> str:
     return moment.isoformat(timespec="microseconds" if moment.microsecond else "seconds")
 
 
-def _order(row: Mapping[str, Any]) -> tuple[int, datetime | str, str]:
-    """Sort key of a stored action: its UTC instant, or its raw text (before every instant) when unparsable."""
+def _order(row: Mapping[str, Any], id_column: str = "action_id") -> tuple[int, datetime | str, str]:
+    """Sort key of a stored row: its UTC instant, or its raw text (before every instant) when unparsable."""
     raw = str(row.get("created_at") or "")
     moment = _utc_instant(raw) if raw else None
     if moment is None:
-        return (0, raw, str(row.get("action_id") or ""))
-    return (1, moment, str(row.get("action_id") or ""))
+        return (0, raw, str(row.get(id_column) or ""))
+    return (1, moment, str(row.get(id_column) or ""))
+
+
+order_key = _order
+utc_instant = _utc_instant
+utc_text = _utc_text
 
 
 def _check_resolution(action: str, resolution: str, resolutions: tuple[str, ...]) -> None:
@@ -230,4 +235,7 @@ __all__ = [
     "apply_actions",
     "insert_statement",
     "latest_actions",
+    "order_key",
+    "utc_instant",
+    "utc_text",
 ]
