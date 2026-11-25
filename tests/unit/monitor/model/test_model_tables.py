@@ -127,6 +127,46 @@ def test_open_alerts_view_keeps_open_spans_only() -> None:
     assert found == [("a",), ("c",), ("d",)]
 
 
+def _span_history(*, closes: bool) -> sqlite3.Connection:
+    """Three finished runs of one span alert whose last period moves forward (and closes in the last run)."""
+    db = sqlite3.connect(":memory:")
+    for kind in KINDS:
+        _create(db, kind)
+    base = {"model": "m", "model_version": "1", "kind": "persistence", "metric": "psi", "severity": "critical"}
+    span = [("r0", "2025-04", "open"), ("r1", "2025-05", "open"), ("r2", "2025-06", "closed" if closes else "open")]
+    rows: list[dict[str, object]] = [
+        {**base, "run_id": run, "alert_id": "span", "monitoring_period": period, "state": state}
+        for run, period, state in span
+    ]
+    rows.append({**base, "kind": "light", "severity": "warning", "run_id": "r1", "alert_id": "light",
+                 "monitoring_period": "2025-05", "state": "open"})  # fmt: skip
+    _insert(db, ALERTS, rows)
+    _insert(db, RUNS, [
+        {"run_id": f"r{i}", "model": "m", "status": "success", "finished_at": f"2025-0{i + 5}-01T00:00:00"}
+        for i in range(3)
+    ])  # fmt: skip
+    for statement in view_statements("main"):
+        db.execute(statement.replace("CREATE OR REPLACE VIEW", "CREATE VIEW"))
+    return db
+
+
+def test_open_alerts_lists_a_closed_span_no_more_after_a_later_run_closed_it() -> None:
+    db = _span_history(closes=True)
+    found = db.execute("SELECT alert_id, run_id FROM main.model_monitoring_open_alerts ORDER BY 1").fetchall()
+    assert found == [("light", "r1")]
+    by_severity = db.execute("SELECT model, severity, open_alerts FROM main.model_monitoring_open_alerts_by_severity")
+    assert by_severity.fetchall() == [("m", "warning", 1)]
+
+
+def test_open_alerts_lists_a_moving_span_once_in_its_latest_state() -> None:
+    db = _span_history(closes=False)
+    found = db.execute(
+        "SELECT alert_id, run_id, monitoring_period FROM main.model_monitoring_open_alerts ORDER BY 1"
+    ).fetchall()
+    assert found == [("light", "r1", "2025-05"), ("span", "r2", "2025-06")]
+    assert db.execute("SELECT alerts FROM main.model_monitoring_alert_recurrence").fetchone() == (2,)
+
+
 def test_actions_table_is_keyed_by_the_action_and_alerts_carry_the_applied_one() -> None:
     assert KEYS[ACTIONS] == ("model", "action_id") and "run_id" not in SCHEMAS[ACTIONS]
     assert {"alert_id", "action", "reason", "author", "valid_until", "created_at"} <= set(SCHEMAS[ACTIONS])
@@ -240,7 +280,7 @@ def test_a_model_one_period_behind_is_not_monitored_for_the_latest_closing() -> 
 def test_governance_summaries_count_severity_recurrence_and_acceptances() -> None:
     db = _governed()
     open_by = db.execute("SELECT model, severity, open_alerts FROM main.model_monitoring_open_alerts_by_severity")
-    assert open_by.fetchall() == []  # the fixture alerts carry no severity and its latest run closed a
+    assert open_by.fetchall() == [("m", None, 1)]  # the fixture's open alert b has no severity; a was closed
     _insert(db, ALERTS, [
         {"model": "m", "model_version": "1", "run_id": "r2", "alert_id": "z", "monitoring_period": "2026-01",
          "metric": "psi", "severity": "critical", "kind": "persistence", "state": "open", "recurrence": 1,
@@ -250,8 +290,8 @@ def test_governance_summaries_count_severity_recurrence_and_acceptances() -> Non
          "flagged_periods": 1, "opened_period": "2026-01"},
     ])  # fmt: skip
     open_by = db.execute("SELECT model, severity, open_alerts, oldest_opened_period FROM "
-                         "main.model_monitoring_open_alerts_by_severity").fetchall()  # fmt: skip
-    assert open_by == [("m", "critical", 1, "2026-01")]
+                         "main.model_monitoring_open_alerts_by_severity ORDER BY severity").fetchall()  # fmt: skip
+    assert open_by == [("m", None, 1, None), ("m", "critical", 1, "2026-01")]
     recurrence = db.execute("SELECT model, metric, recurring, max_flagged_periods FROM "
                             "main.model_monitoring_alert_recurrence").fetchall()  # fmt: skip
     assert recurrence == [("m", "psi", 1, 3)]
