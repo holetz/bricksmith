@@ -81,8 +81,8 @@ columns and text with very many values are skipped. The reason for each skip is 
 4. **Results.** Every period of the window is judged against its baseline. Results are written for new periods, or
    for the whole window when limits, baseline, trend or persistence changed.
 5. **Alerts.** Status histories are replayed into alerts. A replay produces the same `alert_id`, an open alert whose
-   opening left the window is carried (see Persistence), and other stored alerts it no longer produces become
-   `superseded`.
+   opening left the window is carried (see Persistence), a closed alert whose opening left the window stays closed,
+   and other stored alerts it no longer produces become `superseded`.
 6. **Gate.** The gate is evaluated on the latest period. A failing gate marks the task `failed` with error code
    `stability_gate`, and its dependents become `blocked`. The output itself is already published: the gate protects
    downstream tasks, it does not roll back. The task result (`--json` reports and `task_finished` events) carries a
@@ -164,6 +164,12 @@ An open alert whose opening period has left the window is carried: the replay re
 the window, so it keeps its `alert_id`, escalates and closes on the window's statuses even when the window alone would
 not open it. Because the replay only sees the window, keep `close_after` and `red` at or below `max_periods`: a longer
 streak can never complete inside the window, and a carried alert would then stay open.
+
+A closed alert whose opening period has left the window stays closed: the replay can no longer re-judge it, so it is
+never marked `superseded` and stays in the open and closed alerts. Recurrence spans the window too: an alert that
+opens within `recurrence` periods of the last stored close of the same metric, column, segment and kind is flagged
+and notified as `recurred`. The distance counts the periods of the checked table between that close and the window,
+so pass the whole table, not only the window.
 
 ## Limit rules
 
