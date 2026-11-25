@@ -75,6 +75,22 @@ bricksmith --json monitor evaluate --reference reference.json --data now.jsonl -
 `monitor_frames(current, reference=..., window=...)` (or `baseline=` plus `columns=` to fit on the spot) computes
 over DataFrames or row lists without a project and returns measurements, evaluations and alert events.
 
+## Category and segment spelling
+
+Both engines spell categories and segment names with one canonical text, so a reference, baseline or alert rule
+keyed on one engine matches on the other:
+
+- booleans are `true`/`false`;
+- null and NaN are null: the `null` bin, the `(null)` segment, and an unlabeled row when the label is NaN;
+- doubles are spelled as Python spells them (`10000000.0`, `1e-05`), which is how stored references already keep
+  their categories. The Spark engine matches double categories by value instead of casting them to text, and names
+  segments from their distinct values on the driver.
+
+Migration: earlier releases named boolean segments `True`/`False` on the pure engine (the Spark engine already wrote
+`true`/`false`). Per-segment measurements, baselines and segment-specific alert rules recorded by the pure engine
+under the capitalized names do not match the new names; rename those segment values to `true`/`false`, or let the
+history rebuild from the next runs.
+
 ## Limits
 
 Quantile fitting, AUC and KS collect one small row per distinct value (grouped remotely), so very high-cardinality
