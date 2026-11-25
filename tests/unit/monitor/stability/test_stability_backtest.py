@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 DECLARED: dict[str, Any] = {
     "period": "month",
     "columns": ["amount"],
+    "psi_limits": "fixed",
+    "min_rows_per_bin": 0,
     "persistence": {"immediate_red": True},
     "gate": {"fail_on": ["red"]},
     "limits": {

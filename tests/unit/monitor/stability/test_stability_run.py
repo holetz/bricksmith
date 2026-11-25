@@ -45,6 +45,8 @@ def summary(ctx):
 """
 STABILITY = {
     "period": "month",
+    "psi_limits": "fixed",
+    "min_rows_per_bin": 0,
     "exclude": ["id"],
     "segments": ["channel"],
     "baseline": "previous",

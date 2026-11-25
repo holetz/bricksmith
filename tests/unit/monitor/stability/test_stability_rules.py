@@ -34,7 +34,14 @@ def rows_of(values: Mapping[str, Sequence[object]], segments: Sequence[str] = ()
 
 
 def config(**overrides: Any) -> Any:  # noqa: ANN401 - test helper
-    base = {"period": "month", "columns": {"x": {"edges": [0, 1.5, 3]}}, "min_rows": 0, "baseline": "previous"}
+    base = {
+        "period": "month",
+        "columns": {"x": {"edges": [0, 1.5, 3]}},
+        "min_rows": 0,
+        "psi_limits": "fixed",
+        "min_rows_per_bin": 0,
+        "baseline": "previous",
+    }
     return parse_config({**base, **overrides})
 
 
