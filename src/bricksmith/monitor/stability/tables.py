@@ -52,7 +52,8 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "baseline_rows": "DOUBLE", "in_baseline": "BOOLEAN", "baseline_kind": "STRING", "baseline_label": "STRING",
         "trend_status": "STRING", "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE", "trend_sigma": "DOUBLE",
         "trend_lower": "DOUBLE", "trend_upper": "DOUBLE", "run_id": "STRING",
-        "computed_at": "STRING", "rule_id": "STRING", "rule_version": "INT",
+        "computed_at": "STRING", "rule_id": "STRING", "rule_version": "INT", "baseline_gap": "INT",
+        "settling": "BOOLEAN",
     },
     ALERTS: {
         "dataset": "STRING", "alert_id": "STRING", "version": "INT", "kind": "STRING", "metric": "STRING",

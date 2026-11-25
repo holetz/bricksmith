@@ -37,7 +37,15 @@ def _check(args: argparse.Namespace) -> int:
         tables = {k: list(v) for k, v in loaded.items() if k in ALL_KINDS}
     dataset = args.dataset or config.dataset or args.table or Path(args.data).stem
     periods = [p.strip() for p in (getattr(args, "periods", None) or "").split(",") if p.strip()]
-    result = check(_data(args), config, MemoryStore(tables), dataset=dataset, run_id=args.run_id, reprocess=periods)
+    result = check(
+        _data(args),
+        config,
+        MemoryStore(tables),
+        dataset=dataset,
+        run_id=args.run_id,
+        as_of=getattr(args, "as_of", None),
+        reprocess=periods,
+    )
     if state is not None:
         # A kind the run did not return (revisions while revision is off) is kept as loaded.
         merged = {**tables, **{k: merge_rows(k, tables.get(k, []), rows) for k, rows in result.tables.items()}}
@@ -121,6 +129,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     run.add_argument("--dataset", help="dataset name (default: the declaration's, the table or the file name)")
     run.add_argument("--state", help="local JSON file holding the stability tables; read, then updated")
     run.add_argument("--run-id", default="cli", help="run identity recorded on the rows")
+    run.add_argument("--as-of", help="ISO date the declared cadence is judged at (default: today, UTC)")
     run.set_defaults(handler=_check)
     redo = commands.add_parser(
         "reprocess",
