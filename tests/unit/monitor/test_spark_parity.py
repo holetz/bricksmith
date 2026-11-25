@@ -6,6 +6,7 @@ Skipped where pyspark is missing or cannot start a local session (Databricks Con
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -154,3 +155,37 @@ def test_stability_segment_keys_spell_double_and_nan_alike(spark: Any) -> None: 
     pure, remote = stability_profiles(spark, {"segments": ["seg"]})
     assert keyed(remote) == keyed(pure)
     assert {k[1] for k in keyed(pure)} >= {"", "seg=10000000.0", "seg=1e-05", "seg=0.5", "seg=(null)"}
+
+
+@pytest.mark.parametrize("kind", ["DOUBLE", "FLOAT"])
+@pytest.mark.parametrize("stored", ["0.0", "-0.0"])
+def test_both_zero_signs_are_one_stability_category_on_both_engines(spark: Any, kind: str, stored: str) -> None:  # noqa: ANN401
+    from bricksmith.monitor.bins import BinSpec  # noqa: PLC0415
+    from bricksmith.monitor.stability import parse_config  # noqa: PLC0415
+    from bricksmith.monitor.stability.profile import fit_rows_binning, profile_rows  # noqa: PLC0415
+    from bricksmith.monitor.stability.spark import profile_spark  # noqa: PLC0415
+
+    values = (-0.0, 0.0, 0.5, 0.5, -0.0, 0.0, 2.0)
+    rows = [{"month": m, "rate": v, "seg": v} for m in ("2026-01", "2026-02") for v in values]
+    config = parse_config(
+        {"period": "month", "columns": {"rate": {"type": "categorical"}}, "segments": ["seg"], "max_segments": 50}
+    )
+    periods = ["2026-01", "2026-02"]
+    binning, _ = fit_rows_binning([r for r in rows if r["rate"] != 2.0], config, ["2026-01"], dataset="d", version=1)
+    spec = binning.columns[0]
+    assert "0.0" in spec.categories
+    categories = tuple(stored if c == "0.0" else c for c in spec.categories)
+    binning = dataclasses.replace(
+        binning, columns=(BinSpec(spec.column, spec.kind, categories=categories, method=spec.method, counts={}),)
+    )
+    pure, _ = profile_rows(binning, rows, config, periods, dataset="d", run_id="r")
+    frame = spark.createDataFrame(
+        [(r["month"], r["rate"], r["seg"]) for r in rows], f"month STRING, rate {kind}, seg {kind}"
+    )
+    remote, _ = profile_spark(binning, frame, config, periods, dataset="d", run_id="r")
+    assert keyed(remote) == keyed(pure)
+    got = keyed(pure)
+    assert got["2026-01", "", "rate", f"cat:{stored}"] == 4
+    assert got["2026-01", "", "rate", "unseen"] == 1
+    assert {k[1] for k in got} >= {"", "seg=0.0", "seg=0.5"}
+    assert not any("-0.0" in k[1] for k in got)
