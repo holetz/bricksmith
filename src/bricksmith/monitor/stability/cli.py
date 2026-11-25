@@ -15,7 +15,17 @@ from bricksmith.monitor.cli import _data, _json, _source  # pyright: ignore[repo
 from bricksmith.monitor.stability.backtest import backtest
 from bricksmith.monitor.stability.config import parse_config
 from bricksmith.monitor.stability.engine import MemoryStore, check
-from bricksmith.monitor.stability.tables import ACTIONS, ALL_KINDS, SCHEMAS, merge_rows, table_name, view_statements
+from bricksmith.monitor.stability.marks import MARKS as MARK_NAMES
+from bricksmith.monitor.stability.marks import UNMARKED, effective_marks, mark_row
+from bricksmith.monitor.stability.tables import (
+    ACTIONS,
+    ALL_KINDS,
+    MARKS,
+    SCHEMAS,
+    merge_rows,
+    table_name,
+    view_statements,
+)
 
 if TYPE_CHECKING:
     import argparse
@@ -107,8 +117,92 @@ def _action(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _mark(args: argparse.Namespace) -> int:
+    created = args.created_at or datetime.now(UTC).isoformat(timespec="seconds")
+    unmark = args.command == "unmark"
+    row = mark_row(
+        dataset=args.dataset, period=args.period, mark=UNMARKED if unmark else args.mark, reason=args.reason,
+        author=args.author, created_at=created, segment=args.segment or "", column=args.column or "",
+        metric=args.metric or "", valid_until="" if unmark else args.valid_until or "",
+    )  # fmt: skip
+    payload: dict[str, object] = {"mark": row}
+    lines = [f"mark {row['mark_id']}: {row['mark']} on {row['period']} of {row['dataset']} by {row['author']}"]
+    if args.scope:
+        statement = insert_statement(table_name(args.scope, args.prefix, MARKS), row, tuple(SCHEMAS[MARKS]))
+        payload["statement"] = statement
+        lines.append(statement + ";")
+    if args.state:
+        state = _state_of(args.state)
+        held = [m for m in state.get(MARKS, []) if m.get("mark_id") != row["mark_id"]]
+        Path(args.state).write_text(
+            json.dumps({**state, MARKS: [*held, row]}, indent=1, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        lines.append(f"appended to {args.state}")
+    emit(args, payload, "\n".join(lines))
+    return EXIT_OK
+
+
+def _state_of(path: str) -> dict[str, Any]:
+    state = _json(path)
+    if not isinstance(state, dict):
+        msg = f"{path} must hold a mapping of stability table to rows"
+        raise UsageError(msg)
+    return state
+
+
+def _marks(args: argparse.Namespace) -> int:
+    as_of = args.as_of or datetime.now(UTC).date().isoformat()
+    found = effective_marks(_state_of(args.state).get(MARKS, []), as_of, args.dataset)
+    lines = [f"{len(found)} mark(s) in force on {as_of}"]
+    for m in found:
+        scope = ",".join(f"{c}={m[c]}" for c in ("segment", "column", "metric") if m[c])
+        until = f" until {m['valid_until']}" if m.get("valid_until") else ""
+        lines.append(
+            f"  {m['dataset']} {m['period']} {m['mark']}{' [' + scope + ']' if scope else ''}{until}: {m['reason']}"
+        )
+    emit(args, {"as_of": as_of, "marks": found}, "\n".join(lines))
+    return EXIT_OK
+
+
+def _selectors(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--dataset", required=True, help="the dataset the period belongs to")
+    parser.add_argument("--period", required=True, help="the period, as the table's period column writes it")
+    parser.add_argument("--segment", help="accepted only: narrow the mark to one segment key")
+    parser.add_argument("--column", help="accepted only: narrow the mark to one column")
+    parser.add_argument("--metric", help="accepted only: narrow the mark to one metric")
+    parser.add_argument("--reason", required=True, help="why")
+    parser.add_argument("--author", required=True, help="who decided")
+    parser.add_argument("--created-at", help="timestamp of the decision (default now)")
+    parser.add_argument("--scope", help="catalog.schema of the stability tables: also print the INSERT statement")
+    parser.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
+    parser.add_argument("--state", help="local JSON file holding the stability tables; the row is appended to 'marks'")
+
+
+def _register_marks(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Register ``stability mark|unmark|marks``."""
+    mark = commands.add_parser(
+        "mark",
+        help="mark a period: accepted, excluded (from the fit), regime_change (a new normal) or invalid",
+        parents=[global_parent()],
+    )
+    _selectors(mark)
+    mark.add_argument("--mark", required=True, choices=MARK_NAMES, help="what the period is")
+    mark.add_argument("--valid-until", help="last day (YYYY-MM-DD) the mark holds (default: until unmarked)")
+    mark.set_defaults(handler=_mark)
+    unmark = commands.add_parser(
+        "unmark", help="cancel the mark of a period selector (appends an 'unmarked' row)", parents=[global_parent()]
+    )
+    _selectors(unmark)
+    unmark.set_defaults(handler=_mark)
+    listed = commands.add_parser("marks", help="list the marks in force in a state file", parents=[global_parent()])
+    listed.add_argument("--state", required=True, help="local JSON file holding the stability tables; only read")
+    listed.add_argument("--dataset", help="only the marks of this dataset")
+    listed.add_argument("--as-of", help="the date the marks must hold on (default today)")
+    listed.set_defaults(handler=_marks)
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``stability check|reprocess|backtest|views|action``."""
+    """Register ``stability check|reprocess|backtest|views|action|mark|unmark|marks``."""
     group = subparsers.add_parser(
         "stability", help="check table stability by period and print dashboard views", parents=[global_parent()]
     )
@@ -171,6 +265,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     act.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
     act.add_argument("--state", help="local JSON file holding the stability tables; the row is appended to 'actions'")
     act.set_defaults(handler=_action)
+    _register_marks(commands)
 
 
 __all__ = ["register"]
