@@ -10,6 +10,7 @@ import pytest
 
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.model.actions import action_row
+from bricksmith.monitor.model.config import parse_config
 from bricksmith.monitor.model.report import build_report, render_html, render_markdown
 
 RUNS = [
@@ -109,3 +110,45 @@ def test_a_series_without_numbers_renders_no_chart() -> None:
     state = {"results": [row("r1", "2026-01", "psi", None, "insufficient_volume", reason="too few rows")], "runs": RUNS}
     text = render_html(build_report(state, "m"))
     assert "<svg" not in text and "too few rows" in text
+
+
+def _drifting_state(**extra: Any) -> dict[str, Any]:  # noqa: ANN401
+    """Two red months of one metric: the default policy (red=2) opens an alert a stricter run did not."""
+    results = [
+        row("r1", "2026-02", "psi", 0.3, "red", period_date="2026-02-01", direction="both"),
+        row("r1", "2026-03", "psi", 0.31, "red", period_date="2026-03-01", direction="both"),
+    ]
+    return {"results": results, "runs": RUNS[:1], **extra}
+
+
+def test_report_lists_the_alerts_the_run_stored_not_a_default_policy_replay() -> None:
+    replayed = build_report(_drifting_state(), "m")  # no stored alerts: the default policy replays two reds
+    assert replayed.critical_alerts > 0
+    stored = build_report(_drifting_state(alerts=[]), "m")  # the run, under persistence red=4, stored none
+    assert (stored.alerts, stored.open_alerts, stored.critical_alerts) == ([], 0, 0)
+
+
+def test_report_counts_equal_the_stored_alerts_of_the_latest_run() -> None:
+    alert = {"model": "m", "run_id": "r1", "alert_id": "a1", "severity": "critical", "kind": "persistence",
+             "state": "open", "monitoring_period": "2026-03", "metric": "psi"}  # fmt: skip
+    stale = {**alert, "run_id": "r0", "alert_id": "old"}
+    foreign = {**alert, "model": "other", "alert_id": "x"}
+    report = build_report(_drifting_state(alerts=[alert, stale, foreign]), "m")
+    assert [a.alert_id for a in report.alerts] == ["a1"] and report.critical_alerts == 1
+    close = action_row(model="m", alert_id="a1", action="closed", reason="done", author="ana",
+                       created_at="2026-04-05T00:00:00")  # fmt: skip
+    closed = build_report(_drifting_state(alerts=[alert], actions=[close]), "m")
+    assert closed.alerts[0].state == "closed" and closed.critical_alerts == 0
+
+
+def test_report_replays_with_the_config_persistence_when_no_alerts_are_stored() -> None:
+    def declared(red: int) -> Any:  # noqa: ANN401
+        return parse_config({
+            "model": "m", "period": "month", "score": "score",
+            "references": {"development": {"start": "a", "end": "b"}},
+            "limits": {"psi": {"green": 0.1, "red": 0.2}}, "persistence": {"yellow": 4, "red": red},
+        })  # fmt: skip
+
+    quiet = build_report(_drifting_state(), "m", config=declared(4))
+    assert quiet.critical_alerts == 0 and not [a for a in quiet.alerts if a.kind == "persistence"]
+    assert build_report(_drifting_state(), "m", config=declared(2)).critical_alerts > 0
