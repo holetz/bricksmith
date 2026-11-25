@@ -9,7 +9,16 @@ import pytest
 
 from bricksmith.monitor import Measurement, MonitorError, Reference, fit_reference, measure
 from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN, fit_bins
-from bricksmith.monitor.stats import auc_groups, auc_rank, groups_from_lists, ks_groups, psi
+from bricksmith.monitor.stats import (
+    auc_groups,
+    auc_rank,
+    chi2_ppf,
+    groups_from_lists,
+    ks_groups,
+    psi,
+    psi_critical,
+    psi_terms,
+)
 
 NAN = float("nan")
 
@@ -198,3 +207,19 @@ def test_reference_roundtrip_fingerprint_and_no_refit() -> None:
         Reference.from_dict(tampered)
     with pytest.raises(MonitorError, match="empty window"):
         fit_reference([], {"s": {"bins": 2}}, name="e", version=1)
+
+
+def test_laplace_smoothing_adds_one_pseudo_count_to_every_bin() -> None:
+    terms = psi_terms({"a": 10, "b": 0}, {"a": 5, "b": 5}, smoothing=1.0)
+    assert terms["a"]["reference"] == pytest.approx(11 / 12)
+    assert terms["b"]["reference"] == pytest.approx(1 / 12)
+    assert terms["a"]["current"] == pytest.approx(6 / 12)
+    plain = psi_terms({"a": 10, "b": 0}, {"a": 5, "b": 5})
+    smooth = sum(t["contribution"] for t in terms.values())
+    assert smooth < sum(t["contribution"] for t in plain.values())  # the empty bin no longer dominates
+
+
+def test_psi_critical_lives_in_stats_and_follows_the_chi_square_quantile() -> None:
+    assert chi2_ppf(0.95, 9) == pytest.approx(16.919, abs=1e-3)
+    assert psi_critical(10, 100, 300, 0.05) == pytest.approx(16.919 * (1 / 100 + 1 / 300), abs=1e-3)
+    assert psi_critical(1, 100, 300) is None

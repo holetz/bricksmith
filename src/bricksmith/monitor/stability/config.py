@@ -73,6 +73,14 @@ PREVIOUS = "previous"
 ROLLING = "rolling"
 BASELINE_EXCLUDES = ("red", "none")
 BASELINES = (FIXED, PREVIOUS, ROLLING)
+#: ``psi_limits``: the declared PSI limits as they are, or raised to the sampling-noise floor of the sample sizes.
+SAMPLE_SIZE = "sample_size"
+PSI_LIMITS = (FIXED, SAMPLE_SIZE)
+#: ``psi_smoothing``: how empty bins are kept from dominating the index: the ``epsilon`` share floor or Laplace counts.
+EPSILON_FLOOR = "epsilon"
+LAPLACE = "laplace"
+PSI_SMOOTHINGS = (EPSILON_FLOOR, LAPLACE)
+DEFAULT_MIN_ROWS_PER_BIN = 10
 GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
 GATE_PERIODS = ("latest", "profiled")
 TABLES = ("binnings", "profiles", "results", "alerts", "runs")
@@ -80,6 +88,7 @@ KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "trend_directions", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
+    "psi_limits", "min_rows_per_bin", "psi_smoothing",
     "noise", "cadence", "expected_by", "settle_periods", "settle_days",
     "history", "history_periods", "owner", "domain", "criticality", "suppress_downstream",
 })  # fmt: skip
@@ -343,6 +352,9 @@ class StabilityConfig:
     rules: tuple[LimitRule, ...] = ()
     notify: NotifyPolicy | None = None
     revision: bool = False
+    psi_limits: str = SAMPLE_SIZE
+    min_rows_per_bin: int = DEFAULT_MIN_ROWS_PER_BIN
+    psi_smoothing: str = EPSILON_FLOOR
     noise: NoiseBudget | None = None
     cadence: str = "none"
     expected_by: int = 0
@@ -416,6 +428,7 @@ class StabilityConfig:
             data["notify"] = self.notify.to_dict()
         if self.revision:
             data["revision"] = True
+        data.update(self._psi_options())
         for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
             if getattr(self, name) not in ("none", 0):
                 data[name] = getattr(self, name)
@@ -433,6 +446,17 @@ class StabilityConfig:
         """Return the ownership and suppression keys that differ from their defaults."""
         defaults = (("owner", ""), ("domain", ""), ("criticality", "medium"), ("suppress_downstream", True))
         return {name: getattr(self, name) for name, default in defaults if getattr(self, name) != default}
+
+    def _psi_options(self) -> dict[str, Any]:
+        """Return the PSI options that differ from their defaults (so default declarations serialize as before)."""
+        options: dict[str, Any] = {}
+        if self.psi_limits != SAMPLE_SIZE:
+            options["psi_limits"] = self.psi_limits
+        if self.min_rows_per_bin != DEFAULT_MIN_ROWS_PER_BIN:
+            options["min_rows_per_bin"] = self.min_rows_per_bin
+        if self.psi_smoothing != EPSILON_FLOOR:
+            options["psi_smoothing"] = self.psi_smoothing
+        return options
 
     def _base_dict(self) -> dict[str, Any]:
         return {
@@ -602,6 +626,14 @@ def _inference(value: object) -> InferenceOptions:
     return InferenceOptions(**value)
 
 
+def _choice(data: dict[str, Any], key: str, default: str, allowed: tuple[str, ...]) -> str:
+    value = data.get(key, default)
+    if value not in allowed:
+        msg = f"{key} must be one of {', '.join(allowed)}, got {value!r}"
+        raise _fail(msg)
+    return str(value)
+
+
 def _revision(value: object) -> bool:
     if value is None:
         return False
@@ -745,6 +777,9 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             rules=_rules(data.get("rules"), root),
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
+            psi_limits=_choice(data, "psi_limits", SAMPLE_SIZE, PSI_LIMITS),
+            min_rows_per_bin=_int(data, "min_rows_per_bin", DEFAULT_MIN_ROWS_PER_BIN, 0),
+            psi_smoothing=_choice(data, "psi_smoothing", EPSILON_FLOOR, PSI_SMOOTHINGS),
             cadence=_cadence(data.get("cadence")),
             expected_by=_int(data, "expected_by", 0, 0),
             settle_periods=_int(data, "settle_periods", 0, 0),

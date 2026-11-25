@@ -86,7 +86,17 @@ def _check(  # noqa: PLR0913 - one keyword per scenario input
     data_version: int | None = None,
     **declared: object,
 ) -> CheckResult:
-    config = parse_config({"period": "month", "min_rows": 10, "baseline": "previous", "history": True, **declared})
+    config = parse_config(
+        {
+            "period": "month",
+            "min_rows": 10,
+            "psi_limits": "fixed",
+            "min_rows_per_bin": 0,
+            "baseline": "previous",
+            "history": True,
+            **declared,
+        }
+    )
     return check(
         rows, config, store, dataset="orders", run_id=run_id, now=now, reprocess=reprocess or (),
         data_version=data_version,
@@ -117,7 +127,7 @@ def test_results_history_keeps_the_earlier_judgment_after_a_reprocess_turns_a_pe
 
 
 def test_results_history_is_off_by_default() -> None:
-    config = parse_config({"period": "month", "min_rows": 10})
+    config = parse_config({"period": "month", "min_rows": 10, "psi_limits": "fixed", "min_rows_per_bin": 0})
     result = check(_rows(), config, MemoryStore(), dataset="orders", run_id="r1")
     assert "results_history" not in result.tables and "alert_events" not in result.tables
 
@@ -238,7 +248,8 @@ def test_hook_writes_both_history_tables_when_declared(tmp_path: Path) -> None:
             from bricksmith.tasks import task
 
             @task(kind="table", outputs="orders", metadata={"stability": {
-                "period": "month", "min_rows": 10, "baseline": "previous", "history": True}})
+                "period": "month", "min_rows": 10, "psi_limits": "fixed", "min_rows_per_bin": 0,
+                "baseline": "previous", "history": True}})
             def orders(ctx):
                 ctx.write("orders", [
                     {"month": f"2026-{m:02d}", "amount": float(i % 20) + i * 0.013}
