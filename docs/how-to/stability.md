@@ -58,6 +58,8 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
 | `gate` | `{fail_on: [], on_error: "warn", periods: "latest"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`; `periods` takes `latest` or `profiled` (see [Backfills and reprocessing](#backfills-and-reprocessing)). |
 | `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity}`. See [Notifications](#notifications). |
+| `cadence`, `expected_by` | `none`, `0` | Expected period cadence (`day`, `week`, `month`) and the whole days after a period ends by which its data is due. See [Cadence](#cadence-late-periods-and-gaps). |
+| `settle_periods`, `settle_days` | `0`, `0` | The latest N periods, or the periods ending within N days of `as_of`, are still receiving data: judged and shown, never a baseline, trend history, alert or gate input. `settle_days` needs a `cadence`. |
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
 | `psi_limits` | `sample_size` | `sample_size` raises the PSI limits to the sampling-noise floor of the sample sizes; `fixed` judges the declared limits as they are. See [Small samples](#small-samples-and-psi). |
 | `min_rows_per_bin` | `10` | A distribution metric needs `max(min_rows, min_rows_per_bin × bins)` rows, else it is `insufficient_volume`. `0` turns the per-bin rule off. |
@@ -133,6 +135,32 @@ green or `insufficient_volume`. To keep the previous behavior, declare `psi_limi
 
 Dry runs and failed tasks skip the check. Stability writes to a shared table are serialized per process and retried
 on concurrent-modification conflicts.
+
+## Cadence, late periods and gaps
+
+Without a `cadence`, periods are whatever text values the table holds, and a latest period that never arrives is
+invisible. Declare `cadence` (`day`, `week` or `month`) and the check reads the periods as dates (the same formats as
+`period_date`; a table whose periods are not dates is refused) and compares them with the calendar:
+
+- A period is due once `as_of` is after its end plus `expected_by` days. `as_of` is the `as_of` argument of the check
+  (`bricksmith stability check --as-of 2026-04-10`), by default the date of the run.
+- `period_missing`: a due period between the first data period and the expected latest one has no rows. It is
+  written in the text format of the data (`2026-02`, `202602`, `2026-02-01`).
+- `period_late`: the expected latest period has no rows. It becomes the check's latest period, so the gate counts it.
+- Both are table-level results (`segment` and `column` empty), value `1`, red. Limits can be overridden under
+  `limits` like any metric. When the period arrives later, its stored result is rewritten green.
+- Results carry `baseline_gap`: the number of calendar periods without rows between the earliest baseline period and
+  the judged period. `previous` and `rolling` baselines already pick among the periods that exist, so they skip the
+  gap; `baseline_gap` says that they did.
+- Results carry `settling`. A settling period is judged and shown, but is never a baseline period, never enters a
+  trend history, opens no alert and is not counted by the gate. `settle_periods` marks the latest N periods and
+  `settle_days` the periods ending within N days of `as_of`.
+
+```python
+"stability": {"period": "month", "cadence": "month", "expected_by": 5, "settle_periods": 1}
+```
+
+The quality freshness check stays the tool for row-level timestamps.
 
 ## Notifications
 

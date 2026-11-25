@@ -36,7 +36,11 @@ COLUMN_METRICS = (PSI, NULL_RATE, NULL_RATE_DELTA, UNSEEN_RATE, UNSEEN_RATE_DELT
 TABLE_METRICS = (ROW_COUNT, VOLUME_CHANGE, WEIGHT_CHANGE)
 #: Metrics comparing a period with its own first publication; judged only when ``revision`` is declared.
 REVISION_METRICS = (REVISION_ROW_CHANGE, REVISION_PSI, REVISION_MEAN_SHIFT)
-METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS)
+PERIOD_MISSING = "period_missing"
+PERIOD_LATE = "period_late"
+#: Metrics judged against the expected cadence; written only when ``cadence`` is declared.
+CADENCE_METRICS = (PERIOD_MISSING, PERIOD_LATE)
+METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS, *CADENCE_METRICS)
 #: Metrics computed from bin shares, so too few rows make them unreliable (``min_rows``).
 DISTRIBUTION_METRICS = frozenset({
     PSI, NULL_RATE_DELTA, UNSEEN_RATE_DELTA, MEAN_SHIFT, REVISION_PSI, REVISION_MEAN_SHIFT,
@@ -55,6 +59,12 @@ REVISION_LIMITS: dict[str, Limits] = {
     REVISION_PSI: Limits(0.05, 0.10, HIGHER),
     REVISION_MEAN_SHIFT: Limits(0.10, 0.25, BOTH),
 }
+#: Used only for the cadence metrics (value 1 when a period is missing or late), so serialized limits stay.
+CADENCE_LIMITS: dict[str, Limits] = {
+    PERIOD_MISSING: Limits(0.0, 0.5, HIGHER),
+    PERIOD_LATE: Limits(0.0, 0.5, HIGHER),
+}
+CADENCES = ("day", "week", "month", "none")
 DEFAULT_TREND_METRICS = (PSI, VOLUME_CHANGE)
 #: Trend direction of the metrics that carry no limits; a limit's own direction (declared, per column or by rule) wins.
 DEFAULT_TREND_DIRECTIONS: dict[str, str] = {ROW_COUNT: BOTH, MEAN: BOTH, NULL_RATE: HIGHER, UNSEEN_RATE: HIGHER}
@@ -79,6 +89,7 @@ KEYS = frozenset({
     "column_limits", "trend", "trend_metrics", "trend_directions", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
     "psi_limits", "min_rows_per_bin", "psi_smoothing",
+    "cadence", "expected_by", "settle_periods", "settle_days",
     "history", "history_periods",
 })  # fmt: skip
 OPENED = "opened"
@@ -249,6 +260,10 @@ class StabilityConfig:
     psi_limits: str = SAMPLE_SIZE
     min_rows_per_bin: int = DEFAULT_MIN_ROWS_PER_BIN
     psi_smoothing: str = EPSILON_FLOOR
+    cadence: str = "none"
+    expected_by: int = 0
+    settle_periods: int = 0
+    settle_days: int = 0
     history: bool = False
     history_periods: int = 0
 
@@ -266,7 +281,9 @@ class StabilityConfig:
         override = self.column_limits.get(column, {})
         if metric in override:
             return override[metric]
-        return self.limits[metric] if metric in self.limits else REVISION_LIMITS.get(metric)
+        if metric in self.limits:
+            return self.limits[metric]
+        return REVISION_LIMITS.get(metric) or CADENCE_LIMITS.get(metric)
 
     def trend_direction(self, metric: str) -> str:
         """Return the trend direction of a metric without limits: the declared one, else the default, else ``""``."""
@@ -317,6 +334,9 @@ class StabilityConfig:
             data["min_rows_per_bin"] = self.min_rows_per_bin
         if self.psi_smoothing != EPSILON_FLOOR:
             data["psi_smoothing"] = self.psi_smoothing
+        for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
+            if getattr(self, name) not in ("none", 0):
+                data[name] = getattr(self, name)
         if self.history:
             data["history"] = True
             if self.history_periods:
@@ -510,6 +530,21 @@ def _revision(value: object) -> bool:
     return value
 
 
+def _cadence(value: object) -> str:
+    if value is None:
+        return "none"
+    if value not in CADENCES:
+        msg = f"cadence must be one of {', '.join(CADENCES)}, got {value!r}"
+        raise _fail(msg)
+    return str(value)
+
+
+def _check_cadence(config: StabilityConfig) -> None:
+    if config.cadence == "none" and (config.expected_by or config.settle_days):
+        msg = "expected_by and settle_days need a cadence (day, week or month)"
+        raise _fail(msg)
+
+
 def _history(data: dict[str, Any]) -> tuple[bool, int]:
     value = data.get("history")
     if value is not None and not isinstance(value, bool):
@@ -604,10 +639,15 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             psi_limits=_choice(data, "psi_limits", SAMPLE_SIZE, PSI_LIMITS),
             min_rows_per_bin=_int(data, "min_rows_per_bin", DEFAULT_MIN_ROWS_PER_BIN, 0),
             psi_smoothing=_choice(data, "psi_smoothing", EPSILON_FLOOR, PSI_SMOOTHINGS),
+            cadence=_cadence(data.get("cadence")),
+            expected_by=_int(data, "expected_by", 0, 0),
+            settle_periods=_int(data, "settle_periods", 0, 0),
+            settle_days=_int(data, "settle_days", 0, 0),
             trend_directions=_trend_directions(data.get("trend_directions")),
             history=history,
             history_periods=history_periods,
         )
+        _check_cadence(config)
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
         raise _fail(msg) from None
@@ -631,11 +671,16 @@ def parse_declarations(value: object, root: Path | str | None = None) -> tuple[S
 
 __all__ = [
     "BASELINES",
+    "CADENCES",
+    "CADENCE_LIMITS",
+    "CADENCE_METRICS",
     "COLUMN_METRICS",
     "DEFAULT_LIMITS",
     "ESCALATED",
     "METRICS",
     "OPENED",
+    "PERIOD_LATE",
+    "PERIOD_MISSING",
     "RECURRED",
     "REVISION_LIMITS",
     "REVISION_METRICS",
