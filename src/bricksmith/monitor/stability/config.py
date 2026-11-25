@@ -137,7 +137,7 @@ KEYS = frozenset({
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
     "auto_columns", "psi_limits", "min_rows_per_bin", "psi_smoothing",
     "noise", "cadence", "expected_by", "settle_periods", "settle_days",
-    "history", "history_periods", "keys", "distinct", "owner", "domain", "criticality", "suppress_downstream",
+    "history", "history_periods", "keys", "distinct", "owner", "domain", "criticality", "suppress_downstream", "views",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
@@ -412,6 +412,7 @@ class StabilityConfig:
     history_periods: int = 0
     keys: tuple[str, ...] = ()
     distinct: tuple[str, ...] = ()
+    views: bool = False
     owner: str = ""
     domain: str = ""
     criticality: str = "medium"
@@ -481,8 +482,7 @@ class StabilityConfig:
             data["rules"] = [r.to_dict() for r in self.rules]
         if self.notify is not None:
             data["notify"] = self.notify.to_dict()
-        if self.revision:
-            data["revision"] = True
+        data.update({name: True for name in ("revision", "views") if getattr(self, name)})
         data.update(self._psi_options(), **self._scan_options())
         for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
             if getattr(self, name) not in ("none", 0):
@@ -750,6 +750,13 @@ def _history(data: dict[str, Any]) -> tuple[bool, int]:
     return bool(value), periods
 
 
+def _views(value: object) -> bool:
+    if value is not None and not isinstance(value, bool):
+        msg = f"views must be true or false, got {value!r}"
+        raise _fail(msg)
+    return bool(value)
+
+
 def _text(data: dict[str, Any], key: str) -> str:
     value = data.get(key, "")
     if value is None:
@@ -871,6 +878,7 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             history_periods=history_periods,
             keys=_names(data.get("keys", []), "keys"),
             distinct=_names(data.get("distinct", []), "distinct"),
+            views=_views(data.get("views")),
             owner=_text(data, "owner"),
             domain=_text(data, "domain"),
             criticality=_criticality(data.get("criticality")),

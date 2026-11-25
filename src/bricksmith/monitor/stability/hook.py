@@ -32,6 +32,7 @@ from bricksmith.monitor.stability.tables import (
     merge_rows,
     table_name,
     to_frame,
+    view_statements,
     write_options,
 )
 
@@ -210,6 +211,25 @@ def delta_version(spark: Any, physical: str) -> int | None:  # noqa: ANN401 - a 
         return None
 
 
+def create_views(spark: Any, declaration: Declaration) -> list[str]:  # noqa: ANN401 - a Spark session
+    """Create the dashboard views of a declaration with ``views`` on; return the errors of the views that failed.
+
+    The statements are ``CREATE OR REPLACE VIEW``, so a rerun is idempotent. A failure is returned, never raised: the
+    rows are already stored and a dashboard view cannot fail the check.
+    """
+    config = declaration.config
+    if not config.views or spark is None:
+        return []
+    scope = config.scope or declaration.physical.rsplit(".", 1)[0]
+    failed: list[str] = []
+    for statement in view_statements(scope, config.prefix):
+        try:
+            spark.sql(statement)
+        except Exception as error:  # noqa: BLE001 - a view is a convenience, never a reason to fail the check
+            failed.append(f"{statement.split(' AS', 1)[0].rsplit(' ', 1)[-1]}: {error}")
+    return failed
+
+
 def _check_one(  # noqa: PLR0913 - the task's context, its declaration, the run's delivery and its upstream
     ctx: TaskContext,
     declaration: Declaration,
@@ -235,10 +255,13 @@ def _check_one(  # noqa: PLR0913 - the task's context, its declaration, the run'
     for kind in declaration.tables:
         if result.tables[kind] or not store.exists(kind):
             _write(ctx, store, kind, result.tables[kind])  # an empty write creates the table for dashboards
+    view_errors = create_views(spark, declaration)
     if notifier is not None:
         for event in result.notifications:
             notifier.notify(event)  # never raises: delivery cannot fail the task, and runs after the rows are stored
     outcome = result.outcome
+    if view_errors:
+        outcome = replace(outcome, message=f"{outcome.message} (views not created: {'; '.join(view_errors)})")
     return Outcome(**{**outcome.to_dict(), "output": declaration.output})
 
 
@@ -298,6 +321,7 @@ __all__ = [
     "KEY",
     "SCHEMAS",
     "Declaration",
+    "create_views",
     "declarations",
     "delta_version",
     "incidents_of",
