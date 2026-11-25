@@ -636,6 +636,25 @@ def _schema_results(
     return schema_results(ctx, period, drift=drift, label=label, note=note, missing=absent, returned=returned)
 
 
+def _bind(  # noqa: PLR0913 - one keyword per binning input
+    data: Any,  # noqa: ANN401 - rows or DataFrame
+    config: StabilityConfig,
+    store: Store,
+    periods: Sequence[str],
+    *,
+    dataset: str,
+    source: str,
+    run_id: str,
+    now: str,
+) -> tuple[Schema, Active, list[str]]:
+    """Return the table schema, the active binning and the monitored columns the table no longer has."""
+    schema = _schema(data)
+    active = _active_binning(
+        data, config, store, periods, dataset=dataset, source=source, run_id=run_id, now=now, schema=schema
+    )
+    return schema, active, missing_columns(active.binning, schema)
+
+
 def check(  # noqa: PLR0913 - one keyword per documented input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -661,12 +680,9 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         msg = f"stability: {dataset} has no rows with a {config.period!r} period"
         raise MonitorError(msg)
     redo = reprocessed_periods(config, periods, reprocess, skip_unknown=skip_unknown)
-    schema = _schema(data)
-    active = _active_binning(
-        data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started,
-        schema=schema,
-    )  # fmt: skip
-    absent = missing_columns(active.binning, schema)
+    schema, active, absent = _bind(
+        data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started
+    )
     binning, binning_rows, skipped = live_binning(active.binning, absent), active.rows, active.skipped
     stored_profiles = store.rows(
         PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
