@@ -183,6 +183,38 @@ run_plan(plan, project_root=root, execution=execution, table_io=io, reprocess=["
 not only the latest, so a reprocessed older period that turns red fails the task. The default `latest` is
 unchanged. `stability_runs.periods_reprocessed` records the reprocessed periods of a run (empty when none).
 
+## Judgment history
+
+The results, alerts and runs tables are merged on their keys: a reprocess, a refresh or a judgment change
+overwrites what was reported before. To answer "what did the monitor say about 2026-03 when we published it?",
+declare `history: true`. Two append-only tables are added, written the same way as `stability_revisions`:
+
+```python
+metadata = {"stability": {"period": "month", "history": True, "history_periods": 12}}
+```
+
+- `stability_results_history` holds, for every run, the results that run emitted, plus `judged_at` (the run's
+  start), `judgment_fingerprint` (the judgment version: the declaration and the human actions that decided the
+  colors) and `data_version` (the Delta version of the monitored table the run read; empty when it cannot be read).
+  The key includes `run_id`, so a backfill or a limits change adds an evaluation instead of replacing one. A judgment
+  is identified by period, run, judgment version and data version.
+- `stability_alert_events` records alert transitions: `opened`, `escalated`, `closed`, `superseded` and
+  `action_applied` (once per human action, with its `action_id` and `resolution`). A replay that changes nothing
+  writes nothing, and the rows feed response-time measures next to `stability_alert_response`.
+
+`history_periods` (default 0, every emitted period) limits each run to appending the history of the most recent N
+periods of its window. It bounds the growth per run; nothing already written is deleted.
+
+Read the judgment that stood at a date with the as-of query. A view cannot take a date, so it is generated on
+demand: per period, segment, column and metric, the latest judgment made up to that date.
+
+```python
+from bricksmith.monitor.stability.tables import as_of_statement, results_as_of
+
+sql = as_of_statement("catalog.schema", "2026-03-31")  # a date covers its whole day; a UTC datetime also works
+rows = results_as_of(history_rows, "2026-03-31")  # the same rule over rows in memory
+```
+
 ## Human actions
 
 Alerts are rebuilt on every run, so what people decide about them lives in the append-only `stability_actions`
@@ -372,6 +404,8 @@ which reports never use.
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
 | `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
+| `stability_results_history` | dataset, run_id, version, period, segment, column, metric | only with `history`: the judged columns of `stability_results`, run_id, judged_at, judgment_fingerprint, data_version; append-only |
+| `stability_alert_events` | dataset, alert_id, event, run_id, action_id | only with `history`: period, severity, state, resolution, message, occurred_at; one row per alert transition |
 | `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed |
 
 Table-level metrics use column `""`, and the whole population uses segment `""` (label `(all)`). Segment keys are
