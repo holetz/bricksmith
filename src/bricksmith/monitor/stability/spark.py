@@ -47,7 +47,7 @@ _PLAIN_HIGH = 1e7
 
 
 def _float_text(df: DataFrame, name: str) -> Column:
-    """Spell a float/double column like ``segment_text``: ``str(float)``, NaN as null.
+    """Spell a float/double column like ``segment_text``: ``str(float)``, NaN as null, either zero ``0.0``.
 
     Inside ``[1e-3, 1e7)`` the string cast spells like Python; the few finite values outside that range and the
     infinities are collected and spelled by ``str``.
@@ -57,7 +57,7 @@ def _float_text(df: DataFrame, name: str) -> Column:
     magnitude = f.abs(value)
     tiny = (magnitude < _PLAIN_LOW) & (value != 0)
     outside = magnitude.isNotNull() & ~f.isnan(value) & ((magnitude >= _PLAIN_HIGH) | tiny)
-    expr = f.when(value.isNull() | f.isnan(value), f.lit(None).cast("string"))
+    expr = f.when(value.isNull() | f.isnan(value), f.lit(None).cast("string")).when(value == 0, f.lit("0.0"))
     values = [r["v"] for r in df.where(outside).select(value.alias("v")).distinct().collect()]
     for number in values:
         expr = expr.when(value == f.lit(number), f.lit(str(number)))
