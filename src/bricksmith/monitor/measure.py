@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor import stats
-from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN, is_null
+from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN, category_text, is_null
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -241,8 +241,8 @@ def in_window(rows: Sequence[Mapping[str, Any]], window: Mapping[str, str] | Non
 
 
 def segment_name(value: object) -> str:
-    """Return the segment label of a value (``(null)`` for null)."""
-    return NULL_SEGMENT if is_null(value) else str(value)
+    """Return the segment label of a value: ``(null)`` for null or NaN, else the ``category_text`` spelling."""
+    return NULL_SEGMENT if is_null(value) else category_text(value)
 
 
 def measure_rows(
