@@ -123,3 +123,15 @@ def test_revision_reports_each_reprocessed_period_against_its_first_publication(
     assert found[("2026-02", "amount", "revision_psi")]["status"] == "red"
     assert found[("2026-03", "amount", "revision_psi")]["status"] == "green"
     assert fixed.tables["revisions"] == []  # the first publication is never rewritten
+
+
+def test_engine_reprocess_check_takes_ranges_and_can_skip_what_the_data_lacks() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows(), store, "r1"))
+    ranged = _check(_rows("2026-02"), store, "r2", reprocess=["2026-02..2026-03"])
+    assert ranged.tables["runs"][0]["periods_reprocessed"] == "2026-02,2026-03"
+    config = parse_config({"period": "month", "min_rows": 10})
+    kept = check(
+        _rows(), config, store, dataset="orders", run_id="r3", reprocess=["2026-02", "2030-01"], skip_unknown=True
+    )
+    assert kept.tables["runs"][0]["periods_reprocessed"] == "2026-02"

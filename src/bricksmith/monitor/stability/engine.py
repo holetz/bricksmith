@@ -278,20 +278,31 @@ def _loaded_periods(config: StabilityConfig, binning: Reference, periods: Sequen
     return sorted(loaded)
 
 
-def reprocessed_periods(config: StabilityConfig, periods: Sequence[str], reprocess: Sequence[str]) -> list[str]:
-    """Return the periods to re-profile, sorted and unique; each must be a period of the data inside the window.
+def reprocessed_periods(
+    config: StabilityConfig, periods: Sequence[str], reprocess: Sequence[str], *, skip_unknown: bool = False
+) -> list[str]:
+    """Return the periods to re-profile, sorted and unique.
 
-    The ``max_periods`` window bounds how much of a table a reprocess may rescan.
+    Each item is a period or an inclusive ``first..last`` range of the data's periods. The ``max_periods`` window
+    bounds how much of a table a reprocess may rescan: a period of the data outside it, or not in the data at all,
+    is an error, or is dropped with ``skip_unknown`` (the runner hands one request to every declaring task).
     """
-    window = set(periods[-config.max_periods :])
-    unknown = sorted(set(reprocess) - window)
-    if unknown:
+    window = list(periods[-config.max_periods :])
+    chosen: set[str] = set()
+    unknown: list[str] = []
+    for item in reprocess:
+        first, sep, last = item.partition("..")
+        found = [p for p in window if first <= p <= last] if sep else [p for p in window if p == item]
+        chosen.update(found)
+        if not found:
+            unknown.append(item)
+    if unknown and not skip_unknown:
         msg = (
-            f"stability: cannot reprocess {', '.join(unknown)}: not a period of the data inside the last "
+            f"stability: cannot reprocess {', '.join(sorted(unknown))}: no such period of the data inside the last "
             f"{config.max_periods} periods"
         )
         raise MonitorError(msg)
-    return sorted(set(reprocess))
+    return sorted(chosen)
 
 
 def _plan_periods(
@@ -498,18 +509,20 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     physical: str = "",
     now: str | None = None,
     reprocess: Sequence[str] = (),
+    skip_unknown: bool = False,
 ) -> CheckResult:
     """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write.
 
     ``reprocess`` names periods rewritten since their stored profile (a backfill or a correction): they are
     profiled again with the declared refresh range, the whole window is judged again and the alerts are replayed.
+    An item is a period or a ``first..last`` range; ``skip_unknown`` drops what the data does not have.
     """
     started = now or _now()
     periods = _engine_periods(data, config.period)
     if not periods:
         msg = f"stability: {dataset} has no rows with a {config.period!r} period"
         raise MonitorError(msg)
-    redo = reprocessed_periods(config, periods, reprocess)
+    redo = reprocessed_periods(config, periods, reprocess, skip_unknown=skip_unknown)
     binning, binning_rows, skipped = _active_binning(
         data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started
     )
