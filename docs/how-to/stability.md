@@ -142,7 +142,13 @@ lies inside the refresh range (the `refresh_periods` most recent periods of stor
 even if it vanished) and the data no longer has rows for it, each snapshotted segment gets
 `revision_row_change = -1.0`, judged by the configured limits like any revision result, and the period's current
 profile is replaced by zero-count rows of the run. When the vanished period is the newest one, it is the latest
-period of the run, so its red results count for the gate. Periods older than the refresh range are not judged. The check reads stored profiles, not the Delta history
+period of the run, so its red results count for the gate. Periods older than the refresh range are not judged.
+
+The revision run **reports** the emptied period in full: `row_count` is 0 and its other metrics are recomputed, so
+`stability_results`, the `latest` view and `dataset_status` never keep the stale first-publication count. Its
+zero-count profile is **never a baseline** for another period under the `previous` and `rolling` baselines: they skip
+it and take the next eligible period, so an untouched period is judged the same with `revision` on or off. The
+`fixed` baseline is unchanged. The check reads stored profiles, not the Delta history
 of the table, so it works on every engine.
 
 ## Metrics and default limits

@@ -221,6 +221,50 @@ def test_engine_a_vanished_period_is_not_reported_without_revision() -> None:
     assert not [r for r in second.tables["results"] if r["metric"].startswith("revision_")]
 
 
+def _metric(rows: list[dict], period: str, metric: str, column: str = "") -> list[dict]:
+    return [r for r in rows if r["period"] == period and r["metric"] == metric and r["column"] == column]
+
+
+def test_engine_an_emptied_middle_period_reports_zero_rows() -> None:
+    store, second = _vanish(3, "2026-02", 2)
+    for rows in (second.tables["results"], store.tables["results"]):
+        counts = _metric(rows, "2026-02", "row_count")
+        assert [(r["segment"], r["value"]) for r in counts] == [("", 0.0)]
+        assert [r["value"] for r in _metric(rows, "2026-02", "volume_change")] == [-1.0]
+
+
+def test_engine_an_emptied_latest_period_replaces_the_stale_count_in_stored_results() -> None:
+    store, second = _vanish(3, "2026-03", 2)
+    assert [r["value"] for r in _metric(second.tables["results"], "2026-03", "row_count")] == [0.0]
+    stored = _metric(store.tables["results"], "2026-03", "row_count")
+    assert [r["value"] for r in stored] == [0.0]
+    assert second.outcome.latest_period == "2026-03"
+
+
+def _later_period(baseline: object, *, revision: bool) -> list[dict]:
+    store = MemoryStore()
+    declared: dict[str, object] = {"baseline": baseline, "revision": revision}
+    _commit(store, _check(_rows(3), store, "r1", **declared))
+    second = _check(_without(_rows(3), "2026-02"), store, "r2", **declared)
+    return [r for r in second.tables["results"] if r["period"] == "2026-03" and not r["metric"].startswith("revision_")]
+
+
+@pytest.mark.parametrize("baseline", ["previous", {"kind": "rolling", "periods": 2}])
+def test_engine_an_emptied_period_is_never_a_baseline_for_previous_and_rolling(baseline: object) -> None:
+    on = _later_period(baseline, revision=True)
+    off = _later_period(baseline, revision=False)
+    assert on and {(r["metric"], r["column"]): (r["value"], r["status"]) for r in on} == {
+        (r["metric"], r["column"]): (r["value"], r["status"]) for r in off
+    }
+    volume = _metric(on, "2026-03", "volume_change")
+    assert [(r["value"], r["status"]) for r in volume] == [(0.0, "green")]
+    assert not [r for r in on if r["status"] == "no_baseline"]
+
+
+def test_engine_the_fixed_baseline_ignores_an_emptied_period() -> None:
+    assert _later_period("fixed", revision=True) == _later_period("fixed", revision=False)
+
+
 _TASKS = """
 from bricksmith.tasks import task
 

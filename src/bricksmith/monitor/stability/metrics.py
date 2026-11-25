@@ -43,7 +43,7 @@ from bricksmith.monitor.stats import psi_terms
 from bricksmith.monitor.trend import trend_check
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Collection, Iterable, Mapping, Sequence
 
     from bricksmith.monitor.reference import Reference
     from bricksmith.monitor.stability.config import StabilityConfig
@@ -251,15 +251,22 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     window: Sequence[str],
     run_id: str = "",
     computed_at: str = "",
+    emptied: Collection[str] = (),
 ) -> Computed:
-    """Compute the result rows of every period of ``window`` (in order) from the stored profiles."""
+    """Compute the result rows of every period of ``window`` and ``emptied`` (in order) from the stored profiles.
+
+    An ``emptied`` period is reported like any other, but its zero-count profile is never a baseline period for
+    another period: the ``previous`` and ``rolling`` rules skip it and take the next eligible period.
+    """
     history = index_profiles(binning, profiles)
     ctx = _Context(config, binning, dataset, run_id, computed_at)
     out = Computed()
     numeric = {s.column: s.kind == "numeric" for s in binning.columns}
-    in_window = [p for p in history.periods if p in set(window)]
+    in_window = [p for p in history.periods if p in {*window, *emptied}]
+    eligible = [p for p in history.periods if p not in emptied]
     for period in in_window:
-        wanted = baseline_periods(config, binning, history.periods, period)
+        ordered = sorted([*eligible, period]) if period in emptied else eligible
+        wanted = baseline_periods(config, binning, ordered, period)
         for segment in sorted(history.rows):
             if period not in history.rows[segment]:
                 continue
