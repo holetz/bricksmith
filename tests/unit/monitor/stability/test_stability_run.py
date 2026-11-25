@@ -79,11 +79,12 @@ def test_plan_lists_the_stability_targets(tmp_path: Path) -> None:
         "main.sales.stability_actions",
         "main.sales.stability_alerts",
         "main.sales.stability_binnings",
+        "main.sales.stability_marks",
         "main.sales.stability_profiles",
         "main.sales.stability_results",
         "main.sales.stability_runs",
     ]
-    results = entry.targets[5]
+    results = entry.targets[6]
     assert results.operations == ("merge",) and results.options["keys"] == [
         "dataset", "version", "period", "segment", "column", "metric",
     ]  # fmt: skip
