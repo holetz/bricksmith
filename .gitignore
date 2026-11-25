@@ -23,6 +23,8 @@ src/bricksmith/features/_jars/
 # Databricks and local tools
 .databricks/
 .tools/
+# The quenching CLI's local cache, written by every `cq` run
+.quenching/
 
 # Local-only files: credentials and notes that must never be committed
 .env
