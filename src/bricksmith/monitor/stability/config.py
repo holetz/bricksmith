@@ -24,12 +24,19 @@ MEAN_SHIFT = "mean_shift"
 ROW_COUNT = "row_count"
 VOLUME_CHANGE = "volume_change"
 WEIGHT_CHANGE = "weight_change"
+REVISION_ROW_CHANGE = "revision_row_change"
+REVISION_PSI = "revision_psi"
+REVISION_MEAN_SHIFT = "revision_mean_shift"
 #: Metrics judged per column, and per period and segment for the whole table (column ``""``).
 COLUMN_METRICS = (PSI, NULL_RATE, NULL_RATE_DELTA, UNSEEN_RATE, UNSEEN_RATE_DELTA, MEAN, MEAN_SHIFT)
 TABLE_METRICS = (ROW_COUNT, VOLUME_CHANGE, WEIGHT_CHANGE)
-METRICS = (*COLUMN_METRICS, *TABLE_METRICS)
+#: Metrics comparing a period with its own first publication; judged only when ``revision`` is declared.
+REVISION_METRICS = (REVISION_ROW_CHANGE, REVISION_PSI, REVISION_MEAN_SHIFT)
+METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS)
 #: Metrics computed from bin shares, so too few rows make them unreliable (``min_rows``).
-DISTRIBUTION_METRICS = frozenset({PSI, NULL_RATE_DELTA, UNSEEN_RATE_DELTA, MEAN_SHIFT})
+DISTRIBUTION_METRICS = frozenset({
+    PSI, NULL_RATE_DELTA, UNSEEN_RATE_DELTA, MEAN_SHIFT, REVISION_PSI, REVISION_MEAN_SHIFT,
+})  # fmt: skip
 DEFAULT_LIMITS: dict[str, Limits | None] = {
     PSI: Limits(0.10, 0.25, HIGHER),
     NULL_RATE_DELTA: Limits(0.05, 0.15, HIGHER),
@@ -37,6 +44,12 @@ DEFAULT_LIMITS: dict[str, Limits | None] = {
     MEAN_SHIFT: Limits(0.25, 0.50, BOTH),
     VOLUME_CHANGE: Limits(0.20, 0.50, BOTH),
     WEIGHT_CHANGE: Limits(0.20, 0.50, BOTH),
+}
+#: Used only for the revision metrics, so declarations without ``revision`` keep their serialized limits.
+REVISION_LIMITS: dict[str, Limits] = {
+    REVISION_ROW_CHANGE: Limits(0.01, 0.05, BOTH),
+    REVISION_PSI: Limits(0.05, 0.10, HIGHER),
+    REVISION_MEAN_SHIFT: Limits(0.10, 0.25, BOTH),
 }
 DEFAULT_TREND_METRICS = (PSI, VOLUME_CHANGE)
 FIXED = "fixed"
@@ -48,7 +61,7 @@ TABLES = ("binnings", "profiles", "results", "alerts", "runs")
 KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "persistence", "gate", "min_rows", "refresh_periods",
-    "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify",
+    "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
@@ -198,6 +211,7 @@ class StabilityConfig:
     epsilon: float = 1e-4
     rules: tuple[LimitRule, ...] = ()
     notify: NotifyPolicy | None = None
+    revision: bool = False
 
     @property
     def auto(self) -> bool:
@@ -209,9 +223,11 @@ class StabilityConfig:
         return f"{self.prefix}{kind}"
 
     def limits_for(self, metric: str, column: str) -> Limits | None:
-        """Return the limits of ``metric`` for ``column``: a column override first, then the metric default."""
+        """Return the limits of ``metric`` for ``column``: a column override, the declared limit, then the default."""
         override = self.column_limits.get(column, {})
-        return override[metric] if metric in override else self.limits.get(metric)
+        if metric in override:
+            return override[metric]
+        return self.limits[metric] if metric in self.limits else REVISION_LIMITS.get(metric)
 
     def resolve(self, *, dataset: str, column: str, segment: str, metric: str, period_date: str | None) -> Resolution:
         """Return the rules that apply to one result (see :func:`bricksmith.monitor.rules.resolve`)."""
@@ -244,12 +260,14 @@ class StabilityConfig:
         return hashlib.sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form (``rules`` and ``notify`` only when declared, so fingerprints stay)."""
+        """Return the serializable form (``rules``, ``notify``, ``revision`` only when declared: fingerprints stay)."""
         data = self._base_dict()
         if self.rules:
             data["rules"] = [r.to_dict() for r in self.rules]
         if self.notify is not None:
             data["notify"] = self.notify.to_dict()
+        if self.revision:
+            data["revision"] = True
         return data
 
     def _base_dict(self) -> dict[str, Any]:
@@ -385,6 +403,15 @@ def _inference(value: object) -> InferenceOptions:
     return InferenceOptions(**value)
 
 
+def _revision(value: object) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        msg = f"revision must be true or false, got {value!r}"
+        raise _fail(msg)
+    return value
+
+
 def parse_config(data: object) -> StabilityConfig:
     """Validate one declaration mapping into a :class:`StabilityConfig` (unknown keys are errors)."""
     if not isinstance(data, dict):
@@ -437,6 +464,7 @@ def parse_config(data: object) -> StabilityConfig:
             epsilon=float(data.get("epsilon", 1e-4)),
             rules=parse_rules(data.get("rules"), owner="stability"),
             notify=parse_notify(data.get("notify")),
+            revision=_revision(data.get("revision")),
         )
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
@@ -462,6 +490,8 @@ __all__ = [
     "METRICS",
     "OPENED",
     "RECURRED",
+    "REVISION_LIMITS",
+    "REVISION_METRICS",
     "TABLES",
     "TABLE_METRICS",
     "TRANSITIONS",
