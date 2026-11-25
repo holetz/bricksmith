@@ -872,7 +872,7 @@ def _emitted(
     *,
     rewrite_all: bool,
 ) -> list[dict[str, Any]]:
-    """Return the results this run writes: the emitted periods' (``window``, ``todo``, ``vanished``) and the schema's."""
+    """Return the results of the emitted periods (``window``, ``todo``, ``vanished``) and of the schema."""
     window, todo, vanished = periods
     everything = rewrite_all or bool(config.settle_periods or config.settle_days)
     emitted = (set(window) if everything else set(todo) & set(window)) | set(vanished)
