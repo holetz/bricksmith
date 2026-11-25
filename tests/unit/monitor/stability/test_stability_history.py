@@ -3,12 +3,17 @@
 
 from __future__ import annotations
 
+import textwrap
+from typing import TYPE_CHECKING
+
 import pytest
 
+from bricksmith.context import ExecutionContext
+from bricksmith.graph import load_graph
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.stability.config import parse_config
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
-from bricksmith.monitor.stability.hook import resolve
+from bricksmith.monitor.stability.hook import delta_version, resolve
 from bricksmith.monitor.stability.tables import (
     ALERT_EVENTS,
     ALL_KINDS,
@@ -22,6 +27,11 @@ from bricksmith.monitor.stability.tables import (
     results_as_of,
     table_name,
 )
+from bricksmith.plan import build_plan
+from bricksmith.runner import InMemoryTableIO, apply_plan
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_declaration_history_default_and_validation() -> None:
@@ -194,3 +204,54 @@ def test_as_of_statement_is_one_select_over_the_history_and_refuses_what_is_not_
     for bad in ("tomorrow", "2026-03-31' OR 1=1 --", ""):
         with pytest.raises(MonitorError):
             as_of_statement("c.s", bad)
+
+
+class _Spark:
+    def __init__(self, rows: list[dict[str, int]] | Exception) -> None:
+        self.rows, self.statements = rows, []
+
+    def sql(self, statement: str) -> _Spark:
+        self.statements.append(statement)
+        return self
+
+    def collect(self) -> list[dict[str, int]]:
+        if isinstance(self.rows, Exception):
+            raise self.rows
+        return self.rows
+
+
+def test_data_version_is_the_latest_delta_version_and_never_fails_the_check() -> None:
+    spark = _Spark([{"version": 41}])
+    assert delta_version(spark, "c.s.orders") == 41
+    assert spark.statements == ["DESCRIBE HISTORY c.s.orders LIMIT 1"]
+    assert delta_version(_Spark([]), "c.s.orders") is None
+    assert delta_version(_Spark(RuntimeError("not a Delta table")), "c.s.orders") is None
+    assert delta_version(None, "c.s.orders") is None
+
+
+def test_hook_writes_both_history_tables_when_declared(tmp_path: Path) -> None:
+    path = tmp_path / "catalogs/main/sales/orders.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        textwrap.dedent(
+            """
+            from bricksmith.tasks import task
+
+            @task(kind="table", outputs="orders", metadata={"stability": {
+                "period": "month", "min_rows": 10, "baseline": "previous", "history": True}})
+            def orders(ctx):
+                ctx.write("orders", [
+                    {"month": f"2026-{m:02d}", "amount": float(i % 20) + i * 0.013}
+                    for m in range(1, 5) for i in range(80)
+                ])
+            """
+        ),
+        encoding="utf-8",
+    )
+    io = InMemoryTableIO()
+    execution = ExecutionContext(environment="test")
+    graph = load_graph(tmp_path, context=execution)
+    assert apply_plan(build_plan(graph), graph, project_root=tmp_path, execution=execution, table_io=io).ok
+    history = io.tables["main.sales.stability_results_history"]
+    assert isinstance(history, list) and history and {r["data_version"] for r in history} == {None}
+    assert isinstance(io.tables["main.sales.stability_alert_events"], list)
