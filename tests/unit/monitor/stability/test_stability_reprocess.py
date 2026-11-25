@@ -3,12 +3,22 @@
 
 from __future__ import annotations
 
+import textwrap
+from typing import TYPE_CHECKING
+
 import pytest
 
+from bricksmith.context import ExecutionContext
+from bricksmith.graph import load_graph
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.stability.config import Gate, parse_config
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
 from bricksmith.monitor.stability.tables import RUNS, SCHEMAS, merge_rows
+from bricksmith.plan import build_plan
+from bricksmith.runner import InMemoryTableIO, RunReport, apply_plan
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_declaration_gate_periods_default_and_validation() -> None:
@@ -135,3 +145,50 @@ def test_engine_reprocess_check_takes_ranges_and_can_skip_what_the_data_lacks() 
         _rows(), config, store, dataset="orders", run_id="r3", reprocess=["2026-02", "2030-01"], skip_unknown=True
     )
     assert kept.tables["runs"][0]["periods_reprocessed"] == "2026-02"
+
+
+def _project(root: Path) -> Path:
+    path = root / "catalogs/main/sales/orders.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        textwrap.dedent(
+            """
+            from bricksmith.tasks import task
+
+            @task(kind="table", outputs="orders", metadata={"stability": {
+                "period": "month", "min_rows": 10, "baseline": "previous",
+                "gate": {"fail_on": ["red"], "periods": "profiled"}}})
+            def orders(ctx):
+                shifted = ctx.execution.parameters.get("shifted")
+                rows = []
+                for m in range(1, 6):
+                    month = f"2026-{m:02d}"
+                    shift = 40.0 if month == shifted else 0.0
+                    rows += [{"month": month, "amount": float(i % 20) + i * 0.013 + shift} for i in range(80)]
+                ctx.write("orders", rows)
+            """
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+def _run(root: Path, io: InMemoryTableIO, shifted: str = "", reprocess: tuple[str, ...] = ()) -> RunReport:
+    execution = ExecutionContext(environment="test", parameters={"shifted": shifted})
+    graph = load_graph(root, context=execution)
+    return apply_plan(
+        build_plan(graph), graph, project_root=root, execution=execution, table_io=io, reprocess=reprocess
+    )
+
+
+def test_runner_reprocess_reprofiles_the_same_periods_without_the_command(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    io = InMemoryTableIO()
+    assert _run(root, io).ok
+    stale = _run(root, io, shifted="2026-02")
+    assert stale.ok and stale.results[0].stability[0]["periods_profiled"] == 1
+    report = _run(root, io, shifted="2026-02", reprocess=("2026-02", "2030-01"))
+    outcome = report.results[0].stability[0]
+    assert not report.ok and outcome["status"] == "failed" and "reprocessed 2026-02" in str(outcome["message"])
+    runs = io.tables["main.sales.stability_runs"]
+    assert isinstance(runs, list) and [r["periods_reprocessed"] for r in runs][-1] == "2026-02"

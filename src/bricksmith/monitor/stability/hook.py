@@ -210,7 +210,7 @@ def _check_one(
         config = replace(config, notify=default)
     result = check(
         data, config, store, dataset=declaration.dataset, run_id=run_id, task_id=ctx.task_id,
-        physical=declaration.physical,
+        physical=declaration.physical, reprocess=ctx.reprocess, skip_unknown=True,
     )  # fmt: skip
     for kind in declaration.tables:
         if result.tables[kind] or not store.exists(kind):
