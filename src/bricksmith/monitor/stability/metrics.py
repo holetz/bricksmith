@@ -39,8 +39,15 @@ from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, WARNING, Aler
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
 from bricksmith.monitor.shifts import change_point_suggested, drift_status
 from bricksmith.monitor.stability.config import (
+    DISTINCT_CHANGE,
+    DISTINCT_COUNT,
+    DISTINCT_PREFIX,
     DISTRIBUTION_METRICS,
+    DUPLICATE_KEY_RATE,
+    EXTRA_PREFIX,
     FIXED,
+    JS_DISTANCE,
+    KEYS_COLUMN,
     LAPLACE,
     MEAN,
     MEAN_SHIFT,
@@ -54,8 +61,17 @@ from bricksmith.monitor.stability.config import (
     SCHEMA_METRICS,
     UNSEEN_RATE,
     UNSEEN_RATE_DELTA,
+    VANISHED_RATE,
     VOLUME_CHANGE,
+    WASSERSTEIN,
     WEIGHT_CHANGE,
+)
+from bricksmith.monitor.stability.distribution import (
+    QUANTILES,
+    js_distance,
+    quantile_shift,
+    vanished_rate,
+    wasserstein,
 )
 from bricksmith.monitor.stability.profile import fit_periods_of, period_date, segment_label
 from bricksmith.monitor.stats import chi2_ppf, psi_terms
@@ -64,6 +80,7 @@ from bricksmith.monitor.trend import TrendPolicy, keeps, remember, trend_check
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
+    from bricksmith.monitor.bins import BinSpec
     from bricksmith.monitor.reference import Reference
     from bricksmith.monitor.stability.config import StabilityConfig
 
@@ -91,6 +108,8 @@ class History:
     rows: dict[str, dict[str, int]] = field(default_factory=dict)
     weights: dict[str, dict[str, float]] = field(default_factory=dict)
     periods: list[str] = field(default_factory=list)
+    #: Scan statistics per (segment, reserved column) and period: ``(rows counted, distinct values or key tuples)``.
+    extras: dict[tuple[str, str], dict[str, tuple[int, int]]] = field(default_factory=dict)
 
 
 def index_profiles(binning: Reference, profiles: Iterable[Mapping[str, Any]]) -> History:
@@ -102,6 +121,11 @@ def index_profiles(binning: Reference, profiles: Iterable[Mapping[str, Any]]) ->
         if int(row["version"]) != binning.version:
             continue
         period, segment, column = str(row["period"]), str(row["segment"]), str(row["column"])
+        if column.startswith(EXTRA_PREFIX):
+            history.extras.setdefault((segment, column), {})[period] = (
+                int(row["count"] or 0), int(row.get("value_sum") or 0),
+            )  # fmt: skip
+            continue
         slot: Slot = (
             int(row["count"] or 0),
             float(row.get("weight") or 0.0),
@@ -128,6 +152,7 @@ def table_totals(history: History, earlier: Iterable[Mapping[str, Any]] = ()) ->
     """
     columns: dict[int, str] = {}
     sums: dict[tuple[int, str, str], list[float]] = {}
+    earlier = [r for r in earlier if not str(r["column"]).startswith(EXTRA_PREFIX)]
     for row in earlier:
         version, column = int(row["version"]), str(row["column"])
         columns[version] = min(column, columns.get(version, column))
@@ -465,7 +490,6 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     for key, values in (score_seed or {}).items():
         ctx.scores[key] = list(values)
     out = Computed()
-    numeric = {s.column: s.kind == "numeric" for s in binning.columns}
     in_window = [p for p in history.periods if p in {*window, *emptied}]
     skipped = {*emptied, *settling}
     eligible = [p for p in history.periods if p not in skipped]
@@ -505,10 +529,11 @@ def compute(  # noqa: PLR0913 - one keyword per result field
                 period,
             )
             usable = _usable(config, history, segment, wanted)
+            out.results += _scan_results(ctx, history, (segment, period), usable, in_baseline=period in wanted)
             for spec in binning.columns:
                 out.results += _column_results(
                     ctx, out, history, (segment, spec.column), period, usable,
-                    numeric=numeric[spec.column], in_baseline=period in wanted,
+                    spec=spec, in_baseline=period in wanted,
                 )  # fmt: skip
             _mark_red(ctx, segment, period, out.results[first:])
     return out
@@ -579,9 +604,10 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
     period: str,
     usable: list[str],
     *,
-    numeric: bool,
+    spec: BinSpec,
     in_baseline: bool,
 ) -> list[dict[str, Any]]:
+    numeric = spec.kind == "numeric"
     segment, column = key
     where = (period, segment)
     series = history.bins.get(key, {})
@@ -624,7 +650,79 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
             _result(ctx, metric=MEAN_SHIFT, value=shift, current=cur.mean, baseline=base.mean if base else None,
                     light=light, **common)
         )  # fmt: skip
+    results += _shape_results(ctx, spec, (current_bins, base_bins if has_base else {}), base, (where, rows), common)
     return results
+
+
+def _shape_results(  # noqa: PLR0913, PLR0917 - the bins, the baseline stats and the period's context
+    ctx: _Context,
+    spec: BinSpec,
+    bins: tuple[Mapping[str, Sequence[float]], Mapping[str, Sequence[float]]],
+    base: _Stats | None,
+    scope: tuple[tuple[str, str], int],
+    common: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the shape metrics of one column: vanished rate and JS distance, or quantile shifts and Wasserstein."""
+    current, baseline = bins
+    where, rows = scope
+    has_base = bool(baseline)
+    column = spec.column
+    values: list[tuple[str, float | None, str]] = []
+    if spec.kind == "categorical":
+        values.append((VANISHED_RATE, vanished_rate(baseline, current) if has_base else None, ""))
+        values.append((JS_DISTANCE, js_distance(baseline, current) if has_base else None, ""))
+    else:
+        std = base.std if base else None
+        for metric, q in QUANTILES.items():
+            shift, reason = quantile_shift(spec, baseline, current, q, std) if has_base else (None, "")
+            values.append((metric, shift, reason))
+        distance, reason = wasserstein(spec, baseline, current, std) if has_base else (None, "")
+        values.append((WASSERSTEIN, distance, reason))
+    return [
+        _result(
+            ctx, metric=metric, value=value, current=value,
+            light=_judge(
+                ctx, metric, column, value, where=where, rows=rows, has_baseline=has_base, reason=reason,
+                sample=common.get("sample"),
+            ),
+            **common,
+        )
+        for metric, value, reason in values
+    ]  # fmt: skip
+
+
+def _scan_results(
+    ctx: _Context, history: History, where: tuple[str, str], usable: list[str], *, in_baseline: bool
+) -> list[dict[str, Any]]:
+    """Return the duplicate key rate and the distinct count and change of the declared ``keys`` and ``distinct``."""
+    segment, period = where
+    columns = [(KEYS_COLUMN, TABLE)] if ctx.config.keys else []
+    columns += [(f"{DISTINCT_PREFIX}{c}", c) for c in ctx.config.distinct]
+    out: list[dict[str, Any]] = []
+    for stored, column in columns:
+        series = history.extras.get((segment, stored), {})
+        if series.get(period, (0, 0))[0] <= 0:
+            continue
+        rows, distinct = series[period]
+        base = [series[p] for p in usable if p in series and series[p][0] > 0]
+        common = {"period": period, "segment": segment, "column": column, "rows": history.rows[segment][period]}
+        common["in_baseline"] = in_baseline
+        if stored == KEYS_COLUMN:
+            rate = 1 - distinct / rows
+            base_rate = sum(1 - d / n for n, d in base) / len(base) if base else None
+            light = _judge(ctx, DUPLICATE_KEY_RATE, column, rate, where=(period, segment), rows=rows, has_baseline=True)
+            out.append(_result(ctx, metric=DUPLICATE_KEY_RATE, value=rate, current=rate, baseline=base_rate,
+                               light=light, **common))  # fmt: skip
+            continue
+        base_distinct = sum(d for _, d in base) / len(base) if base else None
+        change = distinct / base_distinct - 1 if base_distinct else None
+        out.append(_result(ctx, metric=DISTINCT_COUNT, value=float(distinct), current=float(distinct),
+                           light=Light("no_rule"), **common))  # fmt: skip
+        light = _judge(ctx, DISTINCT_CHANGE, column, change, where=(period, segment), rows=rows,
+                       has_baseline=base_distinct is not None)  # fmt: skip
+        out.append(_result(ctx, metric=DISTINCT_CHANGE, value=change, current=float(distinct),
+                           baseline=base_distinct, light=light, **common))  # fmt: skip
+    return out
 
 
 def _delta(  # noqa: PLR0913, PLR0917 - the metric and its context
