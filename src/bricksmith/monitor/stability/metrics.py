@@ -41,6 +41,7 @@ from bricksmith.monitor.shifts import change_point_suggested, drift_status
 from bricksmith.monitor.stability.config import (
     DISTRIBUTION_METRICS,
     FIXED,
+    JS_DISTANCE,
     LAPLACE,
     MEAN,
     MEAN_SHIFT,
@@ -54,8 +55,17 @@ from bricksmith.monitor.stability.config import (
     SCHEMA_METRICS,
     UNSEEN_RATE,
     UNSEEN_RATE_DELTA,
+    VANISHED_RATE,
     VOLUME_CHANGE,
+    WASSERSTEIN,
     WEIGHT_CHANGE,
+)
+from bricksmith.monitor.stability.distribution import (
+    QUANTILES,
+    js_distance,
+    quantile_shift,
+    vanished_rate,
+    wasserstein,
 )
 from bricksmith.monitor.stability.profile import fit_periods_of, period_date, segment_label
 from bricksmith.monitor.stats import chi2_ppf, psi_terms
@@ -64,6 +74,7 @@ from bricksmith.monitor.trend import TrendPolicy, keeps, remember, trend_check
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
+    from bricksmith.monitor.bins import BinSpec
     from bricksmith.monitor.reference import Reference
     from bricksmith.monitor.stability.config import StabilityConfig
 
@@ -451,7 +462,6 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     for key, values in (score_seed or {}).items():
         ctx.scores[key] = list(values)
     out = Computed()
-    numeric = {s.column: s.kind == "numeric" for s in binning.columns}
     in_window = [p for p in history.periods if p in {*window, *emptied}]
     skipped = {*emptied, *settling}
     eligible = [p for p in history.periods if p not in skipped]
@@ -483,7 +493,7 @@ def compute(  # noqa: PLR0913 - one keyword per result field
             for spec in binning.columns:
                 out.results += _column_results(
                     ctx, out, history, (segment, spec.column), period, usable,
-                    numeric=numeric[spec.column], in_baseline=period in wanted,
+                    spec=spec, in_baseline=period in wanted,
                 )  # fmt: skip
             _mark_red(ctx, segment, period, out.results[first:])
     return out
@@ -549,9 +559,10 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
     period: str,
     usable: list[str],
     *,
-    numeric: bool,
+    spec: BinSpec,
     in_baseline: bool,
 ) -> list[dict[str, Any]]:
+    numeric = spec.kind == "numeric"
     segment, column = key
     where = (period, segment)
     series = history.bins.get(key, {})
@@ -594,7 +605,45 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
             _result(ctx, metric=MEAN_SHIFT, value=shift, current=cur.mean, baseline=base.mean if base else None,
                     light=light, **common)
         )  # fmt: skip
+    results += _shape_results(ctx, spec, (current_bins, base_bins if has_base else {}), base, (where, rows), common)
     return results
+
+
+def _shape_results(  # noqa: PLR0913, PLR0917 - the bins, the baseline stats and the period's context
+    ctx: _Context,
+    spec: BinSpec,
+    bins: tuple[Mapping[str, Sequence[float]], Mapping[str, Sequence[float]]],
+    base: _Stats | None,
+    scope: tuple[tuple[str, str], int],
+    common: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the shape metrics of one column: vanished rate and JS distance, or quantile shifts and Wasserstein."""
+    current, baseline = bins
+    where, rows = scope
+    has_base = bool(baseline)
+    column = spec.column
+    values: list[tuple[str, float | None, str]] = []
+    if spec.kind == "categorical":
+        values.append((VANISHED_RATE, vanished_rate(baseline, current) if has_base else None, ""))
+        values.append((JS_DISTANCE, js_distance(baseline, current) if has_base else None, ""))
+    else:
+        std = base.std if base else None
+        for metric, q in QUANTILES.items():
+            shift, reason = quantile_shift(spec, baseline, current, q, std) if has_base else (None, "")
+            values.append((metric, shift, reason))
+        distance, reason = wasserstein(spec, baseline, current, std) if has_base else (None, "")
+        values.append((WASSERSTEIN, distance, reason))
+    return [
+        _result(
+            ctx, metric=metric, value=value, current=value,
+            light=_judge(
+                ctx, metric, column, value, where=where, rows=rows, has_baseline=has_base, reason=reason,
+                sample=common.get("sample"),
+            ),
+            **common,
+        )
+        for metric, value, reason in values
+    ]  # fmt: skip
 
 
 def _delta(  # noqa: PLR0913, PLR0917 - the metric and its context
