@@ -13,7 +13,7 @@ authority: current
 Data stability tells you, on every run, whether a table still looks like the data it was designed and validated on.
 You declare it on the task that writes the table. After the write, the shared runner profiles the table period by
 period and compares each period with a baseline. It judges every metric with a traffic light, a trend check and
-persistence alerts, stores the results in five dashboard-ready tables, and applies the gate you declared: warn
+persistence alerts, stores the results in six dashboard-ready tables, and applies the gate you declared: warn
 (the default) or fail the task and block its dependents.
 
 It shares its statistical core with [model monitoring](monitoring.md): bins (`BinSpec`), PSI, versioned references,
@@ -158,6 +158,29 @@ alerts with the ones stored before the run, so replaying unchanged data sends no
 drops the opening period of an open alert keeps its `alert_id` and sends nothing either. Delivery happens after the
 rows are stored, never raises, and cannot fail the task or change the gate; `bricksmith stability check` does not
 deliver.
+
+## Human actions
+
+Alerts are rebuilt on every run, so what people decide about them lives in the append-only `stability_actions`
+table. Record a decision with `bricksmith stability action`:
+
+```bash
+bricksmith stability action --dataset orders --alert-id <alert_id> --action risk_accepted \
+  --reason "known migration drift" --author ana --valid-until 2026-12-31 --scope catalog.schema
+```
+
+The command prints the `INSERT` statement to run (or appends the row to a `--state` file). The actions are:
+
+- `analysis` records who is looking at the alert and changes nothing else;
+- `risk_accepted` keeps the alert out of the gate and out of notifications until `--valid-until` (inclusive); the day
+  after, it counts again while the action stays visible;
+- `closed` takes the alert out of the gate and requires a `--resolution`: `fixed`, `expected`, `new_normal` or
+  `false_positive`.
+
+The latest action of each alert wins. Stored alerts keep their automatic state; the run folds the actions into the gate
+counts and the notifications on the run date, and the message reports how many alerts are accepted. Actions enter the
+judgment fingerprint, so a new decision re-judges the window and a replay stays deterministic. Resolutions are stored
+and counted by `stability_false_positive_rate`; their effect on baselines belongs to period marks, which are separate.
 
 ## Revision reliability
 
@@ -306,6 +329,7 @@ which reports never use.
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
 | `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
+| `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
 | `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, schema |
 
@@ -315,11 +339,15 @@ denotes when it can be read as a date.
 
 ## Dashboards
 
-`bricksmith stability views --scope catalog.schema` prints three views to create next to the tables:
+`bricksmith stability views --scope catalog.schema` prints the views to create next to the tables:
 
 - `stability_latest`: results of the latest period of the latest version of each dataset;
 - `stability_dataset_status`: worst status, red and yellow counts and row count per dataset and period;
-- `stability_open_alerts`: alerts still open.
+- `stability_open_alerts`: alerts still open by their automatic state, with the latest human action and the
+  `effective_state` it gives (`open`, `accepted` or `closed`);
+- `stability_actions_latest`, `stability_alert_response` and `stability_response_summary`: the latest action per alert,
+  and the days to the first action and to the closing of each alert;
+- `stability_false_positive_rate`: closures typed `false_positive` against all closures, per rule.
 
 A BI model on these tables works as a star:
 

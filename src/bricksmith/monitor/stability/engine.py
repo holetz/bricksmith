@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from bricksmith.monitor.actions import STATE_ACCEPTED, STATE_CLOSED, apply_actions, latest_actions
 from bricksmith.monitor.adapter import is_rows
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import RED, YELLOW
@@ -42,7 +43,7 @@ from bricksmith.monitor.stability.schema import (
     schema_results,
     schema_text,
 )
-from bricksmith.monitor.stability.tables import ALERTS, BINNINGS, PROFILES, RESULTS, REVISIONS, RUNS
+from bricksmith.monitor.stability.tables import ACTIONS, ALERTS, BINNINGS, PROFILES, RESULTS, REVISIONS, RUNS
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -162,14 +163,23 @@ class CheckResult:
     notifications: list[AlertEvent] = field(default_factory=list)
 
 
-def judgment_fingerprint(config: StabilityConfig) -> str:
-    """Hash what decides colors and alerts (not bins): a change rewrites the results of the whole window."""
+def judgment_fingerprint(config: StabilityConfig, actions: Sequence[Mapping[str, Any]] = ()) -> str:
+    """Hash what decides colors and alerts (not bins): a change rewrites the results of the whole window.
+
+    The human actions of the dataset are part of the judgment: their latest decision per alert enters the hash, so a
+    new decision re-judges the window and replays stay deterministic. Without actions the hash is the declaration's.
+    """
     data = config.to_dict()
     content = {k: data[k] for k in ("baseline", "column_limits", "limits", "min_rows", "persistence", "trend")}
     content |= {"epsilon": config.epsilon, "trend_metrics": data["trend_metrics"], "weight": config.weight}
     for optional in ("rules", "revision", "trend_directions"):
         if optional in data:
             content[optional] = data[optional]
+    if actions:
+        decided = latest_actions(actions, entity="dataset")
+        content["actions"] = sorted(
+            [a, str(r["action_id"]), str(r.get("valid_until") or "")] for a, r in decided.items()
+        )
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
@@ -651,7 +661,8 @@ def check(  # noqa: PLR0913 - one keyword per documented input
             (row["period"], row["segment"], row["column"], row["bin"]), (None, None, None)
         )
         row.update(share=share, baseline_share=base, contribution=contribution)
-    judgment = judgment_fingerprint(config)
+    actions = store.rows(ACTIONS, dataset)
+    judgment = judgment_fingerprint(config, actions)
     previous = store.rows(RUNS, dataset, version=binning.version)
     last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
     rewrite_all = last is None or last.get("judgment_fingerprint") != judgment
@@ -662,8 +673,14 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         stored=stored_alerts, periods=sorted({*periods, *vanished, *(str(r["period"]) for r in earlier)}),
         keep_inside=not rewrite_all, lineage=lineage,
     )  # fmt: skip
+    human = {
+        str(a["alert_id"]): a["state"]
+        for a in apply_actions(alert_rows, actions, started[:10], "dataset")
+        if a["state"] in (STATE_ACCEPTED, STATE_CLOSED)
+    }
+    held = [{**r, "state": human[str(r["alert_id"])]} if str(r["alert_id"]) in human else r for r in alert_rows]
     notifications = alert_events(
-        alert_rows, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
+        held, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
         occurred_at=started,
     )  # fmt: skip
     alert_rows += _superseded(
@@ -678,12 +695,13 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     )
     latest = max([window[-1], *vanished])
     counts = counts_in(computed.results, latest)
-    open_rows = [r for r in alert_rows if r["state"] == OPEN]
+    open_rows = [r for r in alert_rows if r["state"] == OPEN and str(r["alert_id"]) not in human]
+    accepted = sum(1 for r in alert_rows if r["state"] == OPEN and human.get(str(r["alert_id"])) == STATE_ACCEPTED)
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
     reasons = _gate(config, counts[RED], counts[YELLOW], len(open_rows), critical)
     status = FAILED if reasons else WARNED if counts[RED] + counts[YELLOW] + len(open_rows) else PASSED
     message = f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)" + (
-        f"; gate failed on {'; '.join(reasons)}" if reasons else ""
+        (f"; {accepted} accepted" if accepted else "") + (f"; gate failed on {'; '.join(reasons)}" if reasons else "")
     )
     outcome = Outcome(
         dataset, status, binning.version, latest, len(todo), counts[RED], counts[YELLOW], len(open_rows), critical,
@@ -697,7 +715,14 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         "judgment_fingerprint": judgment, "started_at": started, "finished_at": _now(),
         "schema": schema_text(schema),
     }  # fmt: skip
-    tables = {BINNINGS: binning_rows, PROFILES: fresh, RESULTS: results, ALERTS: alert_rows, RUNS: [run_row]}
+    tables = {
+        BINNINGS: binning_rows,
+        PROFILES: fresh,
+        RESULTS: results,
+        ALERTS: alert_rows,
+        ACTIONS: [],
+        RUNS: [run_row],
+    }
     if config.revision:
         tables[REVISIONS] = revision_rows
     return CheckResult(tables, outcome, skipped, binning, notifications)
