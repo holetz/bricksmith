@@ -189,8 +189,8 @@ demand: per period, segment, column and metric, the latest judgment made up to t
 ```python
 from bricksmith.monitor.stability.tables import as_of_statement, results_as_of
 
-sql = as_of_statement("catalog.schema", "2026-03-31")      # a date covers its whole day; a UTC datetime also works
-rows = results_as_of(history_rows, "2026-03-31")           # the same rule over rows in memory
+sql = as_of_statement("catalog.schema", "2026-03-31")  # a date covers its whole day; a UTC datetime also works
+rows = results_as_of(history_rows, "2026-03-31")  # the same rule over rows in memory
 ```
 
 ## Human actions
