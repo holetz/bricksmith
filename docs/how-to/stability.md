@@ -135,7 +135,14 @@ join `stability_results` with `baseline_kind = revision` and `baseline_label = f
 
 A revision is visible only while the period is re-profiled. `refresh_periods` (default 1) must cover how far back
 history can be republished, or a late change to an older period goes unseen. Snapshots belong to one binning
-version, so a refit compares from its own first observation. The check reads stored profiles, not the Delta history
+version, so a refit compares from its own first observation.
+
+A period that was published and then **emptied** is a revision too. When a period with a first-publication snapshot
+lies inside the refresh range (the `refresh_periods` most recent periods of stored history, the latest included
+even if it vanished) and the data no longer has rows for it, each snapshotted segment gets
+`revision_row_change = -1.0`, judged by the configured limits like any revision result, and the period's current
+profile is replaced by zero-count rows of the run. When the vanished period is the newest one, it is the latest
+period of the run, so its red results count for the gate. Periods older than the refresh range are not judged. The check reads stored profiles, not the Delta history
 of the table, so it works on every engine.
 
 ## Metrics and default limits
