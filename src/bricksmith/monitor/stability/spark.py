@@ -19,12 +19,14 @@ from bricksmith.monitor.stability.profile import (
     ProfileInfo,
     _reference,  # pyright: ignore[reportPrivateUsage]
     complete_rows,
+    first_periods,
+    kept_segments,
     resolve_columns,
     segment_sets,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from pyspark.sql import Column, DataFrame  # pyright: ignore[reportMissingImports]
 
@@ -154,29 +156,38 @@ def segment_column(df: DataFrame, columns: Sequence[str]) -> Column:
     return f.concat_ws(",", *parts)
 
 
-def _kept_segments(
-    scoped: DataFrame,
+def _kept_segments(  # noqa: PLR0913, PLR0917 - the ranking inputs
+    ranking: DataFrame,
     config: StabilityConfig,
     sets: Sequence[Sequence[str]],
     keys: Sequence[Column],
+    carried: Mapping[str, str],
     info: ProfileInfo,
-) -> dict[int, list[str]]:
-    """Rank the segments of every non-empty set in one job; return the kept keys of each truncated set."""
+) -> tuple[dict[int, list[str]], dict[str, str]]:
+    """Rank the segments of every non-empty set in one job over the ranking periods.
+
+    Return the kept keys of each truncated set and the earliest period of every kept segment, by the same rule as
+    the pure engine (:func:`kept_segments`, :func:`first_periods`).
+    """
     f = _f()
     ranked = {i: k for i, k in enumerate(keys) if sets[i]}
     if not ranked:
-        return {}
+        return {}, {}
     pairs = f.explode(f.array(*(f.struct(f.lit(i).alias("i"), k.alias("k")) for i, k in ranked.items())))
-    counts: dict[int, list[tuple[str, int]]] = {i: [] for i in ranked}
-    for r in scoped.select(pairs.alias("seg")).groupBy("seg.i", "seg.k").count().collect():
-        counts[int(r["i"])].append((str(r["k"]), int(r["count"])))
+    counts: dict[int, dict[str, int]] = {i: {} for i in ranked}
+    found: dict[str, str] = {}
+    grouped = ranking.select("__p", pairs.alias("seg")).groupBy("seg.i", "seg.k")
+    for r in grouped.agg(f.count(f.lit(1)).alias("n"), f.min("__p").alias("first")).collect():
+        counts[int(r["i"])][str(r["k"])] = int(r["n"])
+        found[str(r["k"])] = min(str(r["first"]), found.get(str(r["k"]), str(r["first"])))
     keep: dict[int, list[str]] = {}
-    for i, found in counts.items():
-        ordered = sorted(found, key=lambda item: (-item[1], item[0]))
-        if len(ordered) > config.max_segments:
-            info.truncated[",".join(sets[i])] = len(ordered) - config.max_segments
-            keep[i] = [key for key, _ in ordered[: config.max_segments]]
-    return keep
+    first: dict[str, str] = {}
+    for i, totals in counts.items():
+        kept = kept_segments(totals, config.max_segments, carried, label=",".join(sets[i]), info=info)
+        first |= first_periods({k: found[k] for k in kept}, {k: v for k, v in carried.items() if k in kept})
+        if len(kept) < len(totals):
+            keep[i] = sorted(kept)
+    return keep, first
 
 
 def profile_spark(  # noqa: PLR0913 - one keyword per profile field
@@ -187,13 +198,19 @@ def profile_spark(  # noqa: PLR0913 - one keyword per profile field
     *,
     dataset: str,
     run_id: str = "",
+    rank_periods: Sequence[str] | None = None,
+    carried: Mapping[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], ProfileInfo]:
-    """Profile ``periods`` of ``df`` with the frozen ``binning``; equals ``profile_rows`` on the same rows."""
+    """Profile ``periods`` of ``df`` with the frozen ``binning``; equals ``profile_rows`` on the same rows.
+
+    Segments are ranked over ``rank_periods`` (``periods`` by default) and ``carried`` segments stay kept.
+    """
     f = _f()
     info = ProfileInfo()
     if not periods:
         return [], info
     period = period_column(df, config.period)
+    ranking = df.where(period.isin(sorted({*periods, *(rank_periods or ())}))).withColumn("__p", period)
     head = df.agg(
         f.sum(f.when(period.isNull(), 1).otherwise(0)).alias("nulls"),
         f.sum(f.when(period.isin(list(periods)), 1).otherwise(0)).alias("rows"),
@@ -204,7 +221,7 @@ def profile_spark(  # noqa: PLR0913 - one keyword per profile field
     weight = f.coalesce(f.col(config.weight).cast("double"), f.lit(0.0)) if config.weight else f.lit(0.0)
     sets = tuple(dict.fromkeys(segment_sets(config)))
     keys = [segment_column(df, columns) for columns in sets]
-    keep = _kept_segments(scoped, config, sets, keys, info)
+    keep, first = _kept_segments(ranking, config, sets, keys, carried or {}, info)
     cells = []
     for spec in binning.columns:
         bin_id = bin_expression(spec)
@@ -231,7 +248,7 @@ def profile_spark(  # noqa: PLR0913 - one keyword per profile field
         totals[(str(row["__p"]), str(row["__s"]), str(row["c"]), str(row["b"]))] = [
             int(row["n"]), float(row["w"] or 0.0), float(row["s"] or 0.0), float(row["q"] or 0.0)
         ]  # fmt: skip
-    return complete_rows(binning, totals, config, dataset=dataset, run_id=run_id), info
+    return complete_rows(binning, totals, config, dataset=dataset, run_id=run_id, first=first, periods=periods), info
 
 
 __all__ = [

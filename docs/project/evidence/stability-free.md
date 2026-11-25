@@ -40,6 +40,20 @@ The first runs failed for reasons fixed before the final run:
   write when they do not exist yet.
 - An expectation that a segment column is monitored, when by design it is not.
 
+## Stable kept segment set (spec 116)
+
+- Date: 2026-11-24
+- Environment: `free` (named profile, serverless compute); nothing ran on the corporate environment.
+- Command: `BRICKSMITH_RUN_REMOTE_TESTS=true BRICKSMITH_TEST_ENV=free uv run --group remote pytest
+  tests/remote/test_stability.py -q -k "pure_engine or action_count"`
+- Result: 3 passed (76 seconds)
+
+| Scenario | State | Note |
+|---|---|---|
+| `profile_spark` equals `profile_rows` when segments are ranked over the loaded periods and a stored segment is carried | passed | a kept segment that vanished gets zero rows; a carried segment outranked over the loaded periods stays kept; the truncation report is identical |
+| A second `check` on a DataFrame equals the same `check` on rows after a first run: results and outcome | passed | the collapsed segment's `volume_change` is red and the `fail_on: ["red"]` gate fails on both engines |
+| Profiling stays three Spark actions for narrow and wide segmented tables | passed | the ranking job also returns each segment's first period |
+
 ## Cleanup
 
 Each test used a unique test-owned schema. Teardown verified that none remained, and no leftovers were reported.
