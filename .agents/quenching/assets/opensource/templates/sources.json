@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "fetched": "2026-10-17",
+  "rule": "upstream templates are byte-identical to the url (sha256); only the placeholders they declare are substituted by `cq opensource apply`",
+  "templates": [
+    {
+      "artifact": "license",
+      "language": "en",
+      "spdx": "MIT",
+      "path": "upstream/MIT.txt",
+      "target": "LICENSE",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "textLicense": "MIT",
+      "placeholders": {
+        "year": "<year>",
+        "holders": "<copyright holders>"
+      },
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "artifact": "license",
+      "language": "en",
+      "spdx": "Apache-2.0",
+      "path": "upstream/Apache-2.0.txt",
+      "target": "LICENSE",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/Apache-2.0.txt",
+      "textLicense": "Apache-2.0",
+      "placeholders": {},
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+    },
+    {
+      "artifact": "conduct",
+      "language": "en",
+      "path": "upstream/code_of_conduct.md",
+      "target": "CODE_OF_CONDUCT.md",
+      "url": "https://www.contributor-covenant.org/version/2/1/code_of_conduct/code_of_conduct.md",
+      "textLicense": "CC-BY-4.0",
+      "placeholders": {
+        "contact": "[INSERT CONTACT METHOD]"
+      },
+      "sha256": "977d781349351fd7c1f076e4c7dc7de2a05b40e12c773542c3815dd4ce7f37ba"
+    },
+    {
+      "artifact": "dco",
+      "language": "en",
+      "path": "upstream/dco.txt",
+      "target": "DCO",
+      "url": "https://developercertificate.org/",
+      "extract": "the page's single <pre> block",
+      "textLicense": "verbatim copying permitted, changes not allowed",
+      "placeholders": {},
+      "sha256": "f7ac75b443f4ca16b503241344b41aeff9503b0c30bedc2b119551d83cb0fa90"
+    },
+    {
+      "artifact": "contributing",
+      "language": "en",
+      "path": "authored/CONTRIBUTING.md",
+      "target": "CONTRIBUTING.md",
+      "placeholders": {
+        "project": "{{project}}",
+        "discussion": "{{discussion}}"
+      }
+    },
+    {
+      "artifact": "support",
+      "language": "en",
+      "path": "authored/SUPPORT.md",
+      "target": "SUPPORT.md",
+      "placeholders": {
+        "discussion": "{{discussion}}"
+      }
+    },
+    {
+      "artifact": "governance",
+      "language": "en",
+      "path": "authored/GOVERNANCE.md",
+      "target": "GOVERNANCE.md",
+      "placeholders": {
+        "maintainers": "{{maintainers}}"
+      }
+    },
+    {
+      "artifact": "codeowners",
+      "language": "en",
+      "path": "authored/CODEOWNERS",
+      "target": ".github/CODEOWNERS",
+      "placeholders": {
+        "owners": "{{owners}}"
+      }
+    },
+    {
+      "artifact": "issue-bug",
+      "language": "en",
+      "path": "authored/bug_report.md",
+      "target": ".github/ISSUE_TEMPLATE/bug_report.md",
+      "placeholders": {}
+    },
+    {
+      "artifact": "issue-feature",
+      "language": "en",
+      "path": "authored/feature_request.md",
+      "target": ".github/ISSUE_TEMPLATE/feature_request.md",
+      "placeholders": {}
+    },
+    {
+      "artifact": "pr-template",
+      "language": "en",
+      "path": "authored/PULL_REQUEST_TEMPLATE.md",
+      "target": ".github/PULL_REQUEST_TEMPLATE.md",
+      "placeholders": {}
+    },
+    {
+      "artifact": "citation",
+      "language": "en",
+      "path": "authored/CITATION.cff",
+      "target": "CITATION.cff",
+      "placeholders": {
+        "project": "{{project}}",
+        "authors": "{{authors}}",
+        "repository": "{{repository}}",
+        "spdx": "{{spdx}}"
+      }
+    },
+    {
+      "artifact": "funding",
+      "language": "en",
+      "path": "authored/FUNDING.yml",
+      "target": ".github/FUNDING.yml",
+      "placeholders": {
+        "github_sponsors": "{{github_sponsors}}"
+      }
+    }
+  ]
+}

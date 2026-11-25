@@ -1,4 +1,124 @@
 {
   "backend": "git",
-  "specs": {}
+  "specs": {
+    "chat": {
+      "budgetUsd": 0.5,
+      "model": "sonnet",
+      "timeoutSeconds": 300
+    },
+    "estimate": {
+      "writeOnly": []
+    }
+  },
+  "shared": {
+    "autonomy": {
+      "livenessMinutes": 20,
+      "maxLaunches": 40,
+      "maxWorkers": 3,
+      "merge": "policy",
+      "runAloneUpTo": "low"
+    },
+    "codex": {
+      "executor": {
+        "enabled": false,
+        "maxTaskTokens": 20000,
+        "modelSmall": "gpt-6.1-sol",
+        "modelSmallTier": "gpt-6-luna",
+        "modelVerified": "gpt-6.1-sol",
+        "reasoningEffort": "medium",
+        "reservePercent": 10,
+        "stopLossPercent": 15
+      },
+      "maxUsedPercent": {
+        "primary": 80,
+        "secondary": 90
+      },
+      "timeoutSeconds": 900
+    },
+    "contextBudgets": {
+      "conductor": 150000,
+      "main": 200000,
+      "worker": 200000
+    },
+    "okfValidate": {
+      "ignoreGlobs": [],
+      "warnAsError": false
+    },
+    "workHost": {
+      "minFreeGb": 10,
+      "protectedPaths": [],
+      "pullBack": [],
+      "remoteRoot": "~/work",
+      "syncExclude": [
+        ".git",
+        "node_modules",
+        ".venv",
+        "target"
+      ],
+      "syncFlags": [
+        "-az",
+        "--checksum"
+      ]
+    },
+    "profiles": {
+      "installed": [
+        "specs",
+        "knowledge",
+        "design",
+        "components",
+        "ops",
+        "proof",
+        "toolchain",
+        "delivery",
+        "opensource"
+      ]
+    }
+  },
+  "ops": {
+    "opsRoot": "scripts",
+    "router": "justfile",
+    "registry": "scripts/registry.md"
+  },
+  "proof": {
+    "proofRoot": "tests",
+    "layers": {
+      "unit": {
+        "reach": "session",
+        "budget": 120,
+        "required": true
+      },
+      "contract": {
+        "reach": "tree",
+        "budget": 300,
+        "required": true
+      },
+      "jvm": {
+        "reach": "session",
+        "budget": 600,
+        "required": false
+      },
+      "remote": {
+        "reach": "workspace",
+        "budget": 3600,
+        "required": false
+      }
+    },
+    "measuredRoots": [
+      "src",
+      "scripts"
+    ],
+    "proofExclusions": [
+      "examples",
+      "jvm"
+    ],
+    "cost": {
+      "tempRoot": "isolated",
+      "workers": 1,
+      "scopes": {
+        "task": "uv run pytest tests/unit",
+        "close": "uv run pytest tests/unit tests/contract -m 'not slow'",
+        "ci": "uv run coverage run -m pytest --random-order"
+      }
+    }
+  }
 }

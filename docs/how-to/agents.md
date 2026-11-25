@@ -24,11 +24,11 @@ A bundle grants the smallest set that does the job. The policy is deny-only: it 
 
 ## The dry run
 
-`tests/test_omnigent_agents.py` loads each `config.yaml` with the standard library, evaluates the policy on synthetic tool calls (denied tools, granted verbs, injection characters, a missing command) and pins every granted verb to the CLI parser. It contacts no model and uses no credential.
+`tests/contract/test_omnigent_agents.py` loads each `config.yaml` with the standard library, evaluates the policy on synthetic tool calls (denied tools, granted verbs, injection characters, a missing command) and pins every granted verb to the CLI parser. It contacts no model and uses no credential.
 
 ## Adding a verb
 
 1. Confirm the verb is read-only: the parser registers none of `--apply`, `--out`, `--output`, `--freeze`, `--write-baseline`, `--authorize`, `--report-out`.
 2. Add it to the regex in `config.yaml`, to the granted list in `instructions.md` and to `VERBS` in the test, in the same change.
-3. Run `uv run pytest tests/test_omnigent_agents.py -q`.
+3. Run `uv run pytest tests/contract/test_omnigent_agents.py -q`.
 4. A write-capable verb needs its own agent and its own approval, never an existing bundle.

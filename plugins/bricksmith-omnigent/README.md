@@ -24,7 +24,7 @@ Every bundle carries one deny-only policy (`omnigent.policies.builtins.cel.cel_p
 
 ### Not expressed
 
-- The shell rule cannot forbid a flag. Every granted verb is read-only today (none registers `--apply`, `--out`, `--output`, `--freeze`, `--write-baseline`, `--authorize` or `--report-out`) and `tests/test_omnigent_agents.py` pins that against the CLI parser. A verb that gains a mutating flag must leave the list in the same change. For this reason `quality compare` and `quality check` (both register `--report-out`) are not granted.
+- The shell rule cannot forbid a flag. Every granted verb is read-only today (none registers `--apply`, `--out`, `--output`, `--freeze`, `--write-baseline`, `--authorize` or `--report-out`) and `tests/contract/test_omnigent_agents.py` pins that against the CLI parser. A verb that gains a mutating flag must leave the list in the same change. For this reason `quality compare` and `quality check` (both register `--report-out`) are not granted.
 - Read tools carry no path filter: the instructions forbid opening `.env` or a secret, the policy does not.
 - Remote reads use the selected context's credentials; the bundle never holds one.
 - Lifecycle changes (`model promote`, `run --apply`) and `env check` are not granted and have no agent.
@@ -44,7 +44,7 @@ An overlay binds a role by an `agents/<name>.json` file holding `name` and `desc
 ## Dry run
 
 ```bash
-uv run pytest tests/test_omnigent_agents.py -q
+uv run pytest tests/contract/test_omnigent_agents.py -q
 ```
 
 The test uses only the standard library and synthetic tool calls; no model is contacted.

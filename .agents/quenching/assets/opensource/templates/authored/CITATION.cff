@@ -1,0 +1,7 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "{{project}}"
+authors:
+  - name: "{{authors}}"
+repository-code: "{{repository}}"
+license: "{{spdx}}"

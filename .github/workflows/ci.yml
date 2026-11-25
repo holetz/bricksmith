@@ -32,7 +32,7 @@ jobs:
         with:
           enable-cache: true
       - name: Kernel parity on a classic local Spark session
-        run: uv run --isolated --with pyspark==4.0.1 pytest tests/jvm -q -rs
+        run: uv run --isolated --with pyspark==4.0.1 pytest tests/jvm -q -rs --random-order
         env:
           BRICKSMITH_REQUIRE_KERNEL: "true"
       - uses: actions/upload-artifact@v7.0.2
@@ -64,8 +64,11 @@ jobs:
         run: uv run ruff format --check
       - name: Types
         run: uv run pyright
-      - name: Tests
-        run: uv run pytest
+      # Random order proves the tests are independent; the coverage floor is [tool.coverage.report] fail_under.
+      - name: Tests (random order, under coverage)
+        run: uv run coverage run -m pytest --random-order
+      - name: Coverage floor
+        run: uv run coverage report --skip-covered
       - name: Build the library
         run: uv build
       - name: Verify wheel and sdist in clean environments (heavy integrations absent, kernel JAR packaged)

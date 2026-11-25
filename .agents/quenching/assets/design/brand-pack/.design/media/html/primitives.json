@@ -1,0 +1,68 @@
+{
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single high-salience action.",
+      "html": "<button class=\"ds-button\">Continue</button>",
+      "css": ".ds-button { background: var(--design-colors-primary); color: var(--design-colors-on-primary); font: inherit; font-weight: var(--design-typography-label-font-weight); padding: var(--design-spacing-sm) var(--design-spacing-lg); border: 0; border-radius: var(--design-rounded-sm); cursor: pointer; transition: var(--design-motion-standard); } .ds-button:hover { background: var(--design-colors-secondary); color: var(--design-colors-on-secondary); } .ds-button:active { transform: translateY(1px); } .ds-button:focus-visible { outline: var(--design-strokes-control) solid var(--design-colors-primary); outline-offset: var(--design-spacing-xs); }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A quiet text field with an explicit label.",
+      "html": "<label class=\"ds-field\">Name<input value=\"Ada\"></label>",
+      "css": ".ds-field { display: grid; gap: var(--design-spacing-xs); color: var(--design-colors-on-surface); } .ds-field input { padding: var(--design-spacing-sm) var(--design-spacing-md); background: var(--design-colors-surface); color: inherit; border: var(--design-strokes-control) solid currentColor; border-radius: var(--design-rounded-sm); transition: border-color var(--design-motion-standard); } .ds-field input:hover { border-color: var(--design-colors-primary); } .ds-field input:focus-visible { outline: var(--design-strokes-control) solid var(--design-colors-primary); outline-offset: var(--design-spacing-xs); }"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "A compact landmark with one active destination.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Primary\"><a aria-current=\"page\" href=\"#\">Overview</a><a href=\"#\">Evidence</a></nav>",
+      "css": ".ds-nav { display: flex; gap: var(--design-spacing-lg); padding: var(--design-spacing-md) var(--design-spacing-lg); background: var(--design-colors-surface); } .ds-nav a { color: var(--design-colors-on-surface); transition: color var(--design-motion-standard); } .ds-nav a:hover, .ds-nav [aria-current] { color: var(--design-colors-primary); } .ds-nav a:focus-visible { outline: var(--design-strokes-control) solid var(--design-colors-primary); outline-offset: var(--design-spacing-xs); }"
+    },
+    {
+      "name": "Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Short categorical metadata, never a primary action.",
+      "html": "<span class=\"ds-chip\">Verified</span>",
+      "css": ".ds-chip { display: inline-flex; padding: var(--design-spacing-xs) var(--design-spacing-sm); color: var(--design-colors-on-secondary); background: var(--design-colors-secondary); border-radius: var(--design-rounded-full); font-weight: var(--design-typography-label-font-weight); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A grouped unit with restrained depth.",
+      "html": "<article class=\"ds-card\"><h3>Finding</h3><p>Evidence and consequence stay together.</p></article>",
+      "css": ".ds-card { padding: var(--design-spacing-lg); color: var(--design-colors-on-surface); background: var(--design-colors-surface); border-radius: var(--design-rounded-md); box-shadow: var(--design-shadows-ambient-low); }"
+    },
+    {
+      "name": "Eyebrow",
+      "kind": "custom",
+      "refersTo": "eyebrow",
+      "description": "Editorial pre-heading for context, not decoration.",
+      "html": "<p class=\"ds-eyebrow\">Section 01</p>",
+      "css": ".ds-eyebrow { margin: 0 0 var(--design-spacing-sm); color: var(--design-colors-primary); font-size: var(--design-typography-label-font-size); font-weight: var(--design-typography-label-font-weight); letter-spacing: var(--design-typography-label-letter-spacing); text-transform: uppercase; }"
+    },
+    {
+      "name": "Rule",
+      "kind": "custom",
+      "refersTo": "rule",
+      "description": "A single structural thread between editorial blocks.",
+      "html": "<hr class=\"ds-rule\">",
+      "css": ".ds-rule { width: 100%; border: 0; border-top: var(--design-strokes-rule) solid var(--design-colors-primary); }"
+    },
+    {
+      "name": "Frame",
+      "kind": "custom",
+      "refersTo": "frame",
+      "description": "The bounded editorial canvas used by documents and decks.",
+      "html": "<section class=\"ds-frame\"><p>Deliberate content.</p></section>",
+      "css": ".ds-frame { max-width: var(--design-layout-content-wide); margin-inline: auto; padding: var(--design-spacing-xl) var(--design-spacing-lg); color: var(--design-colors-on-surface); background: var(--design-colors-surface); }"
+    }
+  ]
+}

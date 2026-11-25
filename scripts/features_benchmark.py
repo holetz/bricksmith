@@ -1,11 +1,12 @@
 """Time the feature engines per aggregate family and print a markdown report.
 
 Usage: ``python scripts/features_benchmark.py [--sizes 200x24x4,2000x24x4] [--engines reference,jvm,spark,arrow]
-[--families sequence,trend,all] [--single-closing] [--budget SECONDS] [--output report.md]``. The Spark engines run on
+[--families sequence,trend,all] [--single-closing] [--budget SECONDS] [--write report.md]``. The Spark engines run on
 the context selected the usual way (``BRICKSMITH_*`` variables in the process environment, or in an optional ``.env``
 file; see the test setup guide); ``--engines reference`` needs no workspace. Progress goes to stderr and the report to
-stdout. ``--budget`` stops cleanly between measurements and labels the report as partial; ``--single-closing`` times
-the last closing of each size instead of every closing.
+stdout; ``--write PATH`` (alias ``--output``) also writes it to a file, the script's only write. ``--budget`` stops
+cleanly between measurements and labels the report as partial; ``--single-closing`` times the last closing of each
+size instead of every closing.
 """
 
 from __future__ import annotations
@@ -15,10 +16,10 @@ import platform
 import sys
 from pathlib import Path
 
+from bootstrap import ROOT
+
 from bricksmith.features.benchmark import BENCH_ENGINES, REFERENCE, Budget, Size, render_report, run_benchmark
 from bricksmith.features.catalog import FAMILIES
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 def _split(text: str) -> list[str]:
@@ -33,7 +34,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--families", default=",".join((*FAMILIES, "all")))
     parser.add_argument("--single-closing", action="store_true", help="time the last closing of each size only")
     parser.add_argument("--budget", type=float, help="stop cleanly between measurements after this many seconds")
-    parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--write", "--output", dest="output", type=Path, metavar="PATH", help="also write the report to PATH"
+    )
     args = parser.parse_args(argv)
     sizes = [Size.parse(s) for s in _split(args.sizes)]
     engines = _split(args.engines)

@@ -13,7 +13,8 @@ kebab-case.
 * [how-to/](how-to/index.md) — user guides: how to do a task with bricksmith
 * [decisions/](decisions/index.md) — architecture decision records: why a contract is the way it is
 * [project/](project/index.md) — the manual for this repository: development, tests, specifications, delivery and evidence
-* [vision/](vision/index.md) — direction and delivery waves
+* [vision/](vision/index.md) — direction, delivery waves and the product record
+* [standards/](standards/index.md) — standards the project follows: the design source and its production rules
 
 ## Boundaries
 

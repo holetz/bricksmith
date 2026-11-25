@@ -61,7 +61,7 @@ slice** out to return **compact unit candidates** (home / `type` / path / one-li
 anchor + its `source_uri`), never full bodies; the orchestrator merges and judges. Extraction sub-agents may run
 on a **cheap model/effort** — enrich **deletes nothing**, so a misclassification only misfiles
 a doc (correctable), unlike `/quenching-knowledge import-memory` (see the model policy in
-  [README.md §model-policy](.agents/quenching/README.md#model-policy)). **Done when:** every unit
+  [README.md §Model policy](.agents/quenching/README.md#model-policy)). **Done when:** every unit
   has a new/imported/resemblance/contradicts verdict with its source anchor.
 
 ### 3. Present ONE ingestion plan → gate on ONE OK

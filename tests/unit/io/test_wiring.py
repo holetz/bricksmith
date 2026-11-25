@@ -40,7 +40,7 @@ FILES = {
 
 
 @pytest.fixture
-def project(tmp_path: Path) -> Path:
+def wiring_project(tmp_path: Path) -> Path:
     for relative, text in FILES.items():
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,8 +48,8 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_external_sources_and_sinks_appear_in_lineage(project: Path) -> None:
-    graph = load_graph(project)
+def test_external_sources_and_sinks_appear_in_lineage(wiring_project: Path) -> None:
+    graph = load_graph(wiring_project)
     links = io_lineage(graph)
     assert links == (
         IoLink("main.ingest.pull", "in", "orders_src"),
@@ -63,20 +63,20 @@ def test_external_sources_and_sinks_appear_in_lineage(project: Path) -> None:
     assert "sinks" not in build_plan(graph).entry("main.ingest.undeclared").to_dict()
 
 
-def test_a_run_reads_and_writes_through_the_provider(project: Path, tmp_path: Path) -> None:
+def test_a_run_reads_and_writes_through_the_provider(wiring_project: Path, tmp_path: Path) -> None:
     src, dst = source_db(tmp_path / "s.db", 6), sink_db(tmp_path / "d.db")
     resources = ExternalResources(
         sources={"orders_src": lambda: sqlite_source(src)},
         sinks={"orders_dst": lambda: sqlite_sink(dst)},
         limits=Limits(batch_rows=4),
     )
-    graph = load_graph(project)
+    graph = load_graph(wiring_project)
     plan = build_plan(graph, roots=["main.ingest.pull"])
     tables = InMemoryTableIO()
     report = apply_plan(
         plan,
         graph,
-        project_root=project,
+        project_root=wiring_project,
         execution=ExecutionContext(environment="test", parameters={}),
         table_io=tables,
         externals=resources,
@@ -86,15 +86,15 @@ def test_a_run_reads_and_writes_through_the_provider(project: Path, tmp_path: Pa
     assert list(tables.tables.values()) == [6]
 
 
-def test_undeclared_sink_and_missing_provider_are_rejected(project: Path) -> None:
-    graph = load_graph(project)
+def test_undeclared_sink_and_missing_provider_are_rejected(wiring_project: Path) -> None:
+    graph = load_graph(wiring_project)
     context = ExecutionContext(environment="test", parameters={})
     plan = build_plan(graph, roots=["main.ingest.undeclared"])
-    report = run_plan(plan, project_root=project, execution=context, table_io=InMemoryTableIO())
+    report = run_plan(plan, project_root=wiring_project, execution=context, table_io=InMemoryTableIO())
     assert not report.ok
     assert "did not declare" in str(report.to_dict())
     plan = build_plan(graph, roots=["main.ingest.pull"])
-    failed = run_plan(plan, project_root=project, execution=context, table_io=InMemoryTableIO())
+    failed = run_plan(plan, project_root=wiring_project, execution=context, table_io=InMemoryTableIO())
     assert not failed.ok  # without a provider the legacy path reads the bound physical name from table I/O
 
 

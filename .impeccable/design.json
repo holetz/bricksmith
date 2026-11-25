@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-25T09:14:11Z",
+  "title": "Design System: Project Design System",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Deep teal",
+        "canonical": "oklch(49% 0.09 185)",
+        "tonalRamp": [
+          "#042F2E",
+          "#134E4A",
+          "#115E59",
+          "#0F766E",
+          "#0D9488",
+          "#14B8A6",
+          "#5EEAD4",
+          "#CCFBF1"
+        ]
+      },
+      "on-primary": {
+        "canonical": "#FFFFFF",
+        "displayName": "On Primary",
+        "tonalRamp": [
+          "#4C4C4C",
+          "#808080",
+          "#B2B2B2",
+          "#E6E6E6",
+          "#FFFFFF",
+          "#FFFFFF",
+          "#FFFFFF",
+          "#FFFFFF"
+        ]
+      },
+      "secondary": {
+        "canonical": "#CCFBEF",
+        "displayName": "Secondary",
+        "tonalRamp": [
+          "#3D4B48",
+          "#667E78",
+          "#8FB0A7",
+          "#B8E2D7",
+          "#D1FBF1",
+          "#DBFCF4",
+          "#E6FDF7",
+          "#FAFFFD"
+        ]
+      },
+      "on-secondary": {
+        "canonical": "#042F2E",
+        "displayName": "On Secondary",
+        "tonalRamp": [
+          "#010E0E",
+          "#021817",
+          "#032120",
+          "#042A29",
+          "#1D4443",
+          "#4F6D6D",
+          "#829796",
+          "#E6EAEA"
+        ]
+      },
+      "surface": {
+        "canonical": "#FAFAF9",
+        "displayName": "Surface",
+        "tonalRamp": [
+          "#4B4B4B",
+          "#7D7D7C",
+          "#AFAFAE",
+          "#E1E1E0",
+          "#FAFAFA",
+          "#FCFCFB",
+          "#FCFCFC",
+          "#FEFEFE"
+        ]
+      },
+      "on-surface": {
+        "canonical": "#1C1917",
+        "displayName": "On Surface",
+        "tonalRamp": [
+          "#080807",
+          "#0E0C0C",
+          "#141210",
+          "#191615",
+          "#33302E",
+          "#605E5D",
+          "#8E8C8B",
+          "#E8E8E8"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "High-salience titles only."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Readable body copy across media."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Compact labels, buttons, and navigation."
+      }
+    },
+    "shadows": [
+      {
+        "name": "ambient-low",
+        "value": "0px 4px 24px 0px rgb(0 0 0 / 0.12)",
+        "purpose": "Diffuse separation for floating surfaces."
+      }
+    ],
+    "motion": [
+      {
+        "name": "standard",
+        "value": "200ms cubic-bezier(0.4, 0, 0.2, 1) 0ms",
+        "purpose": "Default state transition without bounce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single high-salience action.",
+      "html": "<button class=\"ds-button\">Continue</button>",
+      "css": ".ds-button { background: #0F766E; color: #FFFFFF; font: inherit; font-weight: 600; padding: 8px 24px; border: 0; border-radius: 4px; cursor: pointer; transition: 200ms cubic-bezier(0.4, 0, 0.2, 1) 0ms; } .ds-button:hover { background: #CCFBEF; color: #042F2E; } .ds-button:active { transform: translateY(1px); } .ds-button:focus-visible { outline: 1px solid #0F766E; outline-offset: 4px; }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A quiet text field with an explicit label.",
+      "html": "<label class=\"ds-field\">Name<input value=\"Ada\"></label>",
+      "css": ".ds-field { display: grid; gap: 4px; color: #1C1917; } .ds-field input { padding: 8px 16px; background: #FAFAF9; color: inherit; border: 1px solid currentColor; border-radius: 4px; transition: border-color 200ms cubic-bezier(0.4, 0, 0.2, 1) 0ms; } .ds-field input:hover { border-color: #0F766E; } .ds-field input:focus-visible { outline: 1px solid #0F766E; outline-offset: 4px; }"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "A compact landmark with one active destination.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Primary\"><a aria-current=\"page\" href=\"#\">Overview</a><a href=\"#\">Evidence</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 24px; padding: 16px 24px; background: #FAFAF9; } .ds-nav a { color: #1C1917; transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1) 0ms; } .ds-nav a:hover, .ds-nav [aria-current] { color: #0F766E; } .ds-nav a:focus-visible { outline: 1px solid #0F766E; outline-offset: 4px; }"
+    },
+    {
+      "name": "Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Short categorical metadata, never a primary action.",
+      "html": "<span class=\"ds-chip\">Verified</span>",
+      "css": ".ds-chip { display: inline-flex; padding: 4px 8px; color: #042F2E; background: #CCFBEF; border-radius: 999px; font-weight: 600; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A grouped unit with restrained depth.",
+      "html": "<article class=\"ds-card\"><h3>Finding</h3><p>Evidence and consequence stay together.</p></article>",
+      "css": ".ds-card { padding: 24px; color: #1C1917; background: #FAFAF9; border-radius: 8px; box-shadow: 0px 4px 24px 0px rgb(0 0 0 / 0.12); }"
+    },
+    {
+      "name": "Eyebrow",
+      "kind": "custom",
+      "refersTo": "eyebrow",
+      "description": "Editorial pre-heading for context, not decoration.",
+      "html": "<p class=\"ds-eyebrow\">Section 01</p>",
+      "css": ".ds-eyebrow { margin: 0 0 8px; color: #0F766E; font-size: 12px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }"
+    },
+    {
+      "name": "Rule",
+      "kind": "custom",
+      "refersTo": "rule",
+      "description": "A single structural thread between editorial blocks.",
+      "html": "<hr class=\"ds-rule\">",
+      "css": ".ds-rule { width: 100%; border: 0; border-top: 2px solid #0F766E; }"
+    },
+    {
+      "name": "Frame",
+      "kind": "custom",
+      "refersTo": "frame",
+      "description": "The bounded editorial canvas used by documents and decks.",
+      "html": "<section class=\"ds-frame\"><p>Deliberate content.</p></section>",
+      "css": ".ds-frame { max-width: 72rem; margin-inline: auto; padding: 48px 24px; color: #1C1917; background: #FAFAF9; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Creative North Star: \"Quiet evidence, unmistakable action.\"** The system keeps information calm",
+    "overview": "**Creative North Star: \"Quiet evidence, unmistakable action.\"** The system keeps information calm\nand legible, then spends one accent on the decision that matters. It should feel deliberate rather\nthan decorated.\n\n- **Restrained:** hierarchy comes from scale and space before ornament.\n- **Evidence-led:** supporting material sits beside the claim it proves.\n- **Decisive:** one accent thread identifies action and structure.",
+    "keyCharacteristics": [
+      "Restrained:: hierarchy comes from scale and space before ornament.",
+      "Evidence-led:: supporting material sits beside the claim it proves.",
+      "Decisive:: one accent thread identifies action and structure."
+    ],
+    "rules": [
+      {
+        "name": "The One Accent Rule",
+        "body": "One block gets one accent role; a second accent must encode meaning rather",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "**Do** keep every primitive declaration in `/.design/tokens.json` and regenerate adapters.",
+      "**Do** preserve accessible foreground/background pairs and semantic heading order.",
+      "**Do** inspect the actual HTML, deck, or PDF after rendering."
+    ],
+    "donts": [
+      "**Don't** copy a color, type size, radius, or spacing value into a medium primitive.",
+      "**Don't** use an asset whose license and binding role are not recorded.",
+      "**Don't** treat the lossy DESIGN.md projection as the whole DTCG source."
+    ]
+  }
+}

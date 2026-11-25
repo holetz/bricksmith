@@ -16,7 +16,7 @@ The conversion publishes specification metadata only; no product PR, merge or re
 
 Both agent hosts use regular files, `.agents/quenching.json` and `.claude/quenching.json`,
 containing copies of the same configuration envelope (`backend: git`).
-`tests/test_quenching_config.py` requires equal parsed JSON and the git backend.
+`tests/contract/test_quenching_config.py` requires equal parsed JSON and the git backend.
 Branch configuration disables GitHub cards with `provider: none`.
 GitHub issues 1–4 are closed, thin retired projections; their history remains available.
 Closing those cards does not mark unfinished canonical specifications done.

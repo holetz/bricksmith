@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{field.title}}</title>
+  <style>{{tokens.css}}</style>
+  <style>
+    body { margin: 0; color: var(--design-colors-on-surface); background: var(--design-colors-surface); font-family: var(--design-typography-body-font-family); }
+    main { max-width: var(--design-layout-content-wide); margin: auto; padding: var(--design-spacing-xl) var(--design-spacing-lg); }
+    h1 { font-family: var(--design-typography-display-font-family); font-size: var(--design-typography-display-font-size); line-height: var(--design-typography-display-line-height); }
+    .subtitle { max-width: var(--design-layout-reading); color: var(--design-colors-primary); }
+    article { max-width: var(--design-layout-reading); line-height: var(--design-typography-body-line-height); }
+  </style>
+</head>
+<body>
+  <main>
+    <p>{{field.date}}</p>
+    <h1>{{field.title}}</h1>
+    <p class="subtitle">{{field.subtitle}}</p>
+    <article>{{field.body}}</article>
+  </main>
+</body>
+</html>

@@ -63,7 +63,7 @@ Every slice delivers, in this order:
 2. Code under its modules in `src/bricksmith`, with a CLI group in its own module exposing
    `register(subparsers)` and appended to `GROUPS` in `src/bricksmith/cli/groups.py`.
 3. Offline tests under `tests/unit/<capability>/` covering the slice's acceptance paragraph, and
-   remote tests under `tests/remote/` (reusing `tests/remote/conftest.py`) when the behavior
+   remote tests under `tests/remote/` (reusing the fixtures in `tests/fixtures/remote.py`) when the behavior
    depends on the platform. Remote tests are run for real on the selected environment
    (`BRICKSMITH_RUN_REMOTE_TESTS=true uv run --group remote pytest tests/remote/<file> -q`), kept
    tiny, and leave nothing behind in the workspace.

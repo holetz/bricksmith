@@ -5,10 +5,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .coverage
+coverage.json
 htmlcov/
 
 # Builds
 build/
+# The design projections are generated but versioned: the design doctor checks them byte for byte.
+!.design/build/
 dist/
 *.egg-info/
 # The JVM kernel: sbt outputs and the JAR scripts/build_kernel.py places for the wheel
@@ -31,3 +34,15 @@ CLAUDE.local.md
 
 # Editor state
 .vscode/
+
+.databricks
+
+# Secrets never enter the repository: private keys and credential files.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+credentials.json
+secrets.json
+token.json
