@@ -248,7 +248,8 @@ def test_hook_writes_both_history_tables_when_declared(tmp_path: Path) -> None:
             from bricksmith.tasks import task
 
             @task(kind="table", outputs="orders", metadata={"stability": {
-                "period": "month", "min_rows": 10, "psi_limits": "fixed", "min_rows_per_bin": 0, "baseline": "previous", "history": True}})
+                "period": "month", "min_rows": 10, "psi_limits": "fixed", "min_rows_per_bin": 0,
+                "baseline": "previous", "history": True}})
             def orders(ctx):
                 ctx.write("orders", [
                     {"month": f"2026-{m:02d}", "amount": float(i % 20) + i * 0.013}
