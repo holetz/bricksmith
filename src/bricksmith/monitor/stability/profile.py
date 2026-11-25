@@ -225,16 +225,59 @@ def _weight(row: Mapping[str, Any], weight: str) -> float:
     return 0.0 if is_null(value) else float(value)  # pyright: ignore[reportArgumentType] - not null here
 
 
-def _keep_segments(
-    rows: Sequence[Mapping[str, Any]], columns: tuple[str, ...], limit: int, info: ProfileInfo
-) -> set[str] | None:
-    if not columns:
-        return None
-    totals = Counter(segment_key(columns, [r.get(c) for c in columns]) for r in rows)
-    ranked = sorted(totals.items(), key=lambda item: (-item[1], item[0]))
-    if len(ranked) > limit:
-        info.truncated[",".join(columns)] = len(ranked) - limit
-    return {key for key, _ in ranked[:limit]}
+def kept_segments(
+    ranked: Mapping[str, int], limit: int, carried: Mapping[str, str], *, label: str, info: ProfileInfo
+) -> set[str]:
+    """Return the kept keys of one segment set: the top ``limit`` of ``ranked`` plus the carried ones it holds.
+
+    ``ranked`` counts the rows of every key over the periods the run loads (ties go to the smaller key);
+    ``carried`` names the segments that already have stored history, which stay kept even outside the top.
+    """
+    ordered = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
+    keep = {key for key, _ in ordered[:limit]} | {key for key in ranked if key in carried}
+    if len(ordered) > len(keep):
+        info.truncated[label] = len(ordered) - len(keep)
+    return keep
+
+
+def first_periods(found: Mapping[str, str], carried: Mapping[str, str]) -> dict[str, str]:
+    """Return the earliest period each kept or carried segment had rows in (loaded data or stored history)."""
+    first = dict(carried)
+    for key, period in found.items():
+        first[key] = min(period, first.get(key, period))
+    return first
+
+
+def _rank(
+    rows: Iterable[tuple[str, Mapping[str, Any]]], columns: tuple[str, ...]
+) -> tuple[Counter[str], dict[str, str]]:
+    """Return the row count and the earliest period of every segment key of ``columns``."""
+    counts: Counter[str] = Counter()
+    found: dict[str, str] = {}
+    for period, row in rows:
+        key = segment_key(columns, [row.get(c) for c in columns])
+        counts[key] += 1
+        found[key] = min(period, found.get(key, period))
+    return counts, found
+
+
+def _scope(
+    rows: Iterable[Mapping[str, Any]], period_column: str, wanted: set[str], ranking: set[str], info: ProfileInfo
+) -> tuple[list[tuple[str, Mapping[str, Any]]], list[tuple[str, Mapping[str, Any]]]]:
+    """Return ``(rows of the profiled periods, rows of the ranking periods)``, each with its period text."""
+    scoped: list[tuple[str, Mapping[str, Any]]] = []
+    ranked: list[tuple[str, Mapping[str, Any]]] = []
+    for row in rows:
+        period = period_text(row.get(period_column))
+        if period is None:
+            info.null_period_rows += 1
+            continue
+        if period in wanted:
+            scoped.append((period, row))
+        if period in ranking:
+            ranked.append((period, row))
+    info.rows = len(scoped)
+    return scoped, ranked
 
 
 def profile_rows(  # noqa: PLR0913 - one keyword per profile field
@@ -245,21 +288,26 @@ def profile_rows(  # noqa: PLR0913 - one keyword per profile field
     *,
     dataset: str,
     run_id: str = "",
+    rank_periods: Iterable[str] | None = None,
+    carried: Mapping[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], ProfileInfo]:
-    """Profile ``periods`` of ``rows`` with the frozen ``binning`` (pure engine)."""
+    """Profile ``periods`` of ``rows`` with the frozen ``binning`` (pure engine).
+
+    Segments are ranked over ``rank_periods`` (the periods the run loads; ``periods`` by default) and
+    ``carried`` (segment key -> earliest stored period with rows) stay kept; see :func:`kept_segments`.
+    """
     wanted = set(periods)
+    carried = carried or {}
     info = ProfileInfo()
-    scoped: list[tuple[str, Mapping[str, Any]]] = []
-    for row in rows:
-        period = period_text(row.get(config.period))
-        if period is None:
-            info.null_period_rows += 1
-        elif period in wanted:
-            scoped.append((period, row))
-    info.rows = len(scoped)
+    scoped, ranked_rows = _scope(rows, config.period, wanted, wanted | set(rank_periods or ()), info)
     totals: dict[tuple[str, str, str, str], list[float]] = {}
+    first: dict[str, str] = {}
     for columns in segment_sets(config):
-        keep = _keep_segments([r for _, r in scoped], columns, config.max_segments, info)
+        keep: set[str] | None = None
+        if columns:
+            counts, found = _rank(ranked_rows, columns)
+            keep = kept_segments(counts, config.max_segments, carried, label=",".join(columns), info=info)
+            first |= first_periods({k: found[k] for k in keep}, {k: v for k, v in carried.items() if k in keep})
         for period, row in scoped:
             key = segment_key(columns, [row.get(c) for c in columns])
             if keep is not None and key not in keep:
@@ -275,19 +323,28 @@ def profile_rows(  # noqa: PLR0913 - one keyword per profile field
                 if x is not None:
                     slot[2] += x
                     slot[3] += x * x
-    return complete_rows(binning, totals, config, dataset=dataset, run_id=run_id), info
+    return complete_rows(binning, totals, config, dataset=dataset, run_id=run_id, first=first, periods=wanted), info
 
 
-def complete_rows(
+def complete_rows(  # noqa: PLR0913 - one keyword per profile field
     binning: Reference,
     totals: Mapping[tuple[str, str, str, str], Sequence[float]],
     config: StabilityConfig,
     *,
     dataset: str,
     run_id: str,
+    first: Mapping[str, str] | None = None,
+    periods: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
-    """Turn ``(period, segment, column, bin) -> [count, weight, sum, sum_sq]`` into rows; every bin is listed."""
-    groups = sorted({(p, s) for p, s, _, _ in totals})
+    """Turn ``(period, segment, column, bin) -> [count, weight, sum, sum_sq]`` into rows; every bin is listed.
+
+    A segment of ``first`` (segment key -> earliest period with rows) absent from a profiled period of ``periods``
+    after that first period gets its rows at zero, so a vanished segment is judged with no rows; before its first
+    period nothing is listed and it keeps ``no_baseline``.
+    """
+    found = {(p, s) for p, s, _, _ in totals}
+    found |= {(p, s) for p in periods for s, since in (first or {}).items() if since < p}
+    groups = sorted(found)
     out: list[dict[str, Any]] = []
     for period, segment in groups:
         for spec in binning.columns:
@@ -313,8 +370,10 @@ __all__ = [
     "ProfileInfo",
     "bin_labels",
     "complete_rows",
+    "first_periods",
     "fit_periods_of",
     "fit_rows_binning",
+    "kept_segments",
     "period_date",
     "period_text",
     "periods_of_rows",
