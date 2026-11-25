@@ -449,7 +449,7 @@ class StabilityConfig:
         return data
 
     def _psi_options(self) -> dict[str, Any]:
-        """Return the PSI and column options that differ from their defaults (default declarations serialize as before)."""
+        """Return the PSI and column options that differ from their defaults (the rest serialize as before)."""
         options: dict[str, Any] = {}
         if self.auto_columns != FREEZE:
             options["auto_columns"] = self.auto_columns
