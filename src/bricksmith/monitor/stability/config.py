@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -397,6 +398,7 @@ class StabilityConfig:
     inference: InferenceOptions = field(default_factory=InferenceOptions)
     epsilon: float = 1e-4
     rules: tuple[LimitRule, ...] = ()
+    rules_table: str = ""
     notify: NotifyPolicy | None = None
     revision: bool = False
     auto_columns: str = FREEZE
@@ -480,6 +482,8 @@ class StabilityConfig:
         data = self._base_dict()
         if self.rules:
             data["rules"] = [r.to_dict() for r in self.rules]
+        elif self.rules_table:
+            data["rules"] = {"table": self.rules_table}
         if self.notify is not None:
             data["notify"] = self.notify.to_dict()
         data.update({name: True for name in ("revision", "views") if getattr(self, name)})
@@ -601,6 +605,26 @@ def _epsilon(value: object) -> float:
         msg = f"epsilon must be a finite number > 0, got {value!r}"
         raise _fail(msg)
     return number
+
+
+_RULES_TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){2}$")
+
+
+def _rules_table(value: object) -> str:
+    """Return the table of ``rules: {table: catalog.schema.name}``, ``""`` for any other form of ``rules``."""
+    if not isinstance(value, dict):
+        return ""
+    unknown = sorted(set(value) - {"table"})
+    table = value.get("table")
+    if unknown or not isinstance(table, str) or not _RULES_TABLE.match(table):
+        msg = "rules given as a mapping must be exactly {table: catalog.schema.table_name}"
+        raise _fail(msg)
+    return table
+
+
+def rules_of(value: object, root: Path | str | None = None) -> tuple[LimitRule, ...]:
+    """Validate rule mappings (or a rules file path) the way a declaration does, metrics included."""
+    return _rules(value, root)
 
 
 def _rules(value: object, root: Path | str | None) -> tuple[LimitRule, ...]:
@@ -837,6 +861,7 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
         raise _fail(msg)
     history, history_periods = _history(data)
     try:
+        rules_table = _rules_table(data.get("rules"))
         config = StabilityConfig(
             period=_name(data["period"], "period"),
             output=str(data.get("output", "")),
@@ -861,7 +886,8 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             prefix=prefix,
             inference=_inference(data.get("inference")),
             epsilon=_epsilon(data.get("epsilon", 1e-4)),
-            rules=_rules(data.get("rules"), root),
+            rules=() if rules_table else _rules(data.get("rules"), root),
+            rules_table=rules_table,
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
             auto_columns=_auto_columns(data.get("auto_columns"), data.get("columns", "auto")),

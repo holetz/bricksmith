@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bricksmith.cli.common import emit, global_parent
+from bricksmith.cli.common import context_from_args, emit, global_parent
 from bricksmith.errors import EXIT_OK, EXIT_VALIDATION, UsageError
 from bricksmith.monitor.actions import ACTIONS as ACTION_NAMES
 from bricksmith.monitor.actions import RESOLUTIONS, action_row, insert_statement
@@ -18,6 +18,8 @@ from bricksmith.monitor.stability.dashboard import dashboard_definition
 from bricksmith.monitor.stability.engine import MemoryStore, check
 from bricksmith.monitor.stability.marks import MARKS as MARK_NAMES
 from bricksmith.monitor.stability.marks import UNMARKED, effective_marks, mark_row
+from bricksmith.monitor.stability.ops import Operations
+from bricksmith.monitor.stability.sql import SqlRunner
 from bricksmith.monitor.stability.tables import (
     ACTIONS,
     ALL_KINDS,
@@ -34,6 +36,60 @@ if TYPE_CHECKING:
 
 def _plain(value: object) -> object:
     return value.isoformat() if isinstance(value, (date, datetime)) else value
+
+
+def _ops(args: argparse.Namespace) -> Operations:
+    """Build the workspace operations from the explicit profile, ``--warehouse`` and ``--scope``."""
+    if not args.warehouse or not args.scope:
+        msg = "workspace operations need --warehouse and --scope (catalog.schema of the stability tables)"
+        raise UsageError(msg)
+    from bricksmith.clients import Clients  # noqa: PLC0415 - heavy integration, loaded where used
+
+    workspace = Clients(context_from_args(args)).workspace()
+    return Operations(SqlRunner(workspace, args.warehouse), args.scope, prefix=args.prefix, jobs=workspace.jobs)
+
+
+def _table(rows: list[dict[str, Any]], columns: tuple[str, ...]) -> str:
+    return "\n".join("  ".join(str(r.get(c) if r.get(c) is not None else "") for c in columns) for r in rows)
+
+
+def _status(args: argparse.Namespace) -> int:
+    rows = _ops(args).status()
+    cols = ("dataset", "status", "latest_period", "open_alerts", "last_run_status", "last_run_at")
+    emit(args, {"datasets": rows}, f"{len(rows)} dataset(s)\n" + _table(rows, cols))
+    return EXIT_OK
+
+
+def _series(args: argparse.Namespace) -> int:
+    filters = {k: getattr(args, k) for k in ("column", "metric", "segment") if getattr(args, k) is not None}
+    rows = _ops(args).series(args.dataset, **filters)
+    cols = ("period", "column", "metric", "value", "light", "trend_status", "mark", "action")
+    emit(args, {"series": rows}, f"{len(rows)} point(s) of {args.dataset}\n" + _table(rows, cols))
+    return EXIT_OK
+
+
+def _actions(args: argparse.Namespace) -> int:
+    ops = _ops(args)
+    if args.queue:
+        rows = ops.alerts(args.dataset)
+        cols = ("dataset", "alert_id", "severity", "effective_state", "action", "message")
+        emit(args, {"alerts": rows}, f"{len(rows)} open alert(s)\n" + _table(rows, cols))
+    else:
+        rows = ops.actions(args.dataset)
+        cols = ("created_at", "dataset", "alert_id", "action", "resolution", "author", "reason")
+        emit(args, {"actions": rows}, f"{len(rows)} action(s)\n" + _table(rows, cols))
+    return EXIT_OK
+
+
+def _reprocess(args: argparse.Namespace) -> int:
+    if not args.job:
+        if not args.config:
+            msg = "reprocess needs --config (offline) or --job with --warehouse and --scope (workspace)"
+            raise UsageError(msg)
+        return _check(args)
+    started = _ops(args).reprocess(args.job, args.periods)
+    emit(args, {"reprocess": started}, f"started run {started['run_id']} of job {started['job_id']}: {args.periods}")
+    return EXIT_OK
 
 
 def _check(args: argparse.Namespace) -> int:
@@ -110,6 +166,14 @@ def _dashboard(args: argparse.Namespace) -> int:
 
 
 def _action(args: argparse.Namespace) -> int:
+    if args.warehouse:
+        extra = {k: v for k, v in (("valid_until", args.valid_until), ("resolution", args.resolution)) if v}
+        row = _ops(args).act(
+            dataset=args.dataset, alert_id=args.alert_id, action=args.action, reason=args.reason, author=args.author,
+            **extra,
+        )  # fmt: skip
+        emit(args, {"action": row}, f"alert action {row['action_id']}: {row['action']} on {row['alert_id']} written")
+        return EXIT_OK
     created = args.created_at or datetime.now(UTC).isoformat(timespec="seconds")
     row = action_row(
         entity="dataset", name=args.dataset, alert_id=args.alert_id, action=args.action, reason=args.reason,
@@ -139,6 +203,16 @@ def _action(args: argparse.Namespace) -> int:
 def _mark(args: argparse.Namespace) -> int:
     created = args.created_at or datetime.now(UTC).isoformat(timespec="seconds")
     unmark = args.command == "unmark"
+    if args.warehouse:
+        row = _ops(args).mark(
+            unmark=unmark, mark="" if unmark else args.mark, dataset=args.dataset, period=args.period,
+            reason=args.reason, author=args.author, segment=args.segment or "", column=args.column or "",
+            metric=args.metric or "", valid_until="" if unmark else args.valid_until or "",
+        )  # fmt: skip
+        emit(
+            args, {"mark": row}, f"mark {row['mark_id']}: {row['mark']} on {row['period']} of {row['dataset']} written"
+        )
+        return EXIT_OK
     row = mark_row(
         dataset=args.dataset, period=args.period, mark=UNMARKED if unmark else args.mark, reason=args.reason,
         author=args.author, created_at=created, segment=args.segment or "", column=args.column or "",
@@ -171,7 +245,13 @@ def _state_of(path: str) -> dict[str, Any]:
 
 def _marks(args: argparse.Namespace) -> int:
     as_of = args.as_of or datetime.now(UTC).date().isoformat()
-    found = effective_marks(_state_of(args.state).get(MARKS, []), as_of, args.dataset)
+    if args.warehouse:
+        found = _ops(args).marks(args.dataset, as_of)
+    elif args.state:
+        found = effective_marks(_state_of(args.state).get(MARKS, []), as_of, args.dataset)
+    else:
+        msg = "marks needs --state (a file) or --warehouse with --scope (the workspace)"
+        raise UsageError(msg)
     lines = [f"{len(found)} mark(s) in force on {as_of}"]
     for m in found:
         scope = ",".join(f"{c}={m[c]}" for c in ("segment", "column", "metric") if m[c])
@@ -181,6 +261,13 @@ def _marks(args: argparse.Namespace) -> int:
         )
     emit(args, {"as_of": as_of, "marks": found}, "\n".join(lines))
     return EXIT_OK
+
+
+def _warehouse(parser: argparse.ArgumentParser, *, scope: bool = False) -> None:
+    parser.add_argument("--warehouse", help="SQL warehouse id: run against the workspace (needs --scope) and write")
+    if scope:
+        parser.add_argument("--scope", help="catalog.schema of the stability tables")
+        parser.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
 
 
 def _selectors(parser: argparse.ArgumentParser) -> None:
@@ -195,6 +282,7 @@ def _selectors(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--scope", help="catalog.schema of the stability tables: also print the INSERT statement")
     parser.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
     parser.add_argument("--state", help="local JSON file holding the stability tables; the row is appended to 'marks'")
+    _warehouse(parser)
 
 
 def _register_marks(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -214,14 +302,35 @@ def _register_marks(commands: argparse._SubParsersAction[argparse.ArgumentParser
     _selectors(unmark)
     unmark.set_defaults(handler=_mark)
     listed = commands.add_parser("marks", help="list the marks in force in a state file", parents=[global_parent()])
-    listed.add_argument("--state", required=True, help="local JSON file holding the stability tables; only read")
+    listed.add_argument("--state", help="local JSON file holding the stability tables; only read")
+    _warehouse(listed, scope=True)
     listed.add_argument("--dataset", help="only the marks of this dataset")
     listed.add_argument("--as-of", help="the date the marks must hold on (default today)")
     listed.set_defaults(handler=_marks)
 
 
+def _register_reprocess(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Register ``stability reprocess``."""
+    redo = commands.add_parser(
+        "reprocess",
+        help="profile and judge again the periods of a backfill or correction (exit 4 when the gate fails)",
+        parents=[global_parent()],
+    )
+    redo.add_argument("--config", help="JSON file with a stability declaration (offline reprocess)")
+    redo.add_argument("--job", help="workspace job id: start a run that carries --periods to the runner (--reprocess)")
+    _warehouse(redo, scope=True)
+    _source(redo)
+    redo.add_argument("--dataset", help="dataset name (default: the declaration's, the table or the file name)")
+    redo.add_argument(
+        "--periods", required=True, help="periods to profile again: a list (a,b) or a range (first..last)"
+    )
+    redo.add_argument("--state", help="local JSON file holding the stability tables; read, then updated")
+    redo.add_argument("--run-id", default="cli", help="run identity recorded on the rows")
+    redo.set_defaults(handler=_reprocess)
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``stability check|reprocess|backtest|views|dashboard|action|mark|unmark|marks``."""
+    """Register the ``stability`` verbs: check, reprocess, backtest, views, dashboard, decisions and workspace reads."""
     group = subparsers.add_parser(
         "stability", help="check table stability by period and print dashboard views", parents=[global_parent()]
     )
@@ -236,20 +345,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     run.add_argument("--run-id", default="cli", help="run identity recorded on the rows")
     run.add_argument("--as-of", help="ISO date the declared cadence is judged at (default: today, UTC)")
     run.set_defaults(handler=_check)
-    redo = commands.add_parser(
-        "reprocess",
-        help="profile and judge again the periods of a backfill or correction (exit 4 when the gate fails)",
-        parents=[global_parent()],
-    )
-    redo.add_argument("--config", required=True, help="JSON file with a stability declaration (period, columns...)")
-    _source(redo)
-    redo.add_argument("--dataset", help="dataset name (default: the declaration's, the table or the file name)")
-    redo.add_argument(
-        "--periods", required=True, help="periods to profile again: a list (a,b) or a range (first..last)"
-    )
-    redo.add_argument("--state", help="local JSON file holding the stability tables; read, then updated")
-    redo.add_argument("--run-id", default="cli", help="run identity recorded on the rows")
-    redo.set_defaults(handler=_check)
+    _register_reprocess(commands)
     bt = commands.add_parser(
         "backtest",
         help="replay a candidate configuration over the stored profiles and report what would change (never writes)",
@@ -293,8 +389,31 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     act.add_argument("--scope", help="catalog.schema of the stability tables: also print the INSERT statement")
     act.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
     act.add_argument("--state", help="local JSON file holding the stability tables; the row is appended to 'actions'")
+    _warehouse(act)
     act.set_defaults(handler=_action)
     _register_marks(commands)
+    _register_reads(commands)
+
+
+def _register_reads(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Register the workspace reads ``stability status|series|actions``."""
+    for name, handler, text in (
+        ("status", _status, "list the datasets with status, latest period, last run and open alerts"),
+        ("series", _series, "list the points of a dataset's series with limits, band, marks and actions"),
+        ("actions", _actions, "list the actions on alerts, or with --queue the open alerts"),
+    ):
+        parser = commands.add_parser(name, help=text, parents=[global_parent()])
+        parser.add_argument("--warehouse", required=True, help="SQL warehouse id")
+        parser.add_argument("--scope", required=True, help="catalog.schema of the stability tables")
+        parser.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
+        if name == "series":
+            parser.add_argument("--dataset", required=True)
+            for flag in ("column", "metric", "segment"):
+                parser.add_argument(f"--{flag}", help=f"only this {flag}")
+        if name == "actions":
+            parser.add_argument("--dataset", help="only this dataset")
+            parser.add_argument("--queue", action="store_true", help="the open alerts with their latest action")
+        parser.set_defaults(handler=handler)
 
 
 __all__ = ["register"]

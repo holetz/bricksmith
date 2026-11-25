@@ -24,6 +24,7 @@ from bricksmith.monitor.stability.engine import (
     check,
     error_outcome,
 )
+from bricksmith.monitor.stability.rulestable import load_rules
 from bricksmith.monitor.stability.tables import (
     HISTORY_KINDS,
     KINDS,
@@ -243,6 +244,8 @@ def _check_one(  # noqa: PLR0913 - the task's context, its declaration, the run'
     spark = None if is_rows(data) else getattr(ctx.io, "spark", None) or getattr(data, "sparkSession", None)
     store = _IOStore(ctx, declaration.tables, spark)
     config = declaration.config
+    if config.rules_table:
+        config = replace(config, rules=load_rules(ctx.io, config.rules_table), rules_table="")
     if notifier is None:
         config = replace(config, notify=None)
     elif config.notify is None:

@@ -610,6 +610,23 @@ informational_segments = ["channel=pilot"]   # or controlled_segments = [...]: e
 - Stability rules use `absolute` limits only, like `limits`. A table created before the rule columns gains them
   through the `evolution` write option.
 
+### Rules read from a Delta table
+
+`rules: {table: catalog.schema.stability_rules}` reads the rules from a Delta table at run time, with the same
+validation as an inline list; the run replaces the declaration's rules with them, so a changed row re-judges the window
+like any rule change (the rules are part of the judgment fingerprint). The table is append-only data, so it is also the
+audit trail:
+
+| Column | Holds |
+| --- | --- |
+| `rule_id`, `version` | the rule's identity, the pair is unique |
+| `body` | the rule mapping as JSON, the exact shape of a rules file entry |
+| `author`, `created_at` | who appended the row and when |
+
+For a repeated `(rule_id, version)` the latest `created_at` wins and every earlier row stays readable. A table that
+cannot be read, or a row whose body is not JSON or is not a valid rule, fails the check naming it.
+`bricksmith.monitor.stability.rulestable.rule_row(body, author=..., created_at=...)` builds a validated row to append.
+
 See [decision 0021](../decisions/0021-limit-rules-selectors.md).
 
 ## Tables
@@ -706,6 +723,54 @@ A BI model on these tables works as a star:
   severity, PSI over time per column with `green_limit` and `red_limit` as reference lines, and the bin-share
   comparison of `share` against `baseline_share` with `contribution` explaining a PSI jump.
 
+## Operate from the workspace
+
+The verbs below run through the Statement Execution API on one declared SQL warehouse and the Jobs API, with the
+explicit profile of `--profile` or `--env` (never `DEFAULT`). They need the `sdk` extra. Every value travels as a named
+statement parameter; only the validated table names are part of the statement text. Pass `--warehouse` and `--scope`
+(`catalog.schema` of the stability tables; `--prefix` when it is not `stability_`).
+
+```bash
+bricksmith --profile free stability status --warehouse <id> --scope main.monitoring
+bricksmith --profile free stability series --warehouse <id> --scope main.monitoring --dataset sales --metric psi
+bricksmith --profile free stability mark --warehouse <id> --scope main.monitoring --dataset sales \
+  --period 2026-03 --mark excluded --reason "migration" --author ana
+bricksmith --profile free stability marks --warehouse <id> --scope main.monitoring --dataset sales
+bricksmith --profile free stability actions --warehouse <id> --scope main.monitoring --queue
+bricksmith --profile free stability reprocess --job <job id> --periods 2026-01..2026-03 \
+  --warehouse <id> --scope main.monitoring
+```
+
+- `status` lists the datasets, worst first, with the latest period, last run and open alerts (the `stability_datasets`
+  view; create the views with `views: true`). `series` lists the points of a dataset's series with limits, trend band,
+  light, mark and action (`stability_series`). `actions` lists the actions on alerts, or with `--queue` the open
+  alerts with their latest action.
+- `mark`, `unmark` and `action` with `--warehouse` append the same validated rows as their offline forms and write
+  them; without it they keep printing the `INSERT` or updating a `--state` file. `marks` lists the marks in force.
+- `reprocess --job` starts a run of the job with the job parameter `reprocess`; the job's runner task passes it on as
+  the entrypoint option `--reprocess 2026-01..2026-03` (a list or ranges), which becomes `run_plan(reprocess=...)`.
+  Without `--job` the command keeps its offline form.
+
+### The console
+
+`bricksmith console` serves a local web page over those verbs and nothing else: the dataset list with status, a
+series chart with the trend band and marks, the alert queue with its actions, mark and unmark, a reprocess button and the
+run history.
+
+```bash
+bricksmith --profile free console --warehouse <id> --scope main.monitoring --job <job id>
+```
+
+It binds `127.0.0.1:8765` (`--host`, `--port`), needs no dependency beyond the `sdk` extra and answers only requests
+whose `Host` is the local address. A change is accepted only as `POST` with `Content-Type: application/json`, and a
+browser `Origin` from another site is refused, so a page elsewhere cannot mark a period. The author of a decision is
+asked in the page, or taken from `x-forwarded-email` when present.
+
+As a Databricks App, start it with `--app --allow-host <host the proxy forwards>`: it listens on
+`DATABRICKS_APP_PORT`, reads the caller's token from `x-forwarded-access-token` on every request and builds the
+workspace client from it, so Unity Catalog grants on the stability tables decide who can mark or act. Declaring the
+app as a bundle resource is not covered yet.
+
 ## Backtest a change
 
 Changing limits, trend, baseline, rules or persistence re-judges the whole window on the next run and can fail the
@@ -774,4 +839,5 @@ fails with `stability_gate`, and `sales_report` is blocked.
   period column is left out.
 - Revision reliability compares stored profiles, not rows: it says that a period changed and by how much, not which
   keys changed, and it does not read the Delta history of the table.
-- Not yet covered: reading rules from a Delta table. It is captured as a follow-up specification.
+- The console and the workspace verbs are covered with injected clients; a proof against a live workspace (a mark
+  changing the next run's trend, a reprocess from the page) needs credentials and is a separate round.
