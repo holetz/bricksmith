@@ -42,7 +42,13 @@ def rows_of(values: Mapping[str, Sequence[object]], **extra: Sequence[object]) -
 
 
 def config(**overrides: object):  # noqa: ANN201 - test helper
-    base = {"period": "month", "columns": {"x": {"edges": [0, 1.5, 3]}}, "min_rows": 0}
+    base = {
+        "period": "month",
+        "columns": {"x": {"edges": [0, 1.5, 3]}},
+        "min_rows": 0,
+        "psi_limits": "fixed",
+        "min_rows_per_bin": 0,
+    }
     return parse_config({**base, **overrides})
 
 

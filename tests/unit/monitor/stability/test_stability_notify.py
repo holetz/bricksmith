@@ -56,7 +56,16 @@ def _rows(months: int, drift_from: int = 2) -> list[dict[str, object]]:
 
 
 def _run(months: int, store: MemoryStore, run_id: str, **declared: object) -> tuple[CheckResult, list[str]]:
-    config = parse_config({"period": "month", "notify": True, "persistence": {"immediate_red": True}, **declared})
+    config = parse_config(
+        {
+            "period": "month",
+            "psi_limits": "fixed",
+            "min_rows_per_bin": 0,
+            "notify": True,
+            "persistence": {"immediate_red": True},
+            **declared,
+        }
+    )
     result = check(_rows(months), config, store, dataset="orders", run_id=run_id, physical="main.s.orders")
     for kind, rows in result.tables.items():
         store.tables[kind] = list(merge_rows(kind, store.tables.get(kind, []), rows))
@@ -87,7 +96,9 @@ def test_a_sliding_window_never_reopens_a_carried_alert() -> None:
 
 def test_escalation_and_policy_filters() -> None:
     store = MemoryStore()
-    config = parse_config({"period": "month", "notify": {"on": ["escalated"]}})
+    config = parse_config(
+        {"period": "month", "psi_limits": "fixed", "min_rows_per_bin": 0, "notify": {"on": ["escalated"]}}
+    )
     assert alert_events([_alert("warning")], [], config.notify, **_ids()) == []
     events = alert_events([_alert("critical")], [_alert("warning")], config.notify, **_ids())
     assert [e.details["transition"] for e in events] == ["escalated"] and events[0].severity == "critical"
@@ -150,7 +161,14 @@ class Recorder:
 
 
 def _project(root: Path, **declared: object) -> Path:
-    stability = {"period": "month", "exclude": ["id"], "persistence": {"immediate_red": True}, **declared}
+    stability = {
+        "period": "month",
+        "psi_limits": "fixed",
+        "min_rows_per_bin": 0,
+        "exclude": ["id"],
+        "persistence": {"immediate_red": True},
+        **declared,
+    }
     path = root / "catalogs/main/sales/orders.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(TASKS).replace("STABILITY", repr(stability)), encoding="utf-8")

@@ -20,6 +20,8 @@ from bricksmith.monitor.stability.metrics import (
     judge,
     mean_shift,
     result_row,
+    sample_of,
+    smoothing_of,
 )
 from bricksmith.monitor.stats import psi_terms
 
@@ -58,7 +60,7 @@ def _psi(
     cur = {b: float(s[basis]) for b, s in now.items()}
     if sum(base.values()) <= 0 or sum(cur.values()) <= 0:
         return None
-    terms = psi_terms(base, cur, config.epsilon)  # type: ignore[arg-type] - weights are floats
+    terms = psi_terms(base, cur, config.epsilon, smoothing_of(config))  # type: ignore[arg-type] - weights are floats
     return sum(t["contribution"] for t in terms.values())
 
 
@@ -87,10 +89,13 @@ def _column_results(  # noqa: PLR0913 - the period's full context
     cur_bins, base_bins = now.bins[(segment, column)][period], first.bins[(segment, column)][period]
     rows = common["rows"]
     value = _psi(ctx.config, base_bins, cur_bins)
-    light = judge(ctx, REVISION_PSI, column, value, where=where, rows=rows, has_baseline=value is not None)
+    sample = sample_of(cur_bins, base_bins)
+    light = judge(
+        ctx, REVISION_PSI, column, value, where=where, rows=rows, has_baseline=value is not None, sample=sample
+    )
     out = [
         result_row(
-            ctx, metric=REVISION_PSI, value=value, light=light, current=None, baseline=None,
+            ctx, metric=REVISION_PSI, value=value, light=light, current=None, baseline=None, sample=sample,
             **{**common, "column": column},
         )
     ]  # fmt: skip
@@ -106,11 +111,12 @@ def _column_results(  # noqa: PLR0913 - the period's full context
             rows=rows,
             has_baseline=base.mean is not None,
             reason=reason,
+            sample=sample,
         )
         out.append(
             result_row(
                 ctx, metric=REVISION_MEAN_SHIFT, value=shift, light=light, current=cur.mean, baseline=base.mean,
-                **{**common, "column": column},
+                sample=sample, **{**common, "column": column},
             )
         )  # fmt: skip
     return out
