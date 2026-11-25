@@ -1,0 +1,21 @@
+@import "../../build/tokens.css";
+
+/* Medium primitives consume generated variables; values stay in tokens.json. */
+.eyebrow {
+  color: var(--design-colors-primary);
+  font-size: var(--design-typography-label-font-size);
+  font-weight: var(--design-typography-label-font-weight);
+  letter-spacing: var(--design-typography-label-letter-spacing);
+  text-transform: uppercase;
+}
+
+.rule {
+  border: 0;
+  border-top: var(--design-strokes-rule) solid var(--design-colors-primary);
+}
+
+.frame {
+  max-width: var(--design-layout-content-wide);
+  margin-inline: auto;
+  padding: var(--design-spacing-xl) var(--design-spacing-lg);
+}

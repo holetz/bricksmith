@@ -1,0 +1,2359 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "version": "2026.08.28",
+    "released_on": "2026-08-28",
+    "snapshot": "baseline-2026.08.28.json"
+  },
+  "owners": [
+    "opensource",
+    "security",
+    "delivery",
+    "toolchain",
+    "knowledge",
+    "proof",
+    "git"
+  ],
+  "sources": {
+    "osps": {
+      "url": "https://baseline.openssf.org/versions/2026-08-28",
+      "version": "2026.08.28",
+      "inspected_on": "2026-10-13"
+    },
+    "scorecard": {
+      "url": "https://github.com/ossf/scorecard/blob/f5a926f957e1bcc5a3d27d153dcd4aea0236aa61/docs/checks.md",
+      "version": "f5a926f957e1bcc5a3d27d153dcd4aea0236aa61",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "Binary-Artifacts",
+        "Branch-Protection",
+        "CI-Tests",
+        "CII-Best-Practices",
+        "Code-Review",
+        "Contributors",
+        "Dangerous-Workflow",
+        "Dependency-Update-Tool",
+        "Fuzzing",
+        "License",
+        "Maintained",
+        "Packaging",
+        "Pinned-Dependencies",
+        "SAST",
+        "SBOM",
+        "Security-Policy",
+        "Signed-Releases",
+        "Token-Permissions",
+        "Vulnerabilities",
+        "Webhooks"
+      ]
+    },
+    "github-community": {
+      "url": "https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/about-community-profiles-for-public-repositories",
+      "version": "inspection snapshot",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "README",
+        "LICENSE",
+        "CODE_OF_CONDUCT",
+        "CONTRIBUTING",
+        "SECURITY",
+        "ISSUE_TEMPLATE",
+        "PULL_REQUEST_TEMPLATE"
+      ]
+    },
+    "reuse": {
+      "url": "https://reuse.software/spec-3.3/",
+      "version": "3.3",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "file-licensing"
+      ]
+    },
+    "contributor-covenant": {
+      "url": "https://www.contributor-covenant.org/version/3/0/code_of_conduct/",
+      "version": "3.0",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "code-of-conduct"
+      ]
+    },
+    "dco": {
+      "url": "https://developercertificate.org/",
+      "version": "1.1",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "contribution-authorization"
+      ]
+    },
+    "keep-a-changelog": {
+      "url": "https://keepachangelog.com/en/1.1.0/",
+      "version": "1.1.0",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "release-changelog"
+      ]
+    },
+    "semver": {
+      "url": "https://semver.org/spec/v2.0.0.html",
+      "version": "2.0.0",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "release-versioning"
+      ]
+    },
+    "cff": {
+      "url": "https://citation-file-format.github.io/",
+      "version": "inspection snapshot",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "citation-file"
+      ]
+    },
+    "github-funding": {
+      "url": "https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository",
+      "version": "inspection snapshot",
+      "inspected_on": "2026-10-13",
+      "items": [
+        "sponsor-button"
+      ]
+    }
+  },
+  "controls": [
+    {
+      "id": "OSPS-AC-01",
+      "framework": "osps",
+      "family": "AC",
+      "title": "Sensitive access authentication",
+      "owner": "git",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-AC-01.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:multi-factor-authentication"
+            ],
+            "assessment": "Require a second authentication factor for sensitive repository access.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-AC-02",
+      "framework": "osps",
+      "family": "AC",
+      "title": "Collaborator access defaults",
+      "owner": "git",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-AC-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:collaborator-permissions"
+            ],
+            "assessment": "New collaborators receive minimal privileges or manual assignment.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-AC-03",
+      "framework": "osps",
+      "family": "AC",
+      "title": "Primary branch safeguards",
+      "owner": "git",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Branch-Protection",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-AC-03.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:branch-protection"
+            ],
+            "assessment": "Prevent direct commits to the primary branch.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-AC-03.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:branch-protection"
+            ],
+            "assessment": "Require confirmation before deleting the primary branch.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-AC-04",
+      "framework": "osps",
+      "family": "AC",
+      "title": "Pipeline privilege limits",
+      "owner": "security",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Token-Permissions",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-AC-04.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml"
+            ],
+            "provider": [
+              "forge:default-pipeline-permissions"
+            ],
+            "assessment": "Pipeline defaults grant minimal task permissions.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-AC-04.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml"
+            ],
+            "provider": [],
+            "assessment": "Job permissions match only necessary privileges.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-BR-01",
+      "framework": "osps",
+      "family": "BR",
+      "title": "Pipeline input isolation",
+      "owner": "security",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Dangerous-Workflow",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-BR-01.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml"
+            ],
+            "provider": [],
+            "assessment": "Validate untrusted pipeline metadata.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-BR-01.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "retired",
+          "provider_required": false,
+          "evidence": {
+            "paths": [],
+            "provider": [],
+            "assessment": "Retired upstream; excluded from active assessment.",
+            "human_required": false
+          }
+        },
+        {
+          "id": "OSPS-BR-01.03",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml"
+            ],
+            "provider": [],
+            "assessment": "Isolate untrusted code from privileged credentials.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-BR-01.04",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml"
+            ],
+            "provider": [],
+            "assessment": "Validate collaborator-supplied pipeline inputs.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-BR-02",
+      "framework": "osps",
+      "family": "BR",
+      "title": "Release identifiers",
+      "owner": "delivery",
+      "optional": false,
+      "references": [
+        {
+          "source": "semver",
+          "item": "release-versioning",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-BR-02.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CHANGELOG*",
+              "dist/**",
+              "package.json",
+              "pyproject.toml"
+            ],
+            "provider": [],
+            "assessment": "Each release has a unique identifier.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-BR-02.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CHANGELOG*",
+              "dist/**",
+              "package.json",
+              "pyproject.toml"
+            ],
+            "provider": [],
+            "assessment": "Associate each release asset with a unique identifier.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-BR-03",
+      "framework": "osps",
+      "family": "BR",
+      "title": "Authenticated project channels",
+      "owner": "delivery",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-BR-03.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "README*",
+              "docs/**",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "Official project links use encrypted transport exclusively.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-BR-03.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "README*",
+              "docs/**",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "Distribution protects against interception with authenticated transport.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-BR-04",
+      "framework": "osps",
+      "family": "BR",
+      "title": "Release change records",
+      "owner": "delivery",
+      "optional": false,
+      "references": [
+        {
+          "source": "keep-a-changelog",
+          "item": "release-changelog",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-BR-04.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CHANGELOG*",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "Include functional and security changes with each release.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-BR-05",
+      "framework": "osps",
+      "family": "BR",
+      "title": "Standard dependency ingestion",
+      "owner": "delivery",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-BR-05.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml",
+              "package.json",
+              "pyproject.toml"
+            ],
+            "provider": [],
+            "assessment": "Build and release dependencies use available standard tooling.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-BR-06",
+      "framework": "osps",
+      "family": "BR",
+      "title": "Signed release integrity",
+      "owner": "delivery",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Signed-Releases",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-BR-06.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "dist/**",
+              "*.sig",
+              "*.asc",
+              "*.intoto.jsonl"
+            ],
+            "provider": [],
+            "assessment": "Release signatures cover assets or a manifest of asset hashes.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-BR-07",
+      "framework": "osps",
+      "family": "BR",
+      "title": "Credential handling",
+      "owner": "security",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-BR-07.01",
+          "levels": [
+            1
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".gitignore",
+              ".git/**",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Scan history for accidentally committed plaintext secrets.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-BR-07.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".gitignore",
+              ".git/**",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Document credential storage, access and rotation rules.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-DO-01",
+      "framework": "osps",
+      "family": "DO",
+      "title": "Basic usage documentation",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [
+        {
+          "source": "github-community",
+          "item": "README",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-DO-01.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "README*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Cover every basic released function in user guidance.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-DO-02",
+      "framework": "osps",
+      "family": "DO",
+      "title": "Defect reporting guidance",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [
+        {
+          "source": "github-community",
+          "item": "ISSUE_TEMPLATE",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-DO-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CONTRIBUTING*",
+              "SUPPORT*",
+              ".github/ISSUE_TEMPLATE/**",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Explain how users report defects.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-DO-03",
+      "framework": "osps",
+      "family": "DO",
+      "title": "Release verification guidance",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-DO-03.01",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "README*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Explain asset integrity and authenticity verification.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-DO-03.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "README*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Explain release-author identity verification.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-DO-04",
+      "framework": "osps",
+      "family": "DO",
+      "title": "Release support commitments",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-DO-04.01",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "SUPPORT*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Specify support scope and duration per release.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-DO-05",
+      "framework": "osps",
+      "family": "DO",
+      "title": "Security maintenance duration",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-DO-05.01",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "SECURITY*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "State when versions stop receiving security updates.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-DO-06",
+      "framework": "osps",
+      "family": "DO",
+      "title": "Dependency selection policy",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-DO-06.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CONTRIBUTING*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Explain dependency selection, acquisition and tracking.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-DO-07",
+      "framework": "osps",
+      "family": "DO",
+      "title": "Source build instructions",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-DO-07.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "README*",
+              "CONTRIBUTING*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Explain builds and required development dependencies.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-GV-01",
+      "framework": "osps",
+      "family": "GV",
+      "title": "Project roles",
+      "owner": "opensource",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-GV-01.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "GOVERNANCE*",
+              "MAINTAINERS*",
+              "CODEOWNERS",
+              ".github/CODEOWNERS"
+            ],
+            "provider": [],
+            "assessment": "List members who have sensitive access.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-GV-01.02",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "GOVERNANCE*",
+              "MAINTAINERS*",
+              "CODEOWNERS",
+              ".github/CODEOWNERS"
+            ],
+            "provider": [],
+            "assessment": "Describe members' roles and responsibilities.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-GV-02",
+      "framework": "osps",
+      "family": "GV",
+      "title": "Public community discussion",
+      "owner": "opensource",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-GV-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              "README*",
+              "CONTRIBUTING*"
+            ],
+            "provider": [
+              "forge:public-discussion-channels"
+            ],
+            "assessment": "Provide a public channel for changes and usage obstacles.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-GV-03",
+      "framework": "osps",
+      "family": "GV",
+      "title": "Contribution expectations",
+      "owner": "opensource",
+      "optional": false,
+      "references": [
+        {
+          "source": "github-community",
+          "item": "CONTRIBUTING",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-GV-03.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CONTRIBUTING*"
+            ],
+            "provider": [],
+            "assessment": "Describe contributions or explicitly decline public contributions.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-GV-03.02",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CONTRIBUTING*"
+            ],
+            "provider": [],
+            "assessment": "Describe acceptable code contributions.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-GV-04",
+      "framework": "osps",
+      "family": "GV",
+      "title": "Privilege escalation review policy",
+      "owner": "opensource",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-GV-04.01",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "GOVERNANCE*",
+              "CONTRIBUTING*"
+            ],
+            "provider": [],
+            "assessment": "Document collaborator review before sensitive permission escalation.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-LE-01",
+      "framework": "osps",
+      "family": "LE",
+      "title": "Contribution authorization",
+      "owner": "opensource",
+      "optional": false,
+      "references": [
+        {
+          "source": "dco",
+          "item": "contribution-authorization",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-LE-01.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              "CONTRIBUTING*",
+              ".git/**"
+            ],
+            "provider": [
+              "forge:contribution-authorization-enforcement"
+            ],
+            "assessment": "Require authorization assertions for every contributed commit.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-LE-02",
+      "framework": "osps",
+      "family": "LE",
+      "title": "Open licensing",
+      "owner": "opensource",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "License",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-LE-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "LICENSE*",
+              "COPYING*",
+              "LICENSES/**",
+              "LICENSE/**",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "Source licenses meet OSI or FSF definitions.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-LE-02.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "LICENSE*",
+              "COPYING*",
+              "LICENSES/**",
+              "LICENSE/**",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "Released asset licenses meet OSI or FSF definitions.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-LE-03",
+      "framework": "osps",
+      "family": "LE",
+      "title": "License distribution",
+      "owner": "opensource",
+      "optional": false,
+      "references": [
+        {
+          "source": "github-community",
+          "item": "LICENSE",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-LE-03.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "LICENSE*",
+              "COPYING*",
+              "LICENSES/**",
+              "LICENSE/**",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "Keep source licenses in recognized repository locations.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-LE-03.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "LICENSE*",
+              "COPYING*",
+              "LICENSES/**",
+              "LICENSE/**",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "Include asset licenses with distributed release material.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-QA-01",
+      "framework": "osps",
+      "family": "QA",
+      "title": "Public development history",
+      "owner": "git",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-QA-01.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              ".git/**"
+            ],
+            "provider": [
+              "forge:public-source-and-history"
+            ],
+            "assessment": "Source is public at a stable URL.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-QA-01.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              ".git/**"
+            ],
+            "provider": [
+              "forge:public-source-and-history"
+            ],
+            "assessment": "Publish full change, author and timestamp history.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-QA-02",
+      "framework": "osps",
+      "family": "QA",
+      "title": "Dependency inventory",
+      "owner": "toolchain",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "SBOM",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-QA-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "package.json",
+              "pyproject.toml",
+              "go.mod",
+              "Cargo.toml",
+              "*.spdx.json",
+              "*.cdx.json",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "List direct language dependencies when tooling supports it.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-QA-02.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "package.json",
+              "pyproject.toml",
+              "go.mod",
+              "Cargo.toml",
+              "*.spdx.json",
+              "*.cdx.json",
+              "dist/**"
+            ],
+            "provider": [],
+            "assessment": "Supply an SBOM with compiled release assets.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-QA-03",
+      "framework": "osps",
+      "family": "QA",
+      "title": "Status check acceptance",
+      "owner": "git",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-QA-03.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:required-status-checks-and-bypasses"
+            ],
+            "assessment": "Accepted primary-branch changes pass checks or record manual bypass.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-QA-04",
+      "framework": "osps",
+      "family": "QA",
+      "title": "Cross-repository security scope",
+      "owner": "security",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-QA-04.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "GOVERNANCE*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Document all project codebases.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-QA-04.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              "GOVERNANCE*",
+              "docs/**"
+            ],
+            "provider": [
+              "forge:subproject-enforcement"
+            ],
+            "assessment": "Subprojects enforce at least primary-codebase security requirements.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-QA-05",
+      "framework": "osps",
+      "family": "QA",
+      "title": "Reviewable repository artifacts",
+      "owner": "toolchain",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Binary-Artifacts",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-QA-05.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".git/**"
+            ],
+            "provider": [],
+            "assessment": "Exclude generated executable artifacts from version control.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-QA-05.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".git/**"
+            ],
+            "provider": [],
+            "assessment": "Exclude binary artifacts that cannot be reviewed.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-QA-06",
+      "framework": "osps",
+      "family": "QA",
+      "title": "Automated verification",
+      "owner": "proof",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "CI-Tests",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-QA-06.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml",
+              "tests/**",
+              "docs/**",
+              "CONTRIBUTING*"
+            ],
+            "provider": [
+              "forge:pre-acceptance-test-runs"
+            ],
+            "assessment": "Run an automated test suite before accepting changes.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-QA-06.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml",
+              "tests/**",
+              "docs/**",
+              "CONTRIBUTING*"
+            ],
+            "provider": [],
+            "assessment": "Document when and how tests run.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-QA-06.03",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              ".gitlab-ci.yml",
+              "tests/**",
+              "docs/**",
+              "CONTRIBUTING*"
+            ],
+            "provider": [],
+            "assessment": "Require automated tests for major functional changes.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-QA-07",
+      "framework": "osps",
+      "family": "QA",
+      "title": "Independent merge approval",
+      "owner": "git",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Code-Review",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-QA-07.01",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:review-enforcement"
+            ],
+            "assessment": "Require at least one human reviewer other than the author.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-SA-01",
+      "framework": "osps",
+      "family": "SA",
+      "title": "Actors and actions documentation",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-SA-01.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Describe system actors and their actions.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-SA-02",
+      "framework": "osps",
+      "family": "SA",
+      "title": "External interface documentation",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-SA-02.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Describe all released external software interfaces.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-SA-03",
+      "framework": "osps",
+      "family": "SA",
+      "title": "Security analysis records",
+      "owner": "knowledge",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-SA-03.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Record an assessment of likely and impactful security risks.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-SA-03.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Record threat modeling and critical attack-surface analysis.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-VM-01",
+      "framework": "osps",
+      "family": "VM",
+      "title": "Coordinated disclosure policy",
+      "owner": "security",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Security-Policy",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-VM-01.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "SECURITY*",
+              "docs/**"
+            ],
+            "provider": [],
+            "assessment": "Define coordinated disclosure and response timeframes.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-VM-02",
+      "framework": "osps",
+      "family": "VM",
+      "title": "Security contacts",
+      "owner": "security",
+      "optional": false,
+      "references": [
+        {
+          "source": "github-community",
+          "item": "SECURITY",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-VM-02.01",
+          "levels": [
+            1
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "SECURITY*"
+            ],
+            "provider": [],
+            "assessment": "Provide vulnerability-reporting contacts.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-VM-03",
+      "framework": "osps",
+      "family": "VM",
+      "title": "Confidential vulnerability reporting",
+      "owner": "security",
+      "optional": false,
+      "references": [],
+      "requirements": [
+        {
+          "id": "OSPS-VM-03.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "SECURITY*"
+            ],
+            "provider": [],
+            "assessment": "Describe a private route to project security contacts.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": true
+    },
+    {
+      "id": "OSPS-VM-04",
+      "framework": "osps",
+      "family": "VM",
+      "title": "Vulnerability publication",
+      "owner": "security",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Vulnerabilities",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-VM-04.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              "docs/**",
+              "*.vex.json",
+              "*.csaf.json"
+            ],
+            "provider": [
+              "forge:published-vulnerability-records"
+            ],
+            "assessment": "Publish discovered vulnerability information.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-VM-04.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "docs/**",
+              "*.vex.json",
+              "*.csaf.json"
+            ],
+            "provider": [],
+            "assessment": "Document non-exploitable component findings with VEX.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-VM-05",
+      "framework": "osps",
+      "family": "VM",
+      "title": "Dependency finding remediation",
+      "owner": "security",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Dependency-Update-Tool",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-VM-05.01",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "SECURITY*",
+              "docs/**",
+              ".github/workflows/**",
+              "renovate.json",
+              ".github/dependabot.yml"
+            ],
+            "provider": [],
+            "assessment": "Define remediation thresholds for dependency and license findings.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-VM-05.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "SECURITY*",
+              "docs/**",
+              ".github/workflows/**",
+              "renovate.json",
+              ".github/dependabot.yml"
+            ],
+            "provider": [],
+            "assessment": "Resolve dependency-policy violations before release.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-VM-05.03",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              "SECURITY*",
+              "docs/**",
+              ".github/workflows/**",
+              "renovate.json",
+              ".github/dependabot.yml"
+            ],
+            "provider": [
+              "forge:dependency-policy-enforcement"
+            ],
+            "assessment": "Block unsafe dependency changes unless suppressed as non-exploitable.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "OSPS-VM-06",
+      "framework": "osps",
+      "family": "VM",
+      "title": "Application weakness remediation",
+      "owner": "security",
+      "optional": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "SAST",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "OSPS-VM-06.01",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "SECURITY*",
+              "docs/**",
+              ".github/workflows/**"
+            ],
+            "provider": [],
+            "assessment": "Define static-analysis remediation thresholds.",
+            "human_required": true
+          }
+        },
+        {
+          "id": "OSPS-VM-06.02",
+          "levels": [
+            3
+          ],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              "SECURITY*",
+              "docs/**",
+              ".github/workflows/**"
+            ],
+            "provider": [
+              "forge:static-analysis-enforcement"
+            ],
+            "assessment": "Block security-weakness violations unless suppressed as non-exploitable.",
+            "human_required": true
+          }
+        }
+      ],
+      "measurable_without_provider": false
+    },
+    {
+      "id": "COMMUNITY-CONDUCT",
+      "framework": "supplemental",
+      "title": "Community conduct policy",
+      "owner": "opensource",
+      "optional": true,
+      "measurable_without_provider": true,
+      "references": [
+        {
+          "source": "github-community",
+          "item": "CODE_OF_CONDUCT",
+          "relation": "related"
+        },
+        {
+          "source": "contributor-covenant",
+          "item": "code-of-conduct",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "COMMUNITY-CONDUCT.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CODE_OF_CONDUCT*"
+            ],
+            "provider": [],
+            "assessment": "Describe expected behavior, confidential reporting and enforcement.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "COMMUNITY-PR-TEMPLATE",
+      "framework": "supplemental",
+      "title": "Contribution review template",
+      "owner": "opensource",
+      "optional": true,
+      "measurable_without_provider": true,
+      "references": [
+        {
+          "source": "github-community",
+          "item": "PULL_REQUEST_TEMPLATE",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "COMMUNITY-PR-TEMPLATE.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/PULL_REQUEST_TEMPLATE*",
+              ".github/PULL_REQUEST_TEMPLATE/**"
+            ],
+            "provider": [],
+            "assessment": "Offer structured contribution context and review expectations.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "REUSE-LICENSING",
+      "framework": "supplemental",
+      "title": "Per-file licensing metadata",
+      "owner": "opensource",
+      "optional": true,
+      "measurable_without_provider": true,
+      "references": [
+        {
+          "source": "reuse",
+          "item": "file-licensing",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "REUSE-LICENSING.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "LICENSES/**",
+              "REUSE.toml",
+              "**/*.license",
+              "**"
+            ],
+            "provider": [],
+            "assessment": "Validate SPDX license and copyright metadata for covered files.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "COMMUNITY-CITATION",
+      "framework": "supplemental",
+      "title": "Citation metadata",
+      "owner": "opensource",
+      "optional": true,
+      "measurable_without_provider": true,
+      "references": [
+        {
+          "source": "cff",
+          "item": "citation-file",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "COMMUNITY-CITATION.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "CITATION.cff"
+            ],
+            "provider": [],
+            "assessment": "Provide usable machine-readable attribution for citation.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "COMMUNITY-FUNDING",
+      "framework": "supplemental",
+      "title": "Funding metadata",
+      "owner": "opensource",
+      "optional": true,
+      "measurable_without_provider": true,
+      "references": [
+        {
+          "source": "github-funding",
+          "item": "sponsor-button",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "COMMUNITY-FUNDING.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/FUNDING.yml"
+            ],
+            "provider": [],
+            "assessment": "Declare supported sponsorship destinations when funding is adopted.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "SCORECARD-BADGE",
+      "framework": "supplemental",
+      "title": "External best-practices badge",
+      "owner": "opensource",
+      "optional": true,
+      "measurable_without_provider": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "CII-Best-Practices",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "SCORECARD-BADGE.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "best-practices-badge:status"
+            ],
+            "assessment": "Read the external badge assessment; local claims cannot establish it.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "SCORECARD-CONTRIBUTORS",
+      "framework": "supplemental",
+      "title": "Contributor diversity",
+      "owner": "opensource",
+      "optional": true,
+      "measurable_without_provider": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Contributors",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "SCORECARD-CONTRIBUTORS.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:contributor-history"
+            ],
+            "assessment": "Assess the recorded contributor distribution.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "SCORECARD-MAINTAINED",
+      "framework": "supplemental",
+      "title": "Project maintenance activity",
+      "owner": "opensource",
+      "optional": true,
+      "measurable_without_provider": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Maintained",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "SCORECARD-MAINTAINED.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:recent-project-activity"
+            ],
+            "assessment": "Assess maintenance signals over the provider history.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "SCORECARD-PACKAGING",
+      "framework": "supplemental",
+      "title": "Package publication automation",
+      "owner": "delivery",
+      "optional": true,
+      "measurable_without_provider": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Packaging",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "SCORECARD-PACKAGING.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**"
+            ],
+            "provider": [
+              "forge:package-publication"
+            ],
+            "assessment": "Check packaging automation and publication evidence.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "SCORECARD-PINNING",
+      "framework": "supplemental",
+      "title": "Immutable pipeline dependencies",
+      "owner": "security",
+      "optional": true,
+      "measurable_without_provider": true,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Pinned-Dependencies",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "SCORECARD-PINNING.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              ".github/workflows/**",
+              "Dockerfile*",
+              "requirements*.txt"
+            ],
+            "provider": [],
+            "assessment": "Review dependency pins across workflows and build steps.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "SCORECARD-FUZZING",
+      "framework": "supplemental",
+      "title": "Fuzz testing configuration",
+      "owner": "proof",
+      "optional": true,
+      "measurable_without_provider": true,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Fuzzing",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "SCORECARD-FUZZING.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": false,
+          "evidence": {
+            "paths": [
+              "tests/**",
+              ".github/workflows/**"
+            ],
+            "provider": [],
+            "assessment": "Inspect fuzzing integration and execution evidence.",
+            "human_required": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "SCORECARD-WEBHOOKS",
+      "framework": "supplemental",
+      "title": "Authenticated webhook configuration",
+      "owner": "security",
+      "optional": true,
+      "measurable_without_provider": false,
+      "references": [
+        {
+          "source": "scorecard",
+          "item": "Webhooks",
+          "relation": "related"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "SCORECARD-WEBHOOKS.01",
+          "levels": [],
+          "state": "active",
+          "provider_required": true,
+          "evidence": {
+            "paths": [],
+            "provider": [
+              "forge:webhook-authentication"
+            ],
+            "assessment": "Check enabled webhook endpoints and authentication settings.",
+            "human_required": true
+          }
+        }
+      ]
+    }
+  ]
+}

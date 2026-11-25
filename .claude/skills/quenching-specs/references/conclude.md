@@ -117,7 +117,7 @@ stops the run with `STATE: blocked` and `NOTE: needs-human: <the question>`.
 | Step 5 — the distillation plan | as step 3: applied on the work branch for `done`, declined and named for `abandoned` |
 | Step 5 — the release obligations | `done`: applied on the work branch as narrated, the standard quoted in the report |
 | Step 6 — the flow sweep | `done` and `abandoned`: every evidenced candidate is captured unasked with `.agents/quenching/bin/cq specs new`, one spec per candidate, its `## Problem` carrying the inputs; none is developed, and the ids are named in the report |
-| Step 7 — branch behind its base | the base merged in (`git merge --no-edit origin/<base>`, never a rebase), then the gate; a conflict outside the generated mirrors → `git merge --abort` and `needs-human` with the paths |
+| Step 7 — branch behind its base | the base merged in (`git merge --no-edit origin/<base>`, never a rebase), then the gate; a conflict only in the deployed surface or inside a generated zone is resolved by regenerating; any other conflict → `git merge --abort` and `needs-human` with the paths |
 | Step 7 — an inconclusive check | `needs-human`, the check named |
 | Step 7 — the abandoned branch-delete offer | keep, recorded in the report |
 | Step 8 — the post-merge close | no question exists: `reconcile --write` and the worktree's release run as written; a `needs-human` row or a refusal is reported and never forced |
@@ -323,7 +323,11 @@ history should not carry. The distillation above still runs.
 were applied, reported as already satisfied, or reported as none.
 
 ### 6. Sweep the flow itself, and capture what it owes
-The change is finished; the way it was made is evidence too. This step judges the run itself — the
+The change is finished; the way it was made is evidence too. **Read the session first, once:**
+`.agents/quenching/bin/cq components session digest --json --cap 5` counts the corrections, the repeated
+reads and shells and the anomalies from the transcript, so the judgment below does not rest on
+memory. A non-zero exit (no transcript on this host) is neither retried nor reported: go on and
+judge from the conversation, with no further read and no fallback. This step judges the run itself — the
 skills, flow references, agents, standards, harness and deploy surface that carried it — and turns
 each real defect into a spec of its own, captured with the problem and the evidence it needs, for
 another session to develop. The project's automation evolves because its runs leave the defects
@@ -336,14 +340,17 @@ hold:
    branch's and is already handled here;
 2. this run produced the evidence, quotable: a step that had to be improvised, a reference that
    contradicted another, a gate that could not see a class of defect, a command whose failure the
-   flow does not anticipate, a rule the run had to invent because no standard had it;
+   flow does not anticipate, a rule the run had to invent because no standard had it, or a figure
+   of the session digest (a human correction, a repeated read or shell, an anomaly) with its
+   number and its quoted turn;
 3. no open spec already covers it — check the front first
    (`.agents/quenching/bin/cq specs list --json`, matched on the title and on the defect it names)
    and add a `## Discoveries` line there instead of opening a duplicate.
 
 **What does not qualify matters as much**: a defect of the delivered product, a nit in one file, a
-preference of this session, or an improvement no fact from this run supports. Zero is the normal
-result; a sweep that finds something every time is inventing.
+preference of this session, or an improvement no fact from this run supports. Zero is a valid
+result only when neither the digest nor the run evidences a defect; a sweep that finds something
+every time is inventing.
 
 **One spec per candidate, captured and not designed** — the design costs a session, and the session
 that takes it should be the one that argues with the defect:
@@ -355,6 +362,8 @@ that takes it should be the one that argues with the defect:
 <what happened, in this run's own facts: the step, the command and its output, the file:line of the
 reference that misled, the spec and the date — and what the improvement has to make impossible>
 
+Minimal fix proposed: <the smallest fix that fits the defect, in one line>
+
 **Insumos**
 
 - <path:line of the reference, the standard, the agent definition>
@@ -363,7 +372,8 @@ reference that misled, the spec and the date — and what the improvement has to
 EOF
 ```
 
-The problem carries the **inputs** — the paths, the command and its output, the spec id — because
+A fix that would need a new layer, a new step in a command body or tokens with no measured return is
+not proposed in the spec: it is one line in the report, as a decision for the human. The problem carries the **inputs** — the paths, the command and its output, the spec id — because
 the session that develops it will not have this conversation. **Never develop the captured spec
 here**: its design and its go belong to whoever takes it, unless the human asks for that improvement
 in this same run, and then it is a new `create` and not a task of this spec.
@@ -391,7 +401,12 @@ writes only the spec store.
 
 **First the gate: re-run whatever the repo's `## Validation` names — on the WORK BRANCH, before
 merging.** Run it from the checkout that carries the work (the worktree or branch this run is
-standing on), so what it grades is the change being proposed.
+standing on), so what it grades is the change being proposed. **One full gate per spec:** under
+`autonomous` the branch takes the base (the merge below) BEFORE this run, so the gate runs once
+over the merged tree and never once before and once after; it runs again only after a
+`[fix-preexistente]` commit. `/quenching-specs execute` does not run the full gate at its end, so
+this is the spec's only full run; the reviewer and the verifier read its `GATE_EXIT` and the CI
+run instead of repeating it.
 
 **A failing check stops the handoff.** Report which check failed and what it printed, leave the
 branch unmerged, and let the human fix it *on the branch* — then this command is re-run. Never hand
@@ -430,16 +445,29 @@ a write, and it is the human's call which way — merging the base in, or `/quen
 rebase, which carries the recorded task subjects through the rewrite. Never do it unasked, and
 never run the gate over a branch you know is behind.
 
-**Under `autonomous` the answer is given, and it is the merge.** A sibling spec merged mid-wave is
-the ordinary way to be behind, and a `needs-human` there is never relaunched. Run
+**Under `autonomous` the answer is given, and it is the merge, taken before the gate.** A sibling spec merged mid-wave is
+the ordinary way to be behind, and a `needs-human` there is never relaunched. Run the count first;
+non-zero, run
 `git merge --no-edit origin/<base>` — a merge, never a rebase, so the task shas stay ancestors and
-the spec-verifier's check 7 accepts them — and then the gate over the merged tree. A conflict only in
+the spec-verifier's check 7 accepts them — and only then the gate, once, over the merged tree. A conflict only in
 the deployed surface (`.agents/quenching/**`, `.claude/skills/**`, `.agents/.quenching-deploy.json`)
-is mechanical: take the base's side (`git show :3:<path> > <path>`, `git add <path>`), then
+is mechanical: take the base's side (`git checkout-index --stage=3 -f -- <path>`, `git add <path>`), then
 **regenerate before concluding the merge** — `cq deploy --target . --write` — `git add` what it
 rewrote, and conclude the merge. A manifest taken from the base alone loses the branch's entries.
-Then `cq deploy --target . --check` exits 0. A conflict in any other path →
-`git merge --abort` and `needs-human` naming the paths.
+Then `cq deploy --target . --check` exits 0.
+
+A conflict only inside a generated zone is mechanical too. The zones are those of
+`docs/standards/architecture/generated-listings.md` §Enumerated generated zones, each with its
+owner verb; the list is not repeated here. It holds only where every conflict marker of the file
+sits between the zone's delimiters (`…-start` / `…-end`): a marker outside them is a conflict
+in authored text. Resolve only the conflicting hunks, never the whole file, so what merged cleanly
+outside the zone survives: write the stages to scratch files (`git show :1:<path>`, `:2:`, `:3:`),
+run `git merge-file --theirs <ours> <base> <theirs>`, copy the result over `<path>`, then run the
+zone's owner verb (`cq proof readme --write` for `quenching-proof-readme`, `cq ops registry
+--write` for the operations registry) **before** `cq deploy --target . --write`, which mirrors
+the README, and `git add` what they rewrote. Then the owner's `--check` and `cq deploy --target .
+--check` exit 0. Any marker outside a zone, or a zone with no owner verb → `git merge --abort`
+and `needs-human` naming the paths.
 
 **An inconclusive result is not a green one.** A check that cannot tell "this failed" from "this
 could not be measured" has returned no verdict — say which it was, and ask (§Under `autonomous`:

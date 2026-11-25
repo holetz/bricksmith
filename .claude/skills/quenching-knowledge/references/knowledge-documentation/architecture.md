@@ -152,7 +152,7 @@ pages. If a contract cannot be filled, write `source gap: <what's missing>` rath
 ### Publication map
 | Home | Decision | Motive | Audience | Published route |
 | --- | --- | --- | --- | --- |
-| documentation/ | publish | <motive> | <readers> | <rota> |
+| documentation/ | publish | <motive> | <readers> | <route> |
 | standards/ | publish derived | <motive> | <readers> | <route or index> |
 | concepts/ | do not publish | <verifiable motive> | — | — |
 ```
@@ -172,46 +172,45 @@ project` from the canonical source, with `source` and `source_sha256` stamps, th
 curated under an allowlisted home and carry its own source/provenance. Coverage is measured against
 the publishable staged files, not against raw data or external-reference files.
 
-## Contrato de catálogo fora do site
+## Catalog contract outside the site
 
-Catálogos mantidos em `catalog/` permanecem no bundle de conhecimento, mas nunca entram em
-`site-source/` nem no `nav` do Zensical. Caso uma decisão editorial precise expor entendimento
-derivado, ela deve apontar para uma página curada em um home publicado; a fonte bruta continua
-fora do site. O contrato de retenção é:
+Catalogs kept in `catalog/` stay in the knowledge bundle, but never enter `site-source/` or the
+Zensical `nav`. When an editorial decision needs to expose derived understanding, it must point to a
+curated page in a published home; the raw source stays outside the site. The retention contract is:
 
-| Parte | Contrato |
+| Part | Contract |
 | --- | --- |
-| Entrada | um inventário versionado com identificador estável, camada e fonte original |
-| Índice camada/schema | o inventário interno agrupa primeiro por camada e depois por schema |
-| Rota de detalhe | rotas internas não são copiadas para `site-source/` |
-| Linhagem | cada item aponta para o arquivo-fonte, data/versão e transformação aplicada |
-| Fronteira editorial | só campos aprovados no mapa são publicados; segredos, dumps e dados sem fonte ficam fora |
+| Entry | a versioned inventory with a stable identifier, layer and original source |
+| Layer/schema index | the internal inventory groups first by layer and then by schema |
+| Detail route | internal routes are not copied into `site-source/` |
+| Lineage | each item points to its source file, date/version and the transformation applied |
+| Editorial boundary | only fields approved in the map are published; secrets, dumps and unsourced data stay out |
 
-O catálogo não recebe ponto de entrada no `nav`; páginas de detalhe ficam fora do site. A ausência
-de camada, schema ou fonte é um `source gap:` e bloqueia qualquer curadoria derivada.
+The catalog gets no entry point in the `nav`; detail pages stay outside the site. A missing layer,
+schema or source is a `source gap:` and blocks any derived curation.
 
-## Registro de capacidades
+## Capability registry
 
-Cada capacidade específica do gerador recebe uma linha no plano de documentação com cinco campos:
-`capability`, pré-requisito, decisão (`enabled` ou `disabled`), evidência de configuração/versão e
-efeito HTML esperado. O registro também anota impactos possíveis, `source gap:` e o teste que prova o efeito.
-Uma capacidade sem pré-requisito ou fixture permanece desabilitada; a ausência é uma decisão
-auditável, não um sucesso implícito.
+Each generator-specific capability gets one row in the documentation plan with five fields:
+`capability`, prerequisite, decision (`enabled` or `disabled`), configuration/version evidence and
+expected HTML effect. The registry also notes the risk, any `source gap:` and the test that proves
+the effect. A capability with no prerequisite or fixture stays disabled; the absence is an auditable
+decision, not an implicit success.
 
-## Recorte incremental e handoff
+## Incremental cut and handoff
 
-O recorte incremental é uma otimização, não uma nova fonte de verdade: `ref` deve resolver para um
-commit existente, `generated.at` (ou o legado `timestamp`) deve ser UTC e cada fonte deve apontar para exatamente um destino.
-Ref inválida, plano ausente, renome/remoção ou dependência sem mapeamento fazem fallback para revisão
-completa e entram no relatório como gap. Artefatos operacionais (planos, ledgers, scorecards e
-relatórios) ficam fora de `docs_dir` e terminam em handoff explícito para commit humano.
+The incremental cut is an optimization, not a new source of truth: `ref` must resolve to an existing
+commit, `generated.at` (or the legacy `timestamp`) must be UTC and each source must point to exactly
+one destination. An invalid ref, a missing plan, a rename/removal or a dependency with no mapping
+falls back to a full review and enters the report as a gap. Operational artifacts (plans, ledgers,
+scorecards and reports) stay outside `docs_dir` and end in an explicit handoff for a human commit.
 
 ## Invariants
 
 - One idea and one reader intent per destination page.
 - Claims without a source become `source gap:` entries in the ledger.
 - Contracts are planning artifacts and stay outside `docs_dir`.
-- Cada seção publicada precisa de conteúdo não vazio e de uma rota alcançável; contratos, TODOs e
-  gaps permanecem no ledger interno, nunca na página servida.
+- Every published section needs non-empty content and a reachable route; contracts, TODOs and
+  gaps stay in the internal ledger, never on the served page.
 - An unpublished home is an explicit editorial decision with a motive; it is not a silent limitation of the generator.
 - Internal site links are relative and every page has a next step.

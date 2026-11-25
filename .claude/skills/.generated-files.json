@@ -3,65 +3,200 @@
   "source": ".agents/skills",
   "verifiedClaudeCode": "2.1.312",
   "files": {
-    "quenching-align/SKILL.md": "a7292d12175a9943d97ba76e5d6f63eea7d52eaeb9ced52cc03c2e15ef31ea38",
-    "quenching-components/SKILL.md": "9904d0c4660059e3bf9faaa481d08182e28f3bb07f7cbf70082673d30117c864",
+    "quenching-align/SKILL.md": "0028f8d4691b9ad711fe8d560e1cf3f5dac7d866c1ddb52557f4917c247d9df9",
+
+    "quenching-components/SKILL.md": "eb2ef009ddfa1287b35c3a93d5ef21018d001c4a9f6b8d70d142c7546e6fe004",
+
     "quenching-components/references/agent-new.md": "f939b24254696f3a4194a6b15efe55b8a069a3d8442e94f06d68f5092f578fcb",
+
     "quenching-components/references/align.md": "6a4983194ff6573966a13f4de5fde9ad6792dc4faa39b1921f8647a087298c4a",
+
     "quenching-components/references/command-eval.md": "7db772484823cbdfb79b7a6abc9a8ca1da86e06d6795e8dddadd366eea0a0e82",
+
     "quenching-components/references/command-new.md": "3f5f0a1af828694585f76446df80e0ecddc1fbff0fb172ec4f93550494c68722",
+
     "quenching-components/references/command-retro.md": "47ce5af0b9cb328218cf693551652b3f38a643530fe83e6236a834d88948e4c5",
+
     "quenching-components/references/components-command-eval/evaluation.md": "3498910c6d1321199a875657484880255a39d217e9bbdc0f83d48761b3beb37f",
+
     "quenching-components/references/components-harness-align/harness-routing.md": "76ce20dc13b64406d4fcda56f5e9f43ef33e158f5817b5b7e53e6561cbefea2a",
+
     "quenching-components/references/harness-align.md": "1bd307adeb7eb24d6f47b2b48f7b2aa32fc92ed00e27be4913b77806f104cbf3",
+
     "quenching-components/references/hook-new.md": "90cc40590349f11e973d82c8ccacd2564afc5e1f3024a212bfc7f45f89b28a32",
+
     "quenching-components/references/status.md": "6e2cc612a5d83ec68146fcc9aca038a73225a3fa5f919ac291f0b581c9eaf156",
-    "quenching-git/SKILL.md": "90660f734a13fe7544d2dbe9792502a2a4020b1c62ca6d769f876cd2cd434bdf",
+
+    "quenching-delivery/SKILL.md": "b357e615deb65c798f04c91fc0922a74a202312561d731d701596220512b0bf7",
+
+    "quenching-delivery/references/align.md": "71dab83c653405104e322c63442832f2d1b5201336b2d45eafb70d5ee3be48a1",
+
+    "quenching-delivery/references/delivery-align/bands.md": "b9d0fe7c2cfe6673b0ad9cf45cf4aca5e839476ffe9a8f028277abcac3c8b577",
+
+    "quenching-delivery/references/status.md": "c573594c796ad34dd08267fe9b2a1eb656a0d633156d433a75bf58a69548e9a6",
+
+    "quenching-design/SKILL.md": "749a2de8524911bbc2e70f6ad5fd64645c99571cf1840b0a20fb4e505b598bbc",
+
+    "quenching-design/references/align.md": "50118b0bbd2dff4603f3f1a8918f01fd4d5f7d54efe18530e48da3ce903aa745",
+
+    "quenching-design/references/design-align/bands.md": "662ba3de6e6b68f56cd061ae142dd6610ec20ffe2a8ba6270ae9153662818e1b",
+
+    "quenching-design/references/genre-new.md": "166c577ea2004cdb9c4a1cc83b5f47a113b910480e31355d68d156d11b890d1f",
+
+    "quenching-design/references/status.md": "21266695064ace61b30879567af92101f498591292df7eb20285c2402c3930e1",
+
+    "quenching-git/SKILL.md": "0f8ba73d6de47b102d86bf93497ec9e4a08ee22a8bf426180dc5c4f09e4c86a1",
+
     "quenching-git/references/branch.md": "a850543d748a644df5c4fb44a4e28ec894265d69601290b07bb3a0b66c2dec04",
+
     "quenching-git/references/cleanup.md": "977d97b0131f68833371d5b0156cfd381862c49e579920ab35ade1b6c40fe04d",
+
     "quenching-git/references/commit-incremental.md": "c88f914c6e848dca4632d66fd10db4c8317bddd649847626713875285aaa9ab9",
+
     "quenching-git/references/commit.md": "4484162250c498565182c1783ef77c2192d27d83afb9a019d7597e2353119138",
+
     "quenching-git/references/merge.md": "17e39fd1632b66cb44758210ce2b6f9d3066128f0b9a65157df36227f5bc6b4a",
+
     "quenching-git/references/pr-create.md": "fb9a56c7ad03193932eff40a1ebfae9b7026c50c2d57148f2e41b20218b98960",
+
     "quenching-git/references/pr-review.md": "ef996d6b9a73d64ea0520c92ca09f3cda02187ca2e847cb27d506d5f07ed8772",
+
     "quenching-git/references/pr-status.md": "ef21ce42ca2643281eedf5723a6f3482e9677a2248ad6ccc9e2f30ab3d0a3a11",
+
     "quenching-git/references/push.md": "5a6e2e1fd602e775395eb58624969455d3c10f6cbe01dc4bacdf09e327fb0f75",
+
     "quenching-git/references/revert.md": "d43f2c69c088820acb38fdb1c0b873b36ae7e4a9642fa0f7426827472812445d",
+
     "quenching-git/references/sync.md": "1b608cc8c84941e9e385c4e817bd4e1c749bdf1d622337ed2f32baf74fb1d87d",
-    "quenching-handoff/SKILL.md": "1e6d598a52f6070f55c5af6239e7bc93c11e39fea79489197eefffdc356aaff2",
+
+    "quenching-handoff/SKILL.md": "7cbf6dd25c954a720d339b2c4cd6fde4c00241ec5eb215548d5e7dd1522b3fae",
+
     "quenching-handoff/references/template.md": "3cadf312ed570714431ee5fcf655a9358b0d97ce12c95d0417e59f7947def1c4",
-    "quenching-knowledge/SKILL.md": "69043ce912e5f760e2b8011c2cb6f1c3493cdf7683ef0b795e12abe3e6071711",
+
+    "quenching-knowledge/SKILL.md": "7a6adb9fc67f2298dee844d498aa2e80903aeaa9e540645d21d3159bfe3628ca",
+
     "quenching-knowledge/references/add.md": "8ece711dec0a4d8805a4fc1e45e54fc76ac8fc54c5107f5415c379e717666106",
+
     "quenching-knowledge/references/align.md": "b6c82fb8572ee971af88c6dea310fd2691c7fc26f1f604d709e57b1aa20d5222",
+
     "quenching-knowledge/references/define.md": "0e66162cdf5bd332114b0f078d340423d7a027f1049f9483d93b7138ab799de9",
+
     "quenching-knowledge/references/documentation-build.md": "48d7434802b8c04ff278ca0a72818e14a41dd90b9a02d1cf620ed27c91456838",
+
     "quenching-knowledge/references/documentation-plan.md": "174232bf38699d46e8436b030a68ed7df05779b9cd68ccafc59e3f4ae21d526b",
+
     "quenching-knowledge/references/documentation-produce.md": "0e77123442c70a54f8eed6f8bc8d5e143a5fd6f35e13231a9459c265eb50f4a8",
+
     "quenching-knowledge/references/documentation-review.md": "f985432c976fbf31e3553eb527486edfb7c0d9e1ef0afc203dc09ca8c42d5c0e",
+
     "quenching-knowledge/references/documentation-write.md": "c83a9b95deae59c8239422a3220ba8c8e01a792e6ec022bf602187c5b8e7e90e",
+
     "quenching-knowledge/references/glossary-backfill.md": "d42b80d7c5481d29996fb090825fcbad8fc51fb4d796c5244ca930b4e958a6b9",
+
     "quenching-knowledge/references/import-memory.md": "9d9b6f688c77841514afa49cad65fb119448605d9ee9426c9469a3d124ac74d8",
-    "quenching-knowledge/references/import.md": "92f154c86465a5f89e4616a7baa929975c2fd2c9600537af6b0de56424325fde",
+
+    "quenching-knowledge/references/import.md": "5920972f8a319852c00e93c6fd2815920725f590d53ce9dc6593770dbd6fc730",
+
     "quenching-knowledge/references/knowledge-documentation/agent-readability.md": "02a1ab8736e93d916f0f49cdeb1a8ae14b7daa11e9c8272ec6ea1f0de85859c0",
-    "quenching-knowledge/references/knowledge-documentation/architecture.md": "e7606acb10d134f11a28d25693d9e667fb4d6f497a43097ece232bf258414dd5",
+
+    "quenching-knowledge/references/knowledge-documentation/architecture.md": "4158c02e9f67b6c2ea931a9f5a72fccedb58c8ec4901d3b785daa771da0dbcb8",
+
     "quenching-knowledge/references/knowledge-documentation/craft.md": "5921e4590606b45087f47b137e566554675763f54073d058b8b4b71c8318196d",
+
     "quenching-knowledge/references/knowledge-documentation/quality.md": "a2d1e81ab36f7a00b9ad9d45adc1280a01f641f29b8399ae837691940f4e4c36",
-    "quenching-knowledge/references/knowledge-documentation/validation.md": "614ddb58b91a51d3c87b511eb15ba8b3881022c23aab5aed8a507fbd495e6428",
+
+    "quenching-knowledge/references/knowledge-documentation/validation.md": "98fbd6e0996e8943b60e961c3712cf8eca62d0a05215c27895d388f0b77cda92",
+
     "quenching-knowledge/references/knowledge-documentation/visual.md": "7c188cfaa0624eb9cb312c29dd0b4baf961f2ec09cb5e5742261330077a25e4d",
+
     "quenching-knowledge/references/knowledge-documentation/zensical-capabilities.md": "53a4c8d37b0fc9b2c257b73eeb5ed2fbb7a130aabd048c19c239d2b4b1361eef",
+
     "quenching-knowledge/references/knowledge-import-memory/memory-routing.md": "9b21f7eb82e6f1bdb3d4390fb1390c145863b8c928355ad6b44f6d5b16d6ca4a",
+
     "quenching-knowledge/references/learn.md": "c1ea2c3f9468bc691e40e4b96990ffde5cc6f7d8492795582004a3a28f5b30ce",
+
     "quenching-knowledge/references/status.md": "7f3cd7e828ea47e4be8c8c3cde883754122440eaf699140f525cfeec3dbe25c0",
-    "quenching-specs/SKILL.md": "8c7a627a37bf839b74802a99a457e3fd60349de7cf2005d71e4dd2c2935afbac",
-    "quenching-specs/references/autopilot.md": "ca24d9dee58a0bf70338d9e6539a346fe7bd41c4b0ade1092d6d9249bf363b4f",
+
+    "quenching-opensource/SKILL.md": "afb2857d726afe2a1b788ef749549bbaf311644064d5f170268d9381fea040b3",
+
+    "quenching-opensource/references/align.md": "7dcf8896112544e4238216bb648752a9033455d038c1b8571a56fde235664f63",
+
+    "quenching-opensource/references/opensource-align/bands.md": "eb19ae8744cfacf6be39e491c1b35b6bf0235032d2e4ec4a9d07d38f7555a60e",
+
+    "quenching-opensource/references/opensource-controls/catalog.md": "cf0cbedcc678bd8fd98456a9802d42995e557e09e30281187c544444f1873f86",
+
+    "quenching-opensource/references/opensource-readiness/report.md": "69da52b1b3a7922147a1c288e8188e181d355c3a849c8444fd9da6969dd551f0",
+
+    "quenching-opensource/references/readiness.md": "654c8fb95160d64e7839b609c6e60634f53cf0653fba488b69e1fda7a45d9735",
+
+    "quenching-opensource/references/status.md": "9f9aeaf3ac5d172f839f0712e293c9ef3a9f98c813a51e07837aefa296193d38",
+
+    "quenching-ops/SKILL.md": "6ad3fa46354793b806f52c386a5c741b18872954c604fef50c19579f44646ddd",
+
+    "quenching-ops/references/align.md": "f764b5952da74ca7115fe1d202ee2264a26f92c75b4575029ebbcd8636dc606e",
+
+    "quenching-ops/references/entrypoint-new.md": "96052f0bc02d23eabd8a434649c175e9c3bafcf399225221d8e4930e86c95ed1",
+
+    "quenching-ops/references/ops-align/bands.md": "337779a922c8db1fc2a387a7a1407b149fee702d47e62d2ec3b83a3a8d8f3113",
+
+    "quenching-ops/references/ops-align/entrypoint-contract.md": "fcc03a55bceebb5d7fb3a489bba7d2775cdd51906a487a1bcb724a9235de4399",
+
+    "quenching-ops/references/ops-align/lifecycle.md": "b7860491af266ab5dd1341b87f397d9105a8af80b1bd16ddcd72ac10db712543",
+
+    "quenching-ops/references/ops-align/target-structure.md": "b5b7492cd0e3d82f72fb505d4b408447d0e06c171c104d4657e267fa6c7c0c50",
+
+    "quenching-ops/references/status.md": "c675d1676f916aea6aa5c11ef02490fa47f4b100960522685ee13f643a2fe1c1",
+
+    "quenching-proof/SKILL.md": "fe44a487a15928b6588ffa1248eb7e59e14cbeda1cbd52c7292508fc1519e0a3",
+
+    "quenching-proof/references/align.md": "c332d6a3c0cc386750ee383f9a77586b71e4d1d1919c7891777ce3216069ee0e",
+
+    "quenching-proof/references/layer-new.md": "8e838f3485b3a01c32e6ea1091ba133c3f8c528718fcb9caf74009ecaad9f693",
+
+    "quenching-proof/references/proof-align/bands.md": "cb82876a70635dceb227baf38a920c193505137716b074db761d9b0d0a9b378e",
+
+    "quenching-proof/references/proof-align/gate-contract.md": "d588d826eadf1940e8333181f440d39b351b87a764007a1c7ef0cce84f58852c",
+
+    "quenching-proof/references/proof-align/layer-contract.md": "a93ce5aefeb7143e657ac64566577bce8018cda1cee7986fe215fe7ebd3ccf97",
+
+    "quenching-proof/references/proof-align/target-structure.md": "8c609564b8375f5ee6cdf78475b1cba5d7275bfdb09ead2d6a494bc3e37b1f4c",
+
+    "quenching-proof/references/status.md": "aa6ea881e249ac50293f0527a53cedd222e98f8fff779231f87e02be53201b2d",
+
+    "quenching-security/SKILL.md": "030b05174c40fb96d9560a766c5f9c45bd1cb0ab08cff0c15b58d3a365d736e3",
+
+    "quenching-security/references/status.md": "3725a40c805cb59d32f322f2154ae245c5cf5454e2d794b11a26bd77515117c7",
+
+    "quenching-specs/SKILL.md": "e4ef0604b1ea6901d6a9023fd85c3d40ace5ffc1ad7ea4e11c77892400872c69",
+
+    "quenching-specs/references/autopilot.md": "74c6571bbefe67ea87aad4fc250262d717cf469b41d5279fd10980919796a388",
+
     "quenching-specs/references/board.md": "f23f25a70443e60cb15174e2763370280b57c7396d5a4cf424b5319a867017dc",
-    "quenching-specs/references/conclude.md": "1d371c4c9b6d3a80d2d2b72ccae2ea761b184a39b54118f0189cf6fa4333de91",
+
+    "quenching-specs/references/conclude.md": "ff62acffe74f07723f8a00ac5ac5a99ee197d426d971a90d1213f507cc2f139d",
+
     "quenching-specs/references/create.md": "4991e0a0e7ffbec45d0c59a264dbb25e88b2ca223d44b635bedc8d8d458693f9",
-    "quenching-specs/references/develop.md": "243b20596ca1196b845c25c244ed0703253ce8e6d4e5b88e9de18e32d7ca410b",
-    "quenching-specs/references/execute.md": "46a05b4e53169e3f45b063f8758ff4b85d26634d706bdb3f1d3bf09363e91313",
+
+    "quenching-specs/references/develop.md": "a64383348f2c226f7c084f15065e3ba2691a8eb63e47f0c0aa8e2b3578a10d8a",
+
+    "quenching-specs/references/execute.md": "be9bedb854a0f45dd6273a8e51bdd9b42a019d17acedf5ff0600578b78d6db28",
+
     "quenching-specs/references/improve.md": "c9d1841314f1402ca9ac2ab793b2ee2be3f172ea82795b1f62c5392ac22cf698",
+
     "quenching-specs/references/orchestrate.md": "a14e8222bba00f324cc51a8a2c59165600f074f6c57bb1fcecce0fba085c9c1a",
+
     "quenching-specs/references/specs-create/plan-mapping.md": "a3995f52007dd8a52cc7893f1a4b72e08b98559e4cb5df1de8dce813e3f51af1",
+
     "quenching-specs/references/status.md": "29bd59a3bf447568198ee3d6de938e524057b7371fcb7be693370371b327f6b3",
-    "quenching-specs/references/triage.md": "f46ed43c47a9a190e1008d58a7ee708bc082f97ea6464a78faadbfc0ca9c3fcc"
+
+    "quenching-specs/references/triage.md": "f46ed43c47a9a190e1008d58a7ee708bc082f97ea6464a78faadbfc0ca9c3fcc",
+
+    "quenching-toolchain/SKILL.md": "f7fac110daf125f095b55fff37897010d3cd3dab2d09444e7241e0966c6465a1",
+
+    "quenching-toolchain/references/align.md": "76c01e4e6254b6836903a96bec9556ef4b6c72bab4738e7241642d683208618a",
+
+    "quenching-toolchain/references/status.md": "043229665fac8062b7cc154893fa8a0bb038790e4b5ba438a297ea35ac890da3",
+
+    "quenching-toolchain/references/toolchain-align/bands.md": "d73941d0034ffd0cbc3b3c79bc992d432b1a802e3d86926730a5943309034b97"
   }
 }

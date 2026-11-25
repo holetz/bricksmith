@@ -139,7 +139,7 @@ builds in. Green → go on to step 3. Red → **stop**: report the task, the com
 and write nothing, until the cause is classified. Reproduce the failure in the base worktree
 (`.quenching/red`): it reproduces there → pre-existing, and the route of **5i** applies; it does not →
 the regression belongs to the task that caused it, not to the conclude gate, and nothing is fixed
-here. Nothing checked yet → run nothing.
+here. Nothing checked yet → run the baseline once, before any code: the first task's `verify:` (the narrowest `## Validation` command when it has none), skipping a command that spends billed sessions and saying so in the report. A red there is the base's by construction (clean tree, setup already run): route **5i** directly, no `.quenching/red` worktree — unless it only names code this task itself will create, which is the task's own RED.
 
 **Done when:** the tree is clean, the worktree (or the requested branch) has been taken or found
 already held, any unresolved hook has been reported, and a resume's last checked task still

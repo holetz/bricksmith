@@ -1,0 +1,809 @@
+{
+  "schema_version": 1,
+  "version": "2026.08.28",
+  "released_on": "2026-08-28",
+  "inspected_on": "2026-10-13",
+  "tag": "v2026.08.28",
+  "sources": {
+    "AC": {
+      "url": "https://raw.githubusercontent.com/ossf/security-baseline/v2026.08.28/baseline/OSPS-AC.yaml",
+      "sha256": "882c7959492ad4a886ac07065fd12bec846fc160c72fbd56415a4d8b27f268d7"
+    },
+    "BR": {
+      "url": "https://raw.githubusercontent.com/ossf/security-baseline/v2026.08.28/baseline/OSPS-BR.yaml",
+      "sha256": "b4517ddec4b3beffc3f0858e2233c9619a8d76d0f1ed39a3f1e93414a6109ef7"
+    },
+    "DO": {
+      "url": "https://raw.githubusercontent.com/ossf/security-baseline/v2026.08.28/baseline/OSPS-DO.yaml",
+      "sha256": "8df8c67c5f89896678d787e66486d36c0c2b91663bbfbc6669249601f8a62b7e"
+    },
+    "GV": {
+      "url": "https://raw.githubusercontent.com/ossf/security-baseline/v2026.08.28/baseline/OSPS-GV.yaml",
+      "sha256": "b784bfce2fce821d06018cf16a9c97b449fb1edae70654dd57b2623d07640bf7"
+    },
+    "LE": {
+      "url": "https://raw.githubusercontent.com/ossf/security-baseline/v2026.08.28/baseline/OSPS-LE.yaml",
+      "sha256": "8bb0f5b196e2bd8a1c5f5ffb31b2ad392c19691ebb0ca1cefd7298889b8b6a9f"
+    },
+    "QA": {
+      "url": "https://raw.githubusercontent.com/ossf/security-baseline/v2026.08.28/baseline/OSPS-QA.yaml",
+      "sha256": "45cb66e92cb50711f2f3d9ef45c2fc39b815bca09b7a8b468adc300309f21940"
+    },
+    "SA": {
+      "url": "https://raw.githubusercontent.com/ossf/security-baseline/v2026.08.28/baseline/OSPS-SA.yaml",
+      "sha256": "fd3dc78e6b8784868ad52c3cd42eb856fe6289dc01b61ad562b091cb268a18df"
+    },
+    "VM": {
+      "url": "https://raw.githubusercontent.com/ossf/security-baseline/v2026.08.28/baseline/OSPS-VM.yaml",
+      "sha256": "a78fd8a665689ff804a5eecdb77e2925f834c97b723aec9b8f42aa77f789f9d5"
+    }
+  },
+  "controls": [
+    {
+      "id": "OSPS-AC-01",
+      "family": "AC",
+      "requirements": [
+        {
+          "id": "OSPS-AC-01.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-AC-02",
+      "family": "AC",
+      "requirements": [
+        {
+          "id": "OSPS-AC-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-AC-03",
+      "family": "AC",
+      "requirements": [
+        {
+          "id": "OSPS-AC-03.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-AC-03.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-AC-04",
+      "family": "AC",
+      "requirements": [
+        {
+          "id": "OSPS-AC-04.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-AC-04.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-BR-01",
+      "family": "BR",
+      "requirements": [
+        {
+          "id": "OSPS-BR-01.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-BR-01.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "retired"
+        },
+        {
+          "id": "OSPS-BR-01.03",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-BR-01.04",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-BR-02",
+      "family": "BR",
+      "requirements": [
+        {
+          "id": "OSPS-BR-02.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-BR-02.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-BR-03",
+      "family": "BR",
+      "requirements": [
+        {
+          "id": "OSPS-BR-03.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-BR-03.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-BR-04",
+      "family": "BR",
+      "requirements": [
+        {
+          "id": "OSPS-BR-04.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-BR-05",
+      "family": "BR",
+      "requirements": [
+        {
+          "id": "OSPS-BR-05.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-BR-06",
+      "family": "BR",
+      "requirements": [
+        {
+          "id": "OSPS-BR-06.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-BR-07",
+      "family": "BR",
+      "requirements": [
+        {
+          "id": "OSPS-BR-07.01",
+          "levels": [
+            1
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-BR-07.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-DO-01",
+      "family": "DO",
+      "requirements": [
+        {
+          "id": "OSPS-DO-01.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-DO-02",
+      "family": "DO",
+      "requirements": [
+        {
+          "id": "OSPS-DO-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-DO-03",
+      "family": "DO",
+      "requirements": [
+        {
+          "id": "OSPS-DO-03.01",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-DO-03.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-DO-04",
+      "family": "DO",
+      "requirements": [
+        {
+          "id": "OSPS-DO-04.01",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-DO-05",
+      "family": "DO",
+      "requirements": [
+        {
+          "id": "OSPS-DO-05.01",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-DO-06",
+      "family": "DO",
+      "requirements": [
+        {
+          "id": "OSPS-DO-06.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-DO-07",
+      "family": "DO",
+      "requirements": [
+        {
+          "id": "OSPS-DO-07.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-GV-01",
+      "family": "GV",
+      "requirements": [
+        {
+          "id": "OSPS-GV-01.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-GV-01.02",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-GV-02",
+      "family": "GV",
+      "requirements": [
+        {
+          "id": "OSPS-GV-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-GV-03",
+      "family": "GV",
+      "requirements": [
+        {
+          "id": "OSPS-GV-03.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-GV-03.02",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-GV-04",
+      "family": "GV",
+      "requirements": [
+        {
+          "id": "OSPS-GV-04.01",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-LE-01",
+      "family": "LE",
+      "requirements": [
+        {
+          "id": "OSPS-LE-01.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-LE-02",
+      "family": "LE",
+      "requirements": [
+        {
+          "id": "OSPS-LE-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-LE-02.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-LE-03",
+      "family": "LE",
+      "requirements": [
+        {
+          "id": "OSPS-LE-03.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-LE-03.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-QA-01",
+      "family": "QA",
+      "requirements": [
+        {
+          "id": "OSPS-QA-01.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-QA-01.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-QA-02",
+      "family": "QA",
+      "requirements": [
+        {
+          "id": "OSPS-QA-02.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-QA-02.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-QA-03",
+      "family": "QA",
+      "requirements": [
+        {
+          "id": "OSPS-QA-03.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-QA-04",
+      "family": "QA",
+      "requirements": [
+        {
+          "id": "OSPS-QA-04.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-QA-04.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-QA-05",
+      "family": "QA",
+      "requirements": [
+        {
+          "id": "OSPS-QA-05.01",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-QA-05.02",
+          "levels": [
+            1,
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-QA-06",
+      "family": "QA",
+      "requirements": [
+        {
+          "id": "OSPS-QA-06.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-QA-06.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-QA-06.03",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-QA-07",
+      "family": "QA",
+      "requirements": [
+        {
+          "id": "OSPS-QA-07.01",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-SA-01",
+      "family": "SA",
+      "requirements": [
+        {
+          "id": "OSPS-SA-01.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-SA-02",
+      "family": "SA",
+      "requirements": [
+        {
+          "id": "OSPS-SA-02.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-SA-03",
+      "family": "SA",
+      "requirements": [
+        {
+          "id": "OSPS-SA-03.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-SA-03.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-VM-01",
+      "family": "VM",
+      "requirements": [
+        {
+          "id": "OSPS-VM-01.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-VM-02",
+      "family": "VM",
+      "requirements": [
+        {
+          "id": "OSPS-VM-02.01",
+          "levels": [
+            1
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-VM-03",
+      "family": "VM",
+      "requirements": [
+        {
+          "id": "OSPS-VM-03.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-VM-04",
+      "family": "VM",
+      "requirements": [
+        {
+          "id": "OSPS-VM-04.01",
+          "levels": [
+            2,
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-VM-04.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-VM-05",
+      "family": "VM",
+      "requirements": [
+        {
+          "id": "OSPS-VM-05.01",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-VM-05.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-VM-05.03",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    },
+    {
+      "id": "OSPS-VM-06",
+      "family": "VM",
+      "requirements": [
+        {
+          "id": "OSPS-VM-06.01",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        },
+        {
+          "id": "OSPS-VM-06.02",
+          "levels": [
+            3
+          ],
+          "state": "active"
+        }
+      ]
+    }
+  ]
+}
