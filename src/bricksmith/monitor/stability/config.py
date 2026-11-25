@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.infer import InferenceOptions
-from bricksmith.monitor.limits import ABSOLUTE, BOTH, HIGHER, Limits
+from bricksmith.monitor.limits import ABSOLUTE, BOTH, DIRECTIONS, HIGHER, Limits
 from bricksmith.monitor.persistence import PersistencePolicy
 from bricksmith.monitor.rules import LimitRule, Resolution, parse_rules, resolve
 from bricksmith.monitor.trend import TrendPolicy
@@ -66,6 +66,8 @@ CADENCE_LIMITS: dict[str, Limits] = {
 }
 CADENCES = ("day", "week", "month", "none")
 DEFAULT_TREND_METRICS = (PSI, VOLUME_CHANGE)
+#: Trend direction of the metrics that carry no limits; a limit's own direction (declared, per column or by rule) wins.
+DEFAULT_TREND_DIRECTIONS: dict[str, str] = {ROW_COUNT: BOTH, MEAN: BOTH, NULL_RATE: HIGHER, UNSEEN_RATE: HIGHER}
 FIXED = "fixed"
 PREVIOUS = "previous"
 ROLLING = "rolling"
@@ -74,7 +76,7 @@ GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
 TABLES = ("binnings", "profiles", "results", "alerts", "runs")
 KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
-    "column_limits", "trend", "trend_metrics", "persistence", "gate", "min_rows", "refresh_periods",
+    "column_limits", "trend", "trend_metrics", "trend_directions", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
     "cadence", "expected_by", "settle_periods", "settle_days",
 })  # fmt: skip
@@ -214,6 +216,7 @@ class StabilityConfig:
     column_limits: dict[str, dict[str, Limits | None]] = field(default_factory=dict)
     trend: TrendPolicy | None = field(default_factory=TrendPolicy)
     trend_metrics: tuple[str, ...] = DEFAULT_TREND_METRICS
+    trend_directions: dict[str, str] = field(default_factory=dict)
     persistence: PersistencePolicy = field(default_factory=PersistencePolicy)
     gate: Gate = field(default_factory=Gate)
     min_rows: int = 30
@@ -249,6 +252,10 @@ class StabilityConfig:
         if metric in self.limits:
             return self.limits[metric]
         return REVISION_LIMITS.get(metric) or CADENCE_LIMITS.get(metric)
+
+    def trend_direction(self, metric: str) -> str:
+        """Return the trend direction of a metric without limits: the declared one, else the default, else ``""``."""
+        return self.trend_directions.get(metric) or DEFAULT_TREND_DIRECTIONS.get(metric, "")
 
     def resolve(self, *, dataset: str, column: str, segment: str, metric: str, period_date: str | None) -> Resolution:
         """Return the rules that apply to one result (see :func:`bricksmith.monitor.rules.resolve`)."""
@@ -292,6 +299,8 @@ class StabilityConfig:
         for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
             if getattr(self, name) not in ("none", 0):
                 data[name] = getattr(self, name)
+        if self.trend_directions:
+            data["trend_directions"] = dict(sorted(self.trend_directions.items()))
         return data
 
     def _base_dict(self) -> dict[str, Any]:
@@ -480,6 +489,31 @@ def _check_cadence(config: StabilityConfig) -> None:
         raise _fail(msg)
 
 
+def _trend_directions(value: object) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        msg = "trend_directions must map a metric to higher, lower or both"
+        raise _fail(msg)
+    for metric, direction in value.items():
+        if metric not in METRICS:
+            msg = f"trend_directions has an unknown metric {metric!r}; metrics are {', '.join(METRICS)}"
+            raise _fail(msg)
+        if direction not in DIRECTIONS:
+            msg = f"trend_directions of {metric} must be one of {', '.join(DIRECTIONS)}, got {direction!r}"
+            raise _fail(msg)
+    return dict(value)
+
+
+def _directional(config: StabilityConfig, metric: str) -> bool:
+    """Tell whether the trend of ``metric`` has a direction: a trend direction, a limit or a column limit."""
+    if config.trend_direction(metric):
+        return True
+    if any(metric in over and over[metric] is not None for over in config.column_limits.values()):
+        return True
+    return config.limits_for(metric, "") is not None
+
+
 def parse_config(data: object, root: Path | str | None = None) -> StabilityConfig:
     """Validate one declaration mapping into a :class:`StabilityConfig` (unknown keys are errors)."""
     if not isinstance(data, dict):
@@ -537,11 +571,16 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             expected_by=_int(data, "expected_by", 0, 0),
             settle_periods=_int(data, "settle_periods", 0, 0),
             settle_days=_int(data, "settle_days", 0, 0),
+            trend_directions=_trend_directions(data.get("trend_directions")),
         )
         _check_cadence(config)
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
         raise _fail(msg) from None
+    blind = [m for m in config.trend_metrics if "trend_metrics" in data and not _directional(config, m)]
+    if blind:
+        msg = f"trend_metrics {', '.join(blind)} have no direction: declare limits or trend_directions for them"
+        raise _fail(msg)
     return config
 
 
