@@ -3,7 +3,8 @@
 Fitting counts the values of every monitored column in one job per column type (one small row per distinct
 value); columns with more than ``EXACT_DISTINCT_LIMIT`` distinct values use exact percentiles computed remotely
 instead. Profiling runs three jobs whatever the columns and segment sets: the row totals, the segment ranking and one
-grouped aggregation over an exploded ``(segment, column, bin, value)`` array.
+grouped aggregation over an exploded ``(segment, column, bin, value)`` array; declared ``keys`` and ``distinct``
+columns add one more grouped aggregation of approximate distinct counts.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from bricksmith.monitor.bins import NULL, BinSpec, bin_options, edges_from_cuts,
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.infer import NUMERIC, TEXT
 from bricksmith.monitor.spark import bin_expression
+from bricksmith.monitor.stability.config import DISTINCT_PREFIX, KEYS_COLUMN
 from bricksmith.monitor.stability.profile import (
     NULL_TEXT,
     ProfileInfo,
@@ -22,6 +24,7 @@ from bricksmith.monitor.stability.profile import (
     first_periods,
     kept_segments,
     resolve_columns,
+    scan_row,
     segment_sets,
 )
 
@@ -282,7 +285,41 @@ def profile_spark(  # noqa: PLR0913 - one keyword per profile field
         totals[(str(row["__p"]), str(row["__s"]), str(row["c"]), str(row["b"]))] = [
             int(row["n"]), float(row["w"] or 0.0), float(row["s"] or 0.0), float(row["q"] or 0.0)
         ]  # fmt: skip
-    return complete_rows(binning, totals, config, dataset=dataset, run_id=run_id, first=first, periods=periods), info
+    rows = complete_rows(binning, totals, config, dataset=dataset, run_id=run_id, first=first, periods=periods)
+    return [*rows, *_scan_spark(binning, scoped, config, dataset=dataset, run_id=run_id)], info
+
+
+def _scan_spark(
+    binning: Reference, scoped: DataFrame, config: StabilityConfig, *, dataset: str, run_id: str
+) -> list[dict[str, Any]]:
+    """Return the ``~keys`` and ``~distinct:<column>`` rows of every period: one grouped aggregation, approximate.
+
+    Distinct counts use ``approx_count_distinct`` (a relative standard deviation of about 5%), so the duplicate
+    key rate of a Spark profile carries that error; the pure engine counts exactly.
+    """
+    if not config.keys and not config.distinct:
+        return []
+    f = _f()
+    aggs = [f.count(f.lit(1)).alias("rows")]
+    if config.keys:
+        parts = [f.coalesce(f.col(c).cast("string"), f.lit("\x00null")) for c in config.keys]
+        aggs.append(f.approx_count_distinct(f.concat_ws("\x1f", *parts)).alias("keys"))
+    for i, column in enumerate(config.distinct):
+        aggs += [f.count(f.col(column)).alias(f"n{i}"), f.approx_count_distinct(f.col(column)).alias(f"d{i}")]
+    out: list[dict[str, Any]] = []
+    for row in scoped.groupBy("__p").agg(*aggs).collect():
+        period = str(row["__p"])
+        if config.keys:
+            keys = (int(row["rows"]), min(int(row["keys"]), int(row["rows"])))
+            out.append(scan_row(binning, period, KEYS_COLUMN, keys, dataset=dataset, run_id=run_id))
+        for i, column in enumerate(config.distinct):
+            count = int(row[f"n{i}"])
+            if count > 0:
+                counts = (count, min(int(row[f"d{i}"]), count))
+                out.append(
+                    scan_row(binning, period, f"{DISTINCT_PREFIX}{column}", counts, dataset=dataset, run_id=run_id)
+                )
+    return sorted(out, key=lambda r: (r["period"], r["column"]))
 
 
 __all__ = [
