@@ -537,7 +537,7 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
         raise _fail(msg) from None
-    blind = [m for m in config.trend_metrics if not _directional(config, m)]
+    blind = [m for m in config.trend_metrics if "trend_metrics" in data and not _directional(config, m)]
     if blind:
         msg = f"trend_metrics {', '.join(blind)} have no direction: declare limits or trend_directions for them"
         raise _fail(msg)
