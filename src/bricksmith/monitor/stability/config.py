@@ -102,7 +102,7 @@ KEYS = frozenset({
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
     "auto_columns", "psi_limits", "min_rows_per_bin", "psi_smoothing",
     "noise", "cadence", "expected_by", "settle_periods", "settle_days",
-    "history", "history_periods",
+    "history", "history_periods", "views",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
@@ -372,6 +372,7 @@ class StabilityConfig:
     settle_days: int = 0
     history: bool = False
     history_periods: int = 0
+    views: bool = False
 
     @property
     def auto(self) -> bool:
@@ -432,8 +433,7 @@ class StabilityConfig:
             data["rules"] = [r.to_dict() for r in self.rules]
         if self.notify is not None:
             data["notify"] = self.notify.to_dict()
-        if self.revision:
-            data["revision"] = True
+        data.update({name: True for name in ("revision", "views") if getattr(self, name)})
         data.update(self._psi_options())
         for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
             if getattr(self, name) not in ("none", 0):
@@ -685,6 +685,13 @@ def _history(data: dict[str, Any]) -> tuple[bool, int]:
     return bool(value), periods
 
 
+def _views(value: object) -> bool:
+    if value is not None and not isinstance(value, bool):
+        msg = f"views must be true or false, got {value!r}"
+        raise _fail(msg)
+    return bool(value)
+
+
 def _trend_directions(value: object) -> dict[str, str]:
     if value is None:
         return {}
@@ -776,6 +783,7 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             noise=parse_noise(data.get("noise")),
             history=history,
             history_periods=history_periods,
+            views=_views(data.get("views")),
         )
         _check_cadence(config)
     except (TypeError, ValueError) as error:
