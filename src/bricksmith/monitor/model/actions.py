@@ -9,7 +9,7 @@ state at an evaluation date (:func:`apply_actions`). An acceptance suppresses ga
 from __future__ import annotations
 
 import hashlib
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from bricksmith.monitor.errors import MonitorError
@@ -41,6 +41,30 @@ def _iso_date(value: object, what: str) -> str:
         return _refuse(f"{what} must be an ISO date (YYYY-MM-DD), got {value!r}")
 
 
+def _utc_instant(value: object) -> datetime | None:
+    """Return ``value`` parsed as an ISO-8601 instant in UTC (a naive one is read as UTC), or None."""
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
+
+
+def _utc_text(moment: datetime) -> str:
+    return moment.isoformat(timespec="microseconds" if moment.microsecond else "seconds")
+
+
+def _order(row: Mapping[str, Any]) -> tuple[int, datetime | str, str]:
+    """Sort key of a stored action: its UTC instant, or its raw text (before every instant) when unparsable."""
+    raw = str(row.get("created_at") or "")
+    moment = _utc_instant(raw) if raw else None
+    if moment is None:
+        return (0, raw, str(row.get("action_id") or ""))
+    return (1, moment, str(row.get("action_id") or ""))
+
+
 def action_row(  # noqa: PLR0913 - one keyword per column a person writes
     *,
     model: str,
@@ -54,7 +78,8 @@ def action_row(  # noqa: PLR0913 - one keyword per column a person writes
     """Return the validated row of an alert action.
 
     ``reason`` and ``author`` are required; ``risk_accepted`` requires ``valid_until`` and the other actions refuse
-    one. ``action_id`` hashes the content, so writing the same decision twice is one row.
+    one. ``created_at`` must be ISO-8601; it is stored in UTC (a naive value is read as UTC). ``action_id`` hashes
+    the content, so writing the same decision twice, at the same instant in any offset, is one row.
     """
     if action not in ACTIONS:
         _refuse(f"action must be one of {', '.join(ACTIONS)}; got {action!r}")
@@ -66,7 +91,11 @@ def action_row(  # noqa: PLR0913 - one keyword per column a person writes
         _refuse("risk_accepted requires valid_until")
     if action != RISK_ACCEPTED and valid_until:
         _refuse(f"{action} takes no valid_until")
-    identity = f"{model}|{alert_id}|{action}|{author}|{created_at}"
+    moment = _utc_instant(created_at)
+    if moment is None:
+        _refuse(f"created_at must be an ISO-8601 timestamp, got {created_at!r}")
+    created = _utc_text(moment)
+    identity = f"{model}|{alert_id}|{action}|{author}|{created}"
     return {
         "action_id": hashlib.sha256(identity.encode()).hexdigest()[:16],
         "model": model,
@@ -75,20 +104,23 @@ def action_row(  # noqa: PLR0913 - one keyword per column a person writes
         "reason": reason.strip(),
         "author": author.strip(),
         "valid_until": _iso_date(valid_until, "valid_until") if valid_until else None,
-        "created_at": created_at,
+        "created_at": created,
     }
 
 
 def latest_actions(actions: Iterable[Mapping[str, Any]], model: str | None = None) -> dict[str, dict[str, Any]]:
-    """Return the latest action per alert id (by ``created_at``, then ``action_id``), optionally of one model."""
+    """Return the latest action per alert id, optionally of one model.
+
+    Actions are ordered by the UTC instant of ``created_at``, then ``action_id``. A stored ``created_at`` that does not
+    parse still counts, ordered by its text before every parsable one.
+    """
     latest: dict[str, dict[str, Any]] = {}
     for row in actions:
         if model is not None and row.get("model") != model:
             continue
         key = str(row.get("alert_id") or "")
-        order = (str(row.get("created_at") or ""), str(row.get("action_id") or ""))
         held = latest.get(key)
-        if held is None or order > (str(held.get("created_at") or ""), str(held.get("action_id") or "")):
+        if held is None or _order(row) > _order(held):
             latest[key] = dict(row)
     return latest
 
