@@ -71,6 +71,7 @@ LAPLACE = "laplace"
 PSI_SMOOTHINGS = (EPSILON_FLOOR, LAPLACE)
 DEFAULT_MIN_ROWS_PER_BIN = 10
 GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
+GATE_PERIODS = ("latest", "profiled")
 TABLES = ("binnings", "profiles", "results", "alerts", "runs")
 KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
@@ -138,21 +139,31 @@ class Baseline:
 
 @dataclass(frozen=True)
 class Gate:
-    """What the run does: ``fail_on`` conditions on the latest period, and the policy for engine errors."""
+    """What the run does: ``fail_on`` conditions, the periods they judge, and the policy for engine errors.
+
+    ``periods`` is ``latest`` (the latest period only) or ``profiled`` (every window period profiled in the run).
+    """
 
     fail_on: tuple[str, ...] = ()
     on_error: str = "warn"
+    periods: str = "latest"
 
     def __post_init__(self) -> None:
-        """Validate the conditions and the error policy."""
+        """Validate the conditions, the error policy and the judged periods."""
         unknown = set(self.fail_on) - set(GATE_CONDITIONS)
         if unknown or self.on_error not in ("warn", "fail"):
             msg = f"gate fail_on takes {', '.join(GATE_CONDITIONS)} and on_error warn or fail"
             raise _fail(msg)
+        if self.periods not in GATE_PERIODS:
+            msg = f"gate periods takes {' or '.join(GATE_PERIODS)}, got {self.periods!r}"
+            raise _fail(msg)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form."""
-        return {"fail_on": list(self.fail_on), "on_error": self.on_error}
+        """Return the serializable form (``periods`` only when not the default: fingerprints stay)."""
+        data: dict[str, Any] = {"fail_on": list(self.fail_on), "on_error": self.on_error}
+        if self.periods != "latest":
+            data["periods"] = self.periods
+        return data
 
 
 @dataclass(frozen=True)
@@ -443,15 +454,17 @@ def _baseline(value: object) -> Baseline:
 def _gate(value: object) -> Gate:
     if value is None:
         return Gate()
-    if not isinstance(value, dict) or set(value) - {"fail_on", "on_error"}:
-        msg = f"gate must be a mapping with fail_on and on_error, got {value!r}"
+    if not isinstance(value, dict) or set(value) - {"fail_on", "on_error", "periods"}:
+        msg = f"gate must be a mapping with fail_on, on_error and periods, got {value!r}"
         raise _fail(msg)
     fail_on = value.get("fail_on", [])
     items = [fail_on] if isinstance(fail_on, str) else fail_on
     if not isinstance(items, list) or not all(isinstance(i, str) for i in items):
         msg = "gate fail_on must be a condition or a list of conditions"
         raise _fail(msg)
-    return Gate(tuple(i for i in items if i != "never"), str(value.get("on_error", "warn")))
+    return Gate(
+        tuple(i for i in items if i != "never"), str(value.get("on_error", "warn")), str(value.get("periods", "latest"))
+    )
 
 
 def _inference(value: object) -> InferenceOptions:
