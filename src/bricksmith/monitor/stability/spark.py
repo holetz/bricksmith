@@ -1,8 +1,9 @@
 """Spark engine of the stability profiles: the aggregations run remotely, the same rows as the pure engine return.
 
-Fitting groups value counts per monitored column (one small row per distinct value); columns with more than
-``EXACT_DISTINCT_LIMIT`` distinct values use exact percentiles computed remotely instead. Profiling runs one
-grouped aggregation per segment set over an exploded ``(column, bin, value)`` array.
+Fitting counts the values of every monitored column in one job per column type (one small row per distinct
+value); columns with more than ``EXACT_DISTINCT_LIMIT`` distinct values use exact percentiles computed remotely
+instead. Profiling runs three jobs whatever the columns and segment sets: the row totals, the segment ranking and one
+grouped aggregation over an exploded ``(segment, column, bin, value)`` array.
 """
 
 from __future__ import annotations
@@ -103,23 +104,38 @@ def fit_spark_binning(  # noqa: PLR0913 - one keyword per reference field
         raise MonitorError(msg)
     distinct = {c: int(head[c] or 0) for c in countable}
     columns, skipped = resolve_columns(config, types, distinct)
+    large = {
+        name
+        for name, options in columns.items()
+        if bin_options(name, options).kind == "numeric"
+        and "edges" not in options
+        and distinct.get(name, 0) > EXACT_DISTINCT_LIMIT
+    }
+    counted = _value_counts(scoped, sorted(set(columns) - large), types)
     specs: list[BinSpec] = []
     for name in sorted(columns):
-        options = columns[name]
-        if (
-            bin_options(name, options).kind == "numeric"
-            and "edges" not in options
-            and (distinct.get(name, 0) > EXACT_DISTINCT_LIMIT)
-        ):
-            fitted = _large_numeric(scoped, name, options)
-            specs.append(_with_counts(fitted, scoped))
-            continue
-        counts = {r[name]: int(r["count"]) for r in scoped.groupBy(name).count().collect()}
-        specs.append(fit_bins(name, counts, options))
+        if name in large:
+            specs.append(_with_counts(_large_numeric(scoped, name, columns[name]), scoped))
+        else:
+            specs.append(fit_bins(name, counted[name], columns[name]))
     reference = _reference(
         config, tuple(specs), int(head["__rows"]), fit_periods, dataset=dataset, version=version, source=source
     )
     return reference, skipped
+
+
+def _value_counts(df: DataFrame, names: Sequence[str], types: dict[str, str]) -> dict[str, dict[Any, int]]:
+    """Count the distinct values of every column in ``names``: one job per distinct column type, not per column."""
+    f = _f()
+    counts: dict[str, dict[Any, int]] = {name: {} for name in names}
+    by_type: dict[str, list[str]] = {}
+    for name in names:
+        by_type.setdefault(types[name], []).append(name)
+    for group in by_type.values():
+        cells = f.explode(f.array(*(f.struct(f.lit(n).alias("c"), f.col(n).alias("v")) for n in group))).alias("cell")
+        for row in df.select(cells).groupBy("cell.c", "cell.v").count().collect():
+            counts[row["c"]][row["v"]] = int(row["count"])
+    return counts
 
 
 def _with_counts(spec: BinSpec, df: DataFrame) -> BinSpec:
@@ -138,6 +154,31 @@ def segment_column(df: DataFrame, columns: Sequence[str]) -> Column:
     return f.concat_ws(",", *parts)
 
 
+def _kept_segments(
+    scoped: DataFrame,
+    config: StabilityConfig,
+    sets: Sequence[Sequence[str]],
+    keys: Sequence[Column],
+    info: ProfileInfo,
+) -> dict[int, list[str]]:
+    """Rank the segments of every non-empty set in one job; return the kept keys of each truncated set."""
+    f = _f()
+    ranked = {i: k for i, k in enumerate(keys) if sets[i]}
+    if not ranked:
+        return {}
+    pairs = f.explode(f.array(*(f.struct(f.lit(i).alias("i"), k.alias("k")) for i, k in ranked.items())))
+    counts: dict[int, list[tuple[str, int]]] = {i: [] for i in ranked}
+    for r in scoped.select(pairs.alias("seg")).groupBy("seg.i", "seg.k").count().collect():
+        counts[int(r["i"])].append((str(r["k"]), int(r["count"])))
+    keep: dict[int, list[str]] = {}
+    for i, found in counts.items():
+        ordered = sorted(found, key=lambda item: (-item[1], item[0]))
+        if len(ordered) > config.max_segments:
+            info.truncated[",".join(sets[i])] = len(ordered) - config.max_segments
+            keep[i] = [key for key, _ in ordered[: config.max_segments]]
+    return keep
+
+
 def profile_spark(  # noqa: PLR0913 - one keyword per profile field
     binning: Reference,
     df: DataFrame,
@@ -153,38 +194,43 @@ def profile_spark(  # noqa: PLR0913 - one keyword per profile field
     if not periods:
         return [], info
     period = period_column(df, config.period)
-    info.null_period_rows = int(df.where(period.isNull()).count())
+    head = df.agg(
+        f.sum(f.when(period.isNull(), 1).otherwise(0)).alias("nulls"),
+        f.sum(f.when(period.isin(list(periods)), 1).otherwise(0)).alias("rows"),
+    ).first()
+    info.null_period_rows = int(head["nulls"] or 0) if head else 0
+    info.rows = int(head["rows"] or 0) if head else 0
     scoped = df.where(period.isin(list(periods))).withColumn("__p", period)
     weight = f.coalesce(f.col(config.weight).cast("double"), f.lit(0.0)) if config.weight else f.lit(0.0)
+    sets = tuple(dict.fromkeys(segment_sets(config)))
+    keys = [segment_column(df, columns) for columns in sets]
+    keep = _kept_segments(scoped, config, sets, keys, info)
     cells = []
     for spec in binning.columns:
         bin_id = bin_expression(spec)
         value = f.col(spec.column).cast("double") if spec.kind == "numeric" else f.lit(None).cast("double")
         x = f.when(bin_id == f.lit(NULL), f.lit(None).cast("double")).otherwise(value)
         cells.append(f.struct(f.lit(spec.column).alias("c"), bin_id.alias("b"), x.alias("x")))
-    exploded = scoped.select(
-        "__p", *{c for s in config.segments for c in s}, weight.alias("__w"), f.explode(f.array(*cells)).alias("__cell")
+    segmented = scoped.select(
+        "*",
+        f.explode(f.array(*(f.struct(f.lit(i).alias("i"), k.alias("k")) for i, k in enumerate(keys)))).alias("__seg"),
     )
+    for i, kept in keep.items():
+        segmented = segmented.where((f.col("__seg.i") != i) | f.col("__seg.k").isin(kept))
+    exploded = segmented.select("__p", "__seg", weight.alias("__w"), f.explode(f.array(*cells)).alias("__cell"))
     totals: dict[tuple[str, str, str, str], list[float]] = {}
-    info.rows = int(scoped.count())
-    for columns in segment_sets(config):
-        keyed = exploded.withColumn("__s", segment_column(df, columns))
-        if columns:
-            ranked = scoped.withColumn("__s", segment_column(df, columns)).groupBy("__s").count().collect()
-            ordered = sorted(((str(r["__s"]), int(r["count"])) for r in ranked), key=lambda i: (-i[1], i[0]))
-            if len(ordered) > config.max_segments:
-                info.truncated[",".join(columns)] = len(ordered) - config.max_segments
-                keyed = keyed.where(f.col("__s").isin([k for k, _ in ordered[: config.max_segments]]))
-        grouped = keyed.groupBy("__p", "__s", f.col("__cell.c").alias("c"), f.col("__cell.b").alias("b")).agg(
-            f.count(f.lit(1)).alias("n"),
-            f.sum("__w").alias("w"),
-            f.sum(f.col("__cell.x")).alias("s"),
-            f.sum(f.col("__cell.x") * f.col("__cell.x")).alias("q"),
-        )
-        for row in grouped.collect():
-            totals[(str(row["__p"]), str(row["__s"]), str(row["c"]), str(row["b"]))] = [
-                int(row["n"]), float(row["w"] or 0.0), float(row["s"] or 0.0), float(row["q"] or 0.0)
-            ]  # fmt: skip
+    grouped = exploded.groupBy(
+        "__p", "__seg.i", f.col("__seg.k").alias("__s"), f.col("__cell.c").alias("c"), f.col("__cell.b").alias("b")
+    ).agg(
+        f.count(f.lit(1)).alias("n"),
+        f.sum("__w").alias("w"),
+        f.sum(f.col("__cell.x")).alias("s"),
+        f.sum(f.col("__cell.x") * f.col("__cell.x")).alias("q"),
+    )
+    for row in grouped.collect():
+        totals[(str(row["__p"]), str(row["__s"]), str(row["c"]), str(row["b"]))] = [
+            int(row["n"]), float(row["w"] or 0.0), float(row["s"] or 0.0), float(row["q"] or 0.0)
+        ]  # fmt: skip
     return complete_rows(binning, totals, config, dataset=dataset, run_id=run_id), info
 
 

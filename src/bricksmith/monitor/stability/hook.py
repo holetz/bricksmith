@@ -18,6 +18,7 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.stability.config import StabilityConfig, parse_declarations
 from bricksmith.monitor.stability.engine import (
     ERROR,
+    MemoryStore,
     Outcome,
     StabilityGateError,
     check,
@@ -26,7 +27,7 @@ from bricksmith.monitor.stability.engine import (
 from bricksmith.monitor.stability.tables import KINDS, SCHEMAS, merge_rows, table_name, to_frame, write_options
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from bricksmith.plan.model import PlanEntry, Target
     from bricksmith.runner.context import TaskContext
@@ -118,7 +119,15 @@ class _IOStore:
         self.tables = tables
         self.spark = spark
 
-    def rows(self, kind: str, dataset: str) -> list[dict[str, Any]]:
+    def rows(
+        self,
+        kind: str,
+        dataset: str,
+        *,
+        version: int | None = None,
+        periods: Collection[str] | None = None,
+        states: Collection[str] | None = None,
+    ) -> list[dict[str, Any]]:
         physical = self.tables[kind]
         if self.spark is not None:
             if not self.spark.catalog.tableExists(physical):
@@ -126,8 +135,16 @@ class _IOStore:
             from pyspark.sql import functions as f  # noqa: PLC0415 - heavy integration  # pyright: ignore[reportMissingImports]
 
             frame = self.spark.table(physical).where(f.col("dataset") == f.lit(dataset))
+            if version is not None:
+                frame = frame.where(f.col("version") == f.lit(version))
+            if periods is not None:
+                frame = frame.where(f.col("period").isin(list(periods)))
+            if states is not None:
+                frame = frame.where(f.col("state").isin(list(states)))
             return [r.asDict() for r in frame.collect()]
-        return [dict(r) for r in self.memory(physical) if r.get("dataset") == dataset]
+        return MemoryStore({kind: self.memory(physical)}).rows(
+            kind, dataset, version=version, periods=periods, states=states
+        )
 
     def exists(self, kind: str) -> bool:
         physical = self.tables[kind]
