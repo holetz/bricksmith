@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 INSUFFICIENT_HISTORY = "insufficient_history"
+SEASON_FALLBACK = "line:insufficient_history"
 MIN_FIT_POINTS = 3
 TRANSFORMS = ("none", "log")
 FITS = ("ols", "theil_sen", "huber")
@@ -385,12 +386,17 @@ def _seasonal_fit(xs: Sequence[int], ys: Sequence[float], season: int, fit: str,
     return _Seasonal(slope, intercept, sigma, x_mean, sxx, df, tuple(effects), tuple(counts))
 
 
-def keeps(policy: TrendPolicy, light: str, trend: str) -> bool:
-    """Tell whether a judged value joins the history: ``red`` drops red lights or trends, ``flagged`` also yellow."""
+def keeps(policy: TrendPolicy, light: str, trend: str, model: str = "") -> bool:
+    """Tell whether a judged value joins the history: ``red`` drops red lights or trends, ``flagged`` also yellow.
+
+    A trend judged by the plain line because the history held fewer than two seasonal cycles
+    (``line:insufficient_history``) is not evidence of an anomaly: the season it ignores explains the peak. Only the
+    light then counts.
+    """
     if policy.exclude == "none":
         return True
     bad = {RED} if policy.exclude == "red" else {RED, YELLOW}
-    return light not in bad and trend not in bad
+    return light not in bad and (model.startswith(SEASON_FALLBACK) or trend not in bad)
 
 
 def remember(history: list[float], value: float, *, kept: bool, policy: TrendPolicy) -> None:
@@ -460,7 +466,7 @@ def trend_check(
     if rule.season:
         positions = [i for i, v in enumerate(recent) if math.isfinite(v)]
         seasonal = _seasonal_fit(positions, ys, rule.season, rule.fit, rule.scale)
-        model = "seasonal" if seasonal else "line:insufficient_history"
+        model = "seasonal" if seasonal else SEASON_FALLBACK
     if seasonal:
         n = len(recent)
         slope, s, x_mean, sxx, df = seasonal.slope, seasonal.sigma, seasonal.x_mean, seasonal.sxx, seasonal.df
@@ -486,6 +492,7 @@ def trend_check(
 
 __all__ = [
     "INSUFFICIENT_HISTORY",
+    "SEASON_FALLBACK",
     "Trend",
     "TrendPolicy",
     "critical_value",

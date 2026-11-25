@@ -9,7 +9,7 @@ import pytest
 
 from bricksmith.monitor import MonitorError
 from bricksmith.monitor.limits import BOTH, GREEN, RED, YELLOW
-from bricksmith.monitor.trend import INSUFFICIENT_HISTORY, TrendPolicy, remember, trend_check
+from bricksmith.monitor.trend import INSUFFICIENT_HISTORY, TrendPolicy, keeps, remember, trend_check
 
 # Monthly volume, Jan..Dec repeating: a gentle growth, a 40% December peak and small deterministic noise.
 EFFECT = [-6.0, -8.0, -2.0, 0.0, 2.0, 1.0, 0.0, -1.0, 3.0, 4.0, 7.0, 40.0]
@@ -114,3 +114,11 @@ def test_the_season_policy_validates_serializes_and_keeps_the_default_hash() -> 
     for bad in ({"season": 1}, {"season": -3}, {"per": "week"}, {"drift": "median"}, {"calendar": {"x": 1}}):
         with pytest.raises(MonitorError):
             TrendPolicy.from_dict(bad)
+
+
+def test_a_peak_judged_by_the_fallback_line_is_not_excluded_from_the_history() -> None:
+    policy = TrendPolicy(window=24, min_points=6, season=12)
+    assert keeps(policy, GREEN, RED, "line") is False
+    assert keeps(policy, GREEN, RED, "seasonal") is False
+    assert keeps(policy, GREEN, RED, "line:insufficient_history") is True
+    assert keeps(policy, RED, RED, "line:insufficient_history") is False  # a red light still excludes
