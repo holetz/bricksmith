@@ -404,3 +404,17 @@ def test_closed_alert_opened_inside_the_window_stays_closed_when_the_window_slid
     assert seen["2026-08"] == [("2026-07", "closed", "2026-08")]
     assert seen["2026-12"] == [("2026-07", "closed", "2026-08")]  # slid past its run, never superseded
     assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]
+
+
+def test_trend_band_columns_are_stored_with_the_trend() -> None:
+    stable = {f"2025-{m:02d}": [1, 2, 1, 2, 1, 1][: 4 + m % 2] for m in range(1, 13)}
+    cfg = config(baseline={"kind": "fixed", "start": "2025-01", "end": "2025-06"})
+    _, found = results_of(rows_of(stable), cfg)
+    banded = [r for r in found.values() if r["trend_status"] in ("green", "yellow", "red")]
+    assert banded
+    for row in banded:
+        assert row["trend_expected"] is not None
+        assert row["trend_lower"] is not None
+        assert row["trend_upper"] is not None
+        assert row["trend_lower"] <= row["trend_expected"] <= row["trend_upper"]
+    assert all(r["trend_sigma"] is None for r in found.values() if r["trend_status"] in ("", "insufficient_history"))

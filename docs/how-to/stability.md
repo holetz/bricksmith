@@ -53,7 +53,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `baseline` | `fixed` | `fixed` (`start`/`end`, default the periods the bins were fitted on), `previous` (`lag`), `rolling` (`periods`, `min_periods`). |
 | `fit_periods` | `1` | Earliest periods the bins are fitted on when no fixed range is given. |
 | `limits`, `column_limits` | see below | Per metric `{green, red, direction, center}` or `null` to disable; per column overrides. |
-| `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Least-squares trend check; `false` disables it. |
+| `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Prediction-interval trend check (see the trend check under [Metrics and default limits](#metrics-and-default-limits)); `false` disables it. |
 | `trend_directions` | `row_count` and `mean` both, `null_rate` and `unseen_rate` higher | Per metric `higher`, `lower` or `both`: the direction of the trend check for a metric without limits. A limit's own direction wins. |
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
 | `gate` | `{fail_on: [], on_error: "warn", periods: "latest"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`; `periods` takes `latest` or `profiled` (see [Backfills and reprocessing](#backfills-and-reprocessing)). |
@@ -269,9 +269,28 @@ Bounds are inclusive. With `higher`, a value up to `green` is green, up to `red`
 state instead of a color: `no_data`, `insufficient_volume`, `no_baseline` or `no_rule`. Their rank is -1, so they
 never count as green.
 
-**Trend check.** An ordinary-least-squares line is fitted through the last `window` earlier values of the same
-series. The current residual is standardized by the residual standard deviation: beyond 2σ is yellow, beyond 3σ is
-red, and only the worse side counts.
+**Trend check.** The trend check fits a least-squares line through the last `window` colored values of a series (at least
+`min_points`) and extrapolates it one period. The current value is standardized by the **prediction standard error**
+`s * sqrt(1 + 1/k + (k - x̄)² / Sxx)`, which carries the uncertainty of the fitted line itself, and judged against
+**Student-t quantiles** with `k - 2` degrees of freedom. `yellow` and `red` stay sigma-equivalents (default 2 and 3):
+each is the normal tail probability it implies (about 95.4% and 99.7% two-sided), turned into the t quantile for the
+window at hand, so pure noise flags at the nominal rate for any window size.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `min_abs_change` | `0` | A departure at most this large (original scale) is never yellow or red. |
+| `min_rel_change` | `0.01` | A departure at most this fraction of the expected value is never yellow or red. |
+| `transform` | `none` | `log` fits `log1p` of the values, so multiplicative growth is a straight line. |
+
+A flat history has no spread: the deviation is stored empty (never infinite) and the point is red only when it
+exceeds the floor. The result also carries `trend_sigma` (the prediction standard error in the fitted scale) and
+`trend_lower` / `trend_upper` (the red-level interval, in the original scale) so a dashboard can draw the band.
+The trend history of a period at the start of a rewritten window is seeded from the stored results of the `window`
+periods before it, so a re-judged window gives the same trend status as the first judgment.
+
+**Migration note.** The trend judgment changed, so the judgment fingerprint changes: the first run after upgrading
+re-judges the whole window once, supersedes the alerts the old statistic opened, and adds the three band columns
+to `stability_results` through table evolution. Expect fewer `trend` alerts.
 
 The trend needs a direction but not traffic-light limits. A metric with limits is trended in the direction of its
 limits; any other metric in `trend_metrics` (`row_count`, `mean`, `null_rate`, `unseen_rate`) is trended in its
@@ -358,7 +377,7 @@ which reports never use.
 |---|---|---|
 | `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body |
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
-| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation |
+| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
 | `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |

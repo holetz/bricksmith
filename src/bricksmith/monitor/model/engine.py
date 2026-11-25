@@ -874,6 +874,7 @@ def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[st
         "limit_kind": limits.kind if limits else "", "limit_reference": limits.reference if limits else "",
         "compared_value": _finite(compared), "baseline_mean": mean, "baseline_sd": sd, "baseline_points": points,
         "trend_status": "", "trend_expected": None, "trend_deviation": None,
+        "trend_sigma": None, "trend_lower": None, "trend_upper": None,
         "rule_id": found.rule_id, "rule_version": found.rule_version,
     }  # fmt: skip
 
@@ -902,7 +903,12 @@ def apply_trend(results: Sequence[dict[str, Any]], config: ModelMonitorConfig) -
         found = trend_check(history.setdefault(key, []), current, policy, str(row["direction"]))
         history[key].append(current)
         row.update(
-            trend_status=found.status, trend_expected=_finite(found.expected), trend_deviation=_finite(found.deviation)
+            trend_status=found.status,
+            trend_expected=_finite(found.expected),
+            trend_deviation=_finite(found.deviation),
+            trend_sigma=_finite(found.sigma),
+            trend_lower=_finite(found.lower),
+            trend_upper=_finite(found.upper),
         )
 
 

@@ -119,13 +119,15 @@ def test_trend_on_a_line_and_a_jump() -> None:
     assert trend_check(noisy, -5.0, direction="both").status == RED
 
 
-def test_trend_hand_derived_sigma() -> None:
-    # ys = [0, 2, 0, 2]: x_mean 1.5, y_mean 1, sxx 5, sxy = (-1.5)(-1)+(-0.5)(1)+(0.5)(-1)+(1.5)(1) = 2 -> slope 0.4,
-    # intercept 0.4; fitted 0.4, 0.8, 1.2, 1.6; residuals -0.4, 1.2, -1.2, 0.4; SSE 3.2; sigma = sqrt(3.2 / 2).
+def test_trend_hand_derived_prediction_error() -> None:
+    # ys = [0, 2, 0, 2]: x_mean 1.5, sxx 5, SSE 3.2, s = sqrt(1.6), expected 2.0 at x = 4.
+    # Prediction standard error = s * sqrt(1 + 1/4 + (4 - 1.5)^2 / 5) = s * sqrt(2.5).
     policy = TrendPolicy(window=4, min_points=4)
-    result = trend_check([0.0, 2.0, 0.0, 2.0], 2.0 + 2.5 * math.sqrt(1.6), policy)
+    se = math.sqrt(1.6) * math.sqrt(2.5)
+    result = trend_check([0.0, 2.0, 0.0, 2.0], 2.0 + 2.5 * se, policy)
     assert result.expected == pytest.approx(2.0) and result.deviation == pytest.approx(2.5)
-    assert result.status == YELLOW
+    assert result.sigma == pytest.approx(se)
+    assert result.status == GREEN  # t(2) critical value of "2 sigma" is far above 2.5
 
 
 def test_trend_edge_cases() -> None:
@@ -133,6 +135,7 @@ def test_trend_edge_cases() -> None:
     flat = [0.1] * 6
     assert trend_check(flat, 0.1).status == GREEN
     assert trend_check(flat, 0.2).status == RED and trend_check(flat, 0.0).status == GREEN
+    assert trend_check(flat, 0.2).deviation is None  # a zero-variance history never reports inf
     assert trend_check([*([0.0] * 20), *([1.0] * 6)], 1.0).points == 12  # only the window counts
     with pytest.raises(MonitorError):
         TrendPolicy(window=4, min_points=6)
