@@ -31,12 +31,16 @@ WEIGHT_CHANGE = "weight_change"
 REVISION_ROW_CHANGE = "revision_row_change"
 REVISION_PSI = "revision_psi"
 REVISION_MEAN_SHIFT = "revision_mean_shift"
+SCHEMA_CHANGE = "schema_change"
+MISSING_COLUMN = "missing_column"
 #: Metrics judged per column, and per period and segment for the whole table (column ``""``).
 COLUMN_METRICS = (PSI, NULL_RATE, NULL_RATE_DELTA, UNSEEN_RATE, UNSEEN_RATE_DELTA, MEAN, MEAN_SHIFT)
 TABLE_METRICS = (ROW_COUNT, VOLUME_CHANGE, WEIGHT_CHANGE)
 #: Metrics comparing a period with its own first publication; judged only when ``revision`` is declared.
 REVISION_METRICS = (REVISION_ROW_CHANGE, REVISION_PSI, REVISION_MEAN_SHIFT)
-METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS)
+#: Metrics about the table schema: ``schema_change`` for the whole table, ``missing_column`` per dropped column.
+SCHEMA_METRICS = (SCHEMA_CHANGE, MISSING_COLUMN)
+METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS, *SCHEMA_METRICS)
 #: Metrics computed from bin shares, so too few rows make them unreliable (``min_rows``).
 DISTRIBUTION_METRICS = frozenset({
     PSI, NULL_RATE_DELTA, UNSEEN_RATE_DELTA, MEAN_SHIFT, REVISION_PSI, REVISION_MEAN_SHIFT,
@@ -55,17 +59,26 @@ REVISION_LIMITS: dict[str, Limits] = {
     REVISION_PSI: Limits(0.05, 0.10, HIGHER),
     REVISION_MEAN_SHIFT: Limits(0.10, 0.25, BOTH),
 }
+#: Used only for the schema metrics (one or two changed columns warn, more are red; a missing column is red).
+SCHEMA_LIMITS: dict[str, Limits] = {
+    SCHEMA_CHANGE: Limits(0.0, 2.0, HIGHER),
+    MISSING_COLUMN: Limits(0.0, 0.0, HIGHER),
+}
 DEFAULT_TREND_METRICS = (PSI, VOLUME_CHANGE)
 FIXED = "fixed"
 PREVIOUS = "previous"
 ROLLING = "rolling"
 BASELINES = (FIXED, PREVIOUS, ROLLING)
+FREEZE = "freeze"
+EXTEND = "extend"
+AUTO_COLUMNS = (FREEZE, EXTEND)
 GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
 TABLES = ("binnings", "profiles", "results", "alerts", "runs")
 KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
+    "auto_columns",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
@@ -216,6 +229,7 @@ class StabilityConfig:
     rules: tuple[LimitRule, ...] = ()
     notify: NotifyPolicy | None = None
     revision: bool = False
+    auto_columns: str = FREEZE
 
     @property
     def auto(self) -> bool:
@@ -231,7 +245,9 @@ class StabilityConfig:
         override = self.column_limits.get(column, {})
         if metric in override:
             return override[metric]
-        return self.limits[metric] if metric in self.limits else REVISION_LIMITS.get(metric)
+        if metric in self.limits:
+            return self.limits[metric]
+        return REVISION_LIMITS.get(metric) or SCHEMA_LIMITS.get(metric)
 
     def resolve(self, *, dataset: str, column: str, segment: str, metric: str, period_date: str | None) -> Resolution:
         """Return the rules that apply to one result (see :func:`bricksmith.monitor.rules.resolve`)."""
@@ -264,7 +280,7 @@ class StabilityConfig:
         return hashlib.sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form (``rules``, ``notify``, ``revision`` only when declared: fingerprints stay)."""
+        """Return the serializable form (``rules``, ``notify``, ``revision``, ``auto_columns`` only when set)."""
         data = self._base_dict()
         if self.rules:
             data["rules"] = [r.to_dict() for r in self.rules]
@@ -272,6 +288,8 @@ class StabilityConfig:
             data["notify"] = self.notify.to_dict()
         if self.revision:
             data["revision"] = True
+        if self.auto_columns != FREEZE:
+            data["auto_columns"] = self.auto_columns
         return data
 
     def _base_dict(self) -> dict[str, Any]:
@@ -445,6 +463,18 @@ def _revision(value: object) -> bool:
     return value
 
 
+def _auto_columns(value: object, columns: object) -> str:
+    if value is None:
+        return FREEZE
+    if value not in AUTO_COLUMNS:
+        msg = f"auto_columns must be {' or '.join(AUTO_COLUMNS)}, got {value!r}"
+        raise _fail(msg)
+    if value == EXTEND and columns not in (None, "auto"):
+        msg = "auto_columns: extend applies to columns: auto only"
+        raise _fail(msg)
+    return str(value)
+
+
 def parse_config(data: object, root: Path | str | None = None) -> StabilityConfig:
     """Validate one declaration mapping into a :class:`StabilityConfig` (unknown keys are errors)."""
     if not isinstance(data, dict):
@@ -498,6 +528,7 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             rules=_rules(data.get("rules"), root),
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
+            auto_columns=_auto_columns(data.get("auto_columns"), data.get("columns", "auto")),
         )
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
@@ -520,11 +551,17 @@ __all__ = [
     "COLUMN_METRICS",
     "DEFAULT_LIMITS",
     "ESCALATED",
+    "EXTEND",
+    "FREEZE",
     "METRICS",
+    "MISSING_COLUMN",
     "OPENED",
     "RECURRED",
     "REVISION_LIMITS",
     "REVISION_METRICS",
+    "SCHEMA_CHANGE",
+    "SCHEMA_LIMITS",
+    "SCHEMA_METRICS",
     "TABLES",
     "TABLE_METRICS",
     "TRANSITIONS",
