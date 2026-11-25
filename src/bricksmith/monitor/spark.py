@@ -4,27 +4,82 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN, ZERO, BinSpec
+from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN, ZERO, BinSpec, is_null
 from bricksmith.monitor.fit import build_reference
-from bricksmith.monitor.measure import NULL_SEGMENT, Measurement, Summary, measure_summary
+from bricksmith.monitor.measure import Measurement, Summary, measure_summary, segment_name
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from pyspark.sql import Column, DataFrame  # pyright: ignore[reportMissingImports]
 
     from bricksmith.monitor.reference import Reference
 
 
-def bin_expression(spec: BinSpec) -> Column:
-    """Return the Spark expression assigning the bin id of ``spec`` (the same rules as ``BinSpec.assign``)."""
+FLOATING = ("float", "double")
+
+
+def _missing(column: str, dtype: str) -> Column:
+    from pyspark.sql import functions as f  # noqa: PLC0415 - heavy integration, loaded where used  # pyright: ignore[reportMissingImports]
+
+    value = f.col(column)
+    return value.isNull() | f.isnan(value) if dtype in FLOATING else value.isNull()
+
+
+def null_condition(df: DataFrame, column: str) -> Column:
+    """Return whether ``column`` is null, or NaN for a float/double column (the ``is_null`` rule)."""
+    return _missing(column, dict(df.dtypes).get(column, ""))
+
+
+def _float_spelling(text: str) -> float | None:
+    """Return the float whose ``str`` is ``text`` (a category a float value can carry), else ``None``."""
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    return number if str(number) == text else None
+
+
+def segment_values(df: DataFrame, column: str) -> dict[str, list[Any]]:
+    """Return the distinct raw values of ``column`` grouped by their ``segment_name`` (one small row per value)."""
+    names: dict[str, list[Any]] = {}
+    for row in df.select(column).distinct().collect():
+        names.setdefault(segment_name(row[column]), []).append(row[column])
+    return dict(sorted(names.items()))
+
+
+def segment_frame(df: DataFrame, column: str, values: Sequence[Any]) -> DataFrame:
+    """Keep the rows of one segment, given its raw values from ``segment_values``."""
+    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+
+    kept = [v for v in values if not is_null(v)]
+    condition = f.col(column).isin(kept) if kept else f.lit(False)  # noqa: FBT003 - a Spark literal
+    if len(kept) < len(values):
+        condition = condition | null_condition(df, column)
+    return df.where(condition)
+
+
+def bin_expression(spec: BinSpec, dtype: str = "") -> Column:
+    """Return the Spark expression assigning the bin id of ``spec`` (the same rules as ``BinSpec.assign``).
+
+    ``dtype`` is the column's Spark type name: a float/double column treats NaN as null and matches its categories
+    by value, so the bin carries the stored ``category_text`` spelling (``cast("string")`` would spell ``1.0E7``).
+    """
     from pyspark.sql import functions as f  # noqa: PLC0415 - heavy integration, loaded where used  # pyright: ignore[reportMissingImports]
 
     if spec.kind == "categorical":
-        text = f.col(spec.column).cast("string")
-        kept = [str(c) for c in spec.categories]
+        column = f.col(spec.column)
+        expr = f.when(_missing(spec.column, dtype), f.lit(NULL))
+        if dtype in FLOATING:
+            for category in spec.categories:
+                number = _float_spelling(category)
+                if number is not None:
+                    expr = expr.when(column == f.lit(number), f.lit(f"cat:{category}"))
+            return expr.otherwise(f.lit(UNSEEN))
+        text = column.cast("string")
+        kept = list(spec.categories)
         known = f.when(text.isin(kept), f.concat(f.lit("cat:"), text)) if kept else f.lit(None)
-        return f.when(f.col(spec.column).isNull(), f.lit(NULL)).when(known.isNotNull(), known).otherwise(f.lit(UNSEEN))
+        return expr.when(known.isNotNull(), known).otherwise(f.lit(UNSEEN))
     value = f.col(spec.column).cast("double")
     last = len(spec.edges) - 1
     separate = spec.outliers == "separate"
@@ -62,8 +117,9 @@ def summarize_spark(reference: Reference, df: DataFrame) -> Summary:
     summary = Summary(n=df.count())
     period_kind = reference.metric_config.get("stability_period", "") if reference.time else ""
     width = 10 if period_kind == "day" else 7
+    dtypes = dict(df.dtypes)
     for spec in reference.columns:
-        bin_col = bin_expression(spec).alias("b")
+        bin_col = bin_expression(spec, dtypes.get(spec.column, "")).alias("b")
         summary.bins[spec.column] = dict.fromkeys(spec.bin_ids(), 0)
         for row in df.groupBy(bin_col).count().collect():
             summary.bins[spec.column][row["b"]] = row["count"]
@@ -81,9 +137,10 @@ def summarize_spark(reference: Reference, df: DataFrame) -> Summary:
     valid = df.filter(label.isin(0.0, 1.0))
     scored = valid.filter(score.isNotNull() & ~f.isnan(score))
     in_range = scored.filter((score >= 0.0) & (score <= 1.0))
+    labeled = ~null_condition(df, reference.label) & label.isNotNull()
     head = df.agg(
-        f.sum(f.when(label.isNotNull(), 1).otherwise(0)).alias("labeled"),
-        f.sum(f.when(label.isNotNull() & ~label.isin(0.0, 1.0), 1).otherwise(0)).alias("invalid"),
+        f.sum(f.when(labeled, 1).otherwise(0)).alias("labeled"),
+        f.sum(f.when(labeled & ~label.isin(0.0, 1.0), 1).otherwise(0)).alias("invalid"),
     ).first()
     assert head is not None  # noqa: S101 - an aggregate always returns one row
     summary.labeled, summary.invalid_labels = int(head["labeled"] or 0), int(head["invalid"] or 0)
@@ -109,16 +166,22 @@ def measure_spark(
     reference: Reference, df: DataFrame, window: Mapping[str, str] | None = None, *, segments: bool = True
 ) -> list[Measurement]:
     """Compare a DataFrame with the reference on the cluster; equals ``measure`` on the same rows."""
-    from pyspark.sql import functions as f  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
-
     scoped = window_frame(df, window)
     out = measure_summary(reference, summarize_spark(reference, scoped))
     if segments and reference.segment:
-        name = f.coalesce(f.col(reference.segment).cast("string"), f.lit(NULL_SEGMENT))
-        for row in scoped.select(name.alias("g")).distinct().orderBy("g").collect():
-            subset = scoped.filter(name == row["g"])
-            out += measure_summary(reference, summarize_spark(reference, subset), row["g"])
+        for name, values in segment_values(scoped, reference.segment).items():
+            subset = segment_frame(scoped, reference.segment, values)
+            out += measure_summary(reference, summarize_spark(reference, subset), name)
     return out
 
 
-__all__ = ["bin_expression", "fit_spark", "measure_spark", "summarize_spark", "window_frame"]
+__all__ = [
+    "bin_expression",
+    "fit_spark",
+    "measure_spark",
+    "null_condition",
+    "segment_frame",
+    "segment_values",
+    "summarize_spark",
+    "window_frame",
+]
