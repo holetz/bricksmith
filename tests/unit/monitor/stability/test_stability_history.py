@@ -122,3 +122,46 @@ def test_retention_history_periods_bounds_the_periods_a_run_appends() -> None:
     result = _check(_rows(), MemoryStore(), "r1", history_periods=2)
     assert {r["period"] for r in result.tables["results_history"]} == {"2026-04", "2026-05"}
     assert len({r["period"] for r in result.tables["results"]}) == 5  # the current table is untouched
+
+
+def _events(store: MemoryStore) -> list[tuple[str, str]]:
+    return [(str(r["alert_id"]), str(r["event"])) for r in store.tables.get("alert_events", [])]
+
+
+def test_events_record_opened_and_then_stay_silent_on_an_unchanged_replay() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows("2026-05"), store, "r1", persistence={"immediate_red": True}))
+    opened = [e for e in store.tables["alert_events"] if e["event"] == "opened"]
+    assert opened and all(e["run_id"] == "r1" and e["state"] == "open" and e["occurred_at"] for e in opened)
+    before = len(store.tables["alert_events"])
+    _commit(store, _check(_rows("2026-05"), store, "r2", persistence={"immediate_red": True}))
+    assert len(store.tables["alert_events"]) == before  # nothing transitioned
+
+
+def test_events_record_closed_and_superseded_after_a_reprocess_changes_the_judgment() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows("2026-02"), store, "r1", persistence={"immediate_red": True}))
+    first = set(_events(store))
+    assert any(event == "opened" for _, event in first)
+    _commit(store, _check(_rows(), store, "r2", reprocess=["2026-02"], persistence={"immediate_red": True}))
+    later = {e for e in _events(store) if e not in first}
+    kinds = {event for _, event in later}
+    assert kinds & {"closed", "superseded"}
+
+
+def test_events_record_each_human_action_once() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows("2026-05"), store, "r1", persistence={"immediate_red": True}))
+    alert_id = str(next(r["alert_id"] for r in store.tables["alerts"] if r["state"] == "open"))
+    store.tables["actions"] = [
+        {
+            "action_id": "a1", "dataset": "orders", "alert_id": alert_id, "action": "risk_accepted",
+            "resolution": "", "reason": "known backfill", "author": "ana", "valid_until": "2099-01-01",
+            "created_at": "2026-06-01T12:00:00+00:00",
+        }
+    ]  # fmt: skip
+    for run in ("r2", "r3"):
+        _commit(store, _check(_rows("2026-05"), store, run, persistence={"immediate_red": True}))
+    applied = [r for r in store.tables["alert_events"] if r["event"] == "action_applied"]
+    assert len(applied) == 1 and applied[0]["action_id"] == "a1" and applied[0]["alert_id"] == alert_id
+    assert applied[0]["state"] == "risk_accepted" and applied[0]["message"] == "known backfill"
