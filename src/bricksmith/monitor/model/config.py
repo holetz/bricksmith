@@ -12,13 +12,16 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import BOTH, CONTROL, HIGHER, KINDS, LOWER, RELATIVE, Limits
 from bricksmith.monitor.persistence import PersistencePolicy
 from bricksmith.monitor.rules import LimitRule, Resolution, parse_rules, resolve
 from bricksmith.monitor.trend import TrendPolicy
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 KEY = "model_monitoring"
 DEVELOPMENT = "development"
@@ -499,10 +502,10 @@ def _limits(value: object, oot: Sample | None, *, credit: bool) -> dict[str, Lim
     return result
 
 
-def _rules(value: object, oot: Sample | None) -> tuple[LimitRule, ...]:
+def _rules(value: object, oot: Sample | None, root: Path | str | None = None) -> tuple[LimitRule, ...]:
     """Parse the rules, check their metrics and give relative limits their reference like declared limits get."""
     found: list[LimitRule] = []
-    for rule in parse_rules(value, owner="model_monitoring", kinds=KINDS):
+    for rule in parse_rules(value, owner="model_monitoring", kinds=KINDS, root=root):
         if rule.metric and rule.metric not in METRICS:
             msg = f"rule {rule.id!r}: unknown metric {rule.metric!r}; known: {', '.join(METRICS)}"
             raise _fail(msg)
@@ -612,7 +615,7 @@ def _prefix(value: object) -> str:
     return prefix
 
 
-def parse_config(data: object) -> ModelMonitorConfig:
+def parse_config(data: object, root: Path | str | None = None) -> ModelMonitorConfig:
     """Validate one declaration mapping into a :class:`ModelMonitorConfig` (unknown keys are errors)."""
     if not isinstance(data, dict):
         msg = f"a model_monitoring declaration must be a mapping, got {data!r}"
@@ -673,7 +676,7 @@ def parse_config(data: object) -> ModelMonitorConfig:
             scope=str(data.get("scope", "")),
             prefix=_prefix(data.get("prefix", "model_monitoring_")),
             epsilon=float(data.get("epsilon", 1e-4)),
-            rules=_rules(data.get("rules"), oot),
+            rules=_rules(data.get("rules"), oot, root),
             credit=credit,
         )
     except (TypeError, ValueError) as error:
@@ -681,10 +684,10 @@ def parse_config(data: object) -> ModelMonitorConfig:
         raise _fail(msg) from None
 
 
-def parse_declarations(value: object) -> tuple[ModelMonitorConfig, ...]:
+def parse_declarations(value: object, root: Path | str | None = None) -> tuple[ModelMonitorConfig, ...]:
     """Validate the ``model_monitoring`` metadata of a task: one mapping, or a list with distinct outputs."""
     items = value if isinstance(value, list) else [value]
-    configs = tuple(parse_config(item) for item in items)
+    configs = tuple(parse_config(item, root) for item in items)
     outputs = [c.output for c in configs]
     if len(set(outputs)) != len(outputs):
         msg = "several declarations name the same output; give each an explicit, distinct output"

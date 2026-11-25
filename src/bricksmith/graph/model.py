@@ -13,6 +13,7 @@ from bricksmith.tasks.diagnostics import ERROR, Diagnostic
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
 GRAPH_VERSION = 1
 
@@ -158,6 +159,7 @@ class TaskGraph:
     outputs: tuple[Output, ...] = ()
     edges: tuple[Edge, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
+    root: Path | None = field(default=None, compare=False)  # the project root the graph was built for, when known
 
     @property
     def errors(self) -> tuple[Diagnostic, ...]:

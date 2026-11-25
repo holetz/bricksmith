@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.infer import InferenceOptions
@@ -13,6 +13,9 @@ from bricksmith.monitor.limits import ABSOLUTE, BOTH, HIGHER, Limits
 from bricksmith.monitor.persistence import PersistencePolicy
 from bricksmith.monitor.rules import LimitRule, Resolution, parse_rules, resolve
 from bricksmith.monitor.trend import TrendPolicy
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 PSI = "psi"
 NULL_RATE = "null_rate"
@@ -412,7 +415,7 @@ def _revision(value: object) -> bool:
     return value
 
 
-def parse_config(data: object) -> StabilityConfig:
+def parse_config(data: object, root: Path | str | None = None) -> StabilityConfig:
     """Validate one declaration mapping into a :class:`StabilityConfig` (unknown keys are errors)."""
     if not isinstance(data, dict):
         msg = f"a stability declaration must be a mapping, got {data!r}"
@@ -462,7 +465,7 @@ def parse_config(data: object) -> StabilityConfig:
             prefix=prefix,
             inference=_inference(data.get("inference")),
             epsilon=float(data.get("epsilon", 1e-4)),
-            rules=parse_rules(data.get("rules"), owner="stability"),
+            rules=parse_rules(data.get("rules"), owner="stability", root=root),
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
         )
@@ -471,10 +474,10 @@ def parse_config(data: object) -> StabilityConfig:
         raise _fail(msg) from None
 
 
-def parse_declarations(value: object) -> tuple[StabilityConfig, ...]:
+def parse_declarations(value: object, root: Path | str | None = None) -> tuple[StabilityConfig, ...]:
     """Validate the ``stability`` metadata of a task: one mapping, or a list with distinct ``output`` names."""
     items = value if isinstance(value, list) else [value]
-    configs = tuple(parse_config(item) for item in items)
+    configs = tuple(parse_config(item, root) for item in items)
     outputs = [c.output for c in configs]
     if len(set(outputs)) != len(outputs):
         msg = "several declarations name the same output; give each an explicit, distinct output"

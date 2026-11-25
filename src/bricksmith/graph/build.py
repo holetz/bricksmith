@@ -263,6 +263,7 @@ def build_graph(
         outputs=outputs,
         edges=tuple(sorted(builder.edges, key=Edge.sort_key)),
         diagnostics=tuple(sorted(_exempt(found, project.exemptions, current))),
+        root=project.root,
     )
 
 

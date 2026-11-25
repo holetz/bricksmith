@@ -227,9 +227,13 @@ def _limits(value: object, who: str, kinds: tuple[str, ...]) -> Limits | None:
     return limits
 
 
-def load_rules_file(path: str | Path) -> list[Any]:
-    """Read the rule mappings of a TOML (``[[rules]]``) or JSON (``{"rules": [...]}`` or a list) project file."""
-    file = Path(path)
+def load_rules_file(path: str | Path, *, root: Path | str | None = None) -> list[Any]:
+    """Read the rule mappings of a TOML (``[[rules]]``) or JSON (``{"rules": [...]}`` or a list) project file.
+
+    A relative ``path`` resolves against the project ``root`` when one is given, else against the working directory;
+    an absolute path is used as given.
+    """
+    file = Path(path) if root is None else Path(root) / path
     try:
         if file.suffix == ".toml":
             data = tomllib.loads(file.read_text(encoding="utf-8"))
@@ -248,14 +252,17 @@ def load_rules_file(path: str | Path) -> list[Any]:
     return found
 
 
-def parse_rules(value: object, *, owner: str = "rules", kinds: tuple[str, ...] = (ABSOLUTE,)) -> tuple[LimitRule, ...]:
+def parse_rules(
+    value: object, *, owner: str = "rules", kinds: tuple[str, ...] = (ABSOLUTE,), root: Path | str | None = None
+) -> tuple[LimitRule, ...]:
     """Validate an inline list of rule mappings, or the path of a rules file, into rules.
 
     ``kinds`` are the limit kinds a rule may use (stability: absolute only). An ``(id, version)`` pair is unique.
+    A relative rules file path resolves against ``root`` (the project root) when given.
     """
     if value is None:
         return ()
-    items = load_rules_file(value) if isinstance(value, str) else value
+    items = load_rules_file(value, root=root) if isinstance(value, str) else value
     if not isinstance(items, list):
         msg = f"{owner}: rules must be a list of rule mappings or the path of a rules file"
         raise MonitorError(msg)
