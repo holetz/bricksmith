@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.bins import NULL, BinSpec, is_null
-from bricksmith.monitor.stats import auc_groups, ks_groups
+from bricksmith.monitor.stats import auc_groups, chi2_ppf, gamma_p, ks_groups, psi_critical
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -21,8 +21,6 @@ RIDGE = 1e-9
 SINGULAR = 1e-12
 #: Variance below this share of the raw second moment is treated as zero (a constant column).
 FLAT = 1e-12
-GAMMA_ITERATIONS = 500
-GAMMA_EPSILON = 1e-15
 
 
 def quality_metrics(counts: Mapping[Any, int]) -> dict[str, float]:
@@ -265,67 +263,6 @@ def correlation_matrix(columns: Sequence[Sequence[float]]) -> list[list[float]]:
             value = Moments.of(zip(columns[i], columns[j], strict=True)).correlation() or 0.0
             matrix[i][j] = matrix[j][i] = value
     return matrix
-
-
-def _gamma_series(a: float, x: float) -> float:
-    term = total = 1.0 / a
-    ap = a
-    for _ in range(GAMMA_ITERATIONS):
-        ap += 1
-        term *= x / ap
-        total += term
-        if abs(term) < abs(total) * GAMMA_EPSILON:
-            break
-    return total * math.exp(-x + a * math.log(x) - math.lgamma(a))
-
-
-def _gamma_fraction(a: float, x: float) -> float:
-    tiny = 1e-300
-    b = x + 1 - a
-    c = 1 / tiny
-    d = 1 / b
-    h = d
-    for i in range(1, GAMMA_ITERATIONS):
-        an = -i * (i - a)
-        b += 2
-        d = an * d + b
-        d = tiny if abs(d) < tiny else d
-        c = b + an / c
-        c = tiny if abs(c) < tiny else c
-        d = 1 / d
-        delta = d * c
-        h *= delta
-        if abs(delta - 1) < GAMMA_EPSILON:
-            break
-    return math.exp(-x + a * math.log(x) - math.lgamma(a)) * h
-
-
-def gamma_p(a: float, x: float) -> float:
-    """Return the regularized lower incomplete gamma function ``P(a, x)``."""
-    if x <= 0:
-        return 0.0
-    return _gamma_series(a, x) if x < a + 1 else 1.0 - _gamma_fraction(a, x)
-
-
-def chi2_ppf(p: float, df: int) -> float:
-    """Return the ``p`` quantile of the chi-square distribution with ``df`` degrees of freedom (by bisection)."""
-    low, high = 0.0, max(1.0, float(df))
-    while gamma_p(df / 2, high / 2) < p:
-        high *= 2
-    for _ in range(200):
-        mid = (low + high) / 2
-        if gamma_p(df / 2, mid / 2) < p:
-            low = mid
-        else:
-            high = mid
-    return (low + high) / 2
-
-
-def psi_critical(bins: int, n: float, m: float, alpha: float = 0.05) -> float | None:
-    """Return the sample-size-aware PSI critical value ``chi2_{bins-1}(1 - alpha) * (1/n + 1/m)``."""
-    if bins < 2 or n <= 0 or m <= 0:  # noqa: PLR2004 - one bin has no degrees of freedom
-        return None
-    return chi2_ppf(1 - alpha, bins - 1) * (1 / n + 1 / m)
 
 
 __all__ = [
