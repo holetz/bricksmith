@@ -103,23 +103,38 @@ def fit_spark_binning(  # noqa: PLR0913 - one keyword per reference field
         raise MonitorError(msg)
     distinct = {c: int(head[c] or 0) for c in countable}
     columns, skipped = resolve_columns(config, types, distinct)
+    large = {
+        name
+        for name, options in columns.items()
+        if bin_options(name, options).kind == "numeric"
+        and "edges" not in options
+        and distinct.get(name, 0) > EXACT_DISTINCT_LIMIT
+    }
+    counted = _value_counts(scoped, sorted(set(columns) - large), types)
     specs: list[BinSpec] = []
     for name in sorted(columns):
-        options = columns[name]
-        if (
-            bin_options(name, options).kind == "numeric"
-            and "edges" not in options
-            and (distinct.get(name, 0) > EXACT_DISTINCT_LIMIT)
-        ):
-            fitted = _large_numeric(scoped, name, options)
-            specs.append(_with_counts(fitted, scoped))
-            continue
-        counts = {r[name]: int(r["count"]) for r in scoped.groupBy(name).count().collect()}
-        specs.append(fit_bins(name, counts, options))
+        if name in large:
+            specs.append(_with_counts(_large_numeric(scoped, name, columns[name]), scoped))
+        else:
+            specs.append(fit_bins(name, counted[name], columns[name]))
     reference = _reference(
         config, tuple(specs), int(head["__rows"]), fit_periods, dataset=dataset, version=version, source=source
     )
     return reference, skipped
+
+
+def _value_counts(df: DataFrame, names: Sequence[str], types: dict[str, str]) -> dict[str, dict[Any, int]]:
+    """Count the distinct values of every column in ``names``: one job per distinct column type, not per column."""
+    f = _f()
+    counts: dict[str, dict[Any, int]] = {name: {} for name in names}
+    by_type: dict[str, list[str]] = {}
+    for name in names:
+        by_type.setdefault(types[name], []).append(name)
+    for group in by_type.values():
+        cells = f.explode(f.array(*(f.struct(f.lit(n).alias("c"), f.col(n).alias("v")) for n in group))).alias("cell")
+        for row in df.select(cells).groupBy("cell.c", "cell.v").count().collect():
+            counts[row["c"]][row["v"]] = int(row["count"])
+    return counts
 
 
 def _with_counts(spec: BinSpec, df: DataFrame) -> BinSpec:
