@@ -29,6 +29,7 @@ from bricksmith.mlops.lifecycle import apply_alias_plan, plan_promotion
 from bricksmith.mlops.stages.config import PREDICTION_COLUMNS
 from bricksmith.mlops.store import ModelStore
 from bricksmith.mlops.training import register_run
+from bricksmith.monitor.model.tables import view_statements
 from bricksmith.plan import build_plan
 from bricksmith.preflight import _managed_volume_type  # pyright: ignore[reportPrivateUsage]
 from bricksmith.runner import apply_plan
@@ -180,7 +181,30 @@ def test_the_model_flow_example_runs_end_to_end(  # noqa: PLR0915 - one end-to-e
         assert all(0.0 <= r["score"] <= 1.0 and r["grade"] in {"A", "B", "C", "D"} for r in scores)
         (monitoring,) = next(r for r in report.results if r.task_id.endswith("attrition_scores")).model_monitoring
         stage("model monitoring", "passed", json.dumps(dict(monitoring), sort_keys=True, default=str)[:300])
-        assert table("model_monitoring_results") and table("model_monitoring_binnings")
+        assert table("model_monitoring_binnings")
+        measured = [r for r in table("model_monitoring_results") if r["value"] is not None]
+        by_metric: dict[str, list[dict[str, Any]]] = {}
+        for r in measured:
+            by_metric.setdefault(r["metric"], []).append(r)
+        missing = {"psi", "csi", "ks", "auc", "gini", "grade_oe", "grade_jeffreys_p", "grade_binomial_p"} - set(
+            by_metric
+        )
+        assert not missing, f"no measured value for {sorted(missing)}"
+        assert {r["column"] for r in by_metric["grade_oe"]} >= {f"grade={g}" for g in "ABCD"}
+        assert all(0.0 <= r["value"] <= 1.0 for r in by_metric["auc"])
+        assert all(r["lag"] == 3 for r in by_metric["ks"]), "label-based metrics respect the declared label lag"
+        runs = table("model_monitoring_runs")
+        assert runs and all(r["status"] in {"success", "partial"} for r in runs), runs
+        assert all(r["model"] == "attrition" for r in runs)
+        table("model_monitoring_alerts")  # readable, possibly empty when no light turned red
+        for statement in view_statements(f"{catalog}.{test_schema}"):
+            spark.sql(statement)
+        for view in ("latest", "model_status", "open_alerts", "coverage", "response_summary", "acceptances"):
+            spark.table(f"{catalog}.{test_schema}.model_monitoring_{view}").collect()
+        (coverage,) = table("model_monitoring_coverage")
+        assert coverage["model"] == "attrition" and coverage["periods"] >= 1
+        assert table("model_monitoring_model_status")
+        stage("model monitoring metrics", "passed", f"{len(measured)} measured results, {len(runs)} run(s)")
         results = table("attrition_evaluation_results")
         assert {r["sample"] for r in results} >= {"dev", "oot"} and table("attrition_evaluation_grades")
         assert {r["run_id"] for r in results} == {run_id}
