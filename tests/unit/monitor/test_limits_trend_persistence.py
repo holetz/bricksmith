@@ -23,7 +23,7 @@ from bricksmith.monitor.limits import (
     rank,
     worst,
 )
-from bricksmith.monitor.persistence import CRITICAL, WARNING, PersistencePolicy, alert_spans
+from bricksmith.monitor.persistence import CRITICAL, WARNING, AlertSpan, PersistencePolicy, alert_spans
 from bricksmith.monitor.trend import INSUFFICIENT_HISTORY, TrendPolicy, trend_check
 
 
@@ -175,6 +175,18 @@ def test_persistence_skips_suppressed_and_flags_recurrence() -> None:
     assert not far[1].recurrence
     # Unsorted input is replayed in period order.
     assert alert_spans(list(reversed(series("rr"))))[0].opened == "2026-02"
+
+
+def test_persistence_resumes_a_carried_open_alert() -> None:
+    assert alert_spans(series("rgg")) == []  # alone, the series never opens an alert
+    kept = alert_spans(series("rgg"), carry=AlertSpan(WARNING, "2025-11"))
+    assert len(kept) == 1 and kept[0].state == "open" and kept[0].opened == "2025-11"
+    assert kept[0].last_period == "2026-03" and kept[0].flagged == ["2026-01"] and kept[0].severity == WARNING
+    closed = alert_spans(series("rggg"), carry=AlertSpan(WARNING, "2025-11"))
+    assert len(closed) == 1 and closed[0].closed == "2026-04"
+    again = alert_spans(series("rrggg" + "yyy"), carry=AlertSpan(WARNING, "2025-11"))
+    assert again[0].severity == CRITICAL and again[0].escalated == "2026-02" and again[0].closed == "2026-05"
+    assert len(again) == 2 and again[1].opened == "2026-08" and again[1].recurrence
 
 
 def test_persistence_policy_validation() -> None:
