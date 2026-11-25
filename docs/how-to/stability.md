@@ -62,9 +62,13 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `cadence`, `expected_by` | `none`, `0` | Expected period cadence (`day`, `week`, `month`) and the whole days after a period ends by which its data is due. See [Cadence](#cadence-late-periods-and-gaps). |
 | `settle_periods`, `settle_days` | `0`, `0` | The latest N periods, or the periods ending within N days of `as_of`, are still receiving data: judged and shown, never a baseline, trend history, alert or gate input. `settle_days` needs a `cadence`. |
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
+| `psi_limits` | `sample_size` | `sample_size` raises the PSI limits to the sampling-noise floor of the sample sizes; `fixed` judges the declared limits as they are. See [Small samples](#small-samples-and-psi). |
+| `min_rows_per_bin` | `10` | A distribution metric needs `max(min_rows, min_rows_per_bin × bins)` rows, else it is `insufficient_volume`. `0` turns the per-bin rule off. |
+| `psi_smoothing` | `epsilon` | `epsilon` floors empty bin shares; `laplace` adds one count to every bin of both sides before the shares are taken. |
 | `refresh_periods` | `1` | The latest N periods are profiled again on every run (late or corrected data). |
 | `max_periods`, `max_segments` | `36`, `50` | Computation window and the most frequent segment values kept per segment set, ranked over every period the run loads (see [Profiles](#what-happens-in-a-run)). |
 | `rules` | `[]` | [Limit rules](#limit-rules): an inline list, or the path of a TOML or JSON file, that picks limits or marks segments informational per dataset, column, segment, metric and date. A rule's `metric` must be a stability metric. |
+| `auto_columns` | `freeze` | With `columns: "auto"`, `freeze` keeps the monitored columns of the fitted binning and alerts on a changed schema; `extend` fits a new binning version when the table's columns or types change. See [Schema drift](#schema-drift). |
 | `scope`, `prefix`, `dataset` | output's schema, `stability_`, output name | Where the tables live and how the dataset is named. |
 | `epsilon` | `1e-4` | Floor of a bin share in PSI and CSI. Must be a finite number greater than 0. |
 | `inference` | 10 bins, >20 distinct = numeric, 20 categories, >1000 text values skipped, exact-zero bin | Options of `"auto"`. |
@@ -84,6 +88,52 @@ Model monitoring applies the same `epsilon` bound.
 `"auto"` uses quantile bins (with a separate bin for exact zeros) for numeric columns with many distinct values.
 Other numeric, text and boolean columns are categorical. Dates, timestamps, binary and complex types, constant
 columns and text with very many values are skipped. The reason for each skip is stored on the binning row.
+
+## Schema drift
+
+The binning is frozen per configuration, so a column added later is never profiled and a dropped one used to fail
+the run. Every run now stores the table schema (a JSON list of `[column, type, nullable]`, in the `schema` column of
+`stability_binnings` for the schema a binning was fitted against, and of `stability_runs` for the schema each run saw)
+and judges the drift of the latest period of the window:
+
+- `schema_change` (table level, value = columns added, dropped or retyped, listed in `reason`) is compared with the
+  schema the active binning was fitted on, so a frozen binning keeps reporting an unmonitored new column. The run that
+  fits a new version compares with the binning it replaces. Binnings stored before this feature have no schema: the
+  last run's schema is the reference until a new version is fitted. Columns in `exclude` are ignored, and nullability
+  is recorded but not compared.
+- `missing_column` (per column, value 1) reports a monitored column that is no longer in the table, in the pure and
+  the Spark engine alike, instead of failing the run or profiling 100% nulls. The column leaves the profile of that run,
+  and a run where it is back reports it once at 0 so its alert closes. A missing period, weight or segment column, or a
+  table without any monitored column, still fails the run.
+
+Both are ordinary results: default limits are `higher: 0 / 2` for `schema_change` (one or two changed columns are
+yellow, more are red) and `higher: 0 / 0` for `missing_column`; override them with `limits` or `column_limits`, switch
+one off with `null`, and use `gate.fail_on` to fail the task. Their alerts open on the first flagged run
+(`yellow` and `red` of `persistence` do not apply to them) and close after `close_after` clean runs.
+
+`auto_columns: extend` (only with `columns: "auto"`) hashes the table's non-excluded columns and types into the binning
+fingerprint: when they change, the next run fits a new binning version on the latest `fit_periods` periods (the earliest
+ones may predate the new column), unless the baseline is a fixed range. The `schema_change` result of that run says which
+columns were absorbed. Like any refit, the new version profiles and judges every period of the window at once.
+
+## Small samples and PSI
+
+Between two samples of the same population, PSI is not zero: it is about `chi2(bins - 1) × (1/n + 1/m)`, with `n`
+the rows of the period and `m` the rows of the baseline. A fixed limit of `0.10` or `0.25` is therefore crossed by
+noise alone in small segments (in a simulation with 10 bins and no real change, 30 rows against 90 turn red most of
+the time and 100 against 300 turn yellow or worse more than half of the time).
+
+With `psi_limits: sample_size` (the default) the yellow limit of `psi` and `revision_psi` is
+`max(declared, chi2(0.95, bins - 1) × (1/n + 1/m))` and the red limit uses `chi2(0.99, …)`, so a PSI is colored only
+when it is both practically large and distinguishable from sampling noise. The limits that judged a row are stored
+in its `green_limit` and `red_limit`. On large tables the floor is tiny and the declared limits keep applying; the
+floor never lowers a limit and applies to every limit source (defaults, `column_limits` and rules).
+`min_rows_per_bin` also reports `insufficient_volume` when the expected rows per bin are too few, and
+`psi_smoothing: laplace` removes the inflation that empty bins cause in small samples.
+
+**Migration.** Existing declarations get the new defaults: small segments that used to turn red by noise are now
+green or `insufficient_volume`. To keep the previous behavior, declare `psi_limits: fixed` and
+`min_rows_per_bin: 0`. Model-monitoring CSI keeps its fixed limits.
 
 ## What happens in a run
 
@@ -352,6 +402,8 @@ of the table, so it works on every engine.
 | `weight_change` | table | same, with the weight column | both: 0.20 / 0.50 |
 | `revision_row_change` | table | rows now / rows at first publication − 1 (only with `revision`) | both: 0.01 / 0.05 |
 | `revision_psi` | column | PSI of the period's bin shares against its first publication | higher: 0.05 / 0.10 |
+| `schema_change` | table | columns added, dropped or retyped since the binning was fitted | higher: 0 / 2 |
+| `missing_column` | column | 1 while a monitored column is absent (0 when it returned) | higher: 0 / 0 |
 | `revision_mean_shift` | numeric column | (mean − first-publication mean) / first-publication std | both: 0.10 / 0.25 |
 
 Bounds are inclusive. With `higher`, a value up to `green` is green, up to `red` is yellow, and above `red` is red.
@@ -374,12 +426,30 @@ window at hand, so pure noise flags at the nominal rate for any window size.
 | `fit` | `ols` | `theil_sen` (median of the pairwise slopes) or `huber` (Huber-weighted least squares) resist outliers in the history; both are computed in the library without extra dependencies. `theil_sen` is the recommended robust choice. |
 | `scale` | `std` | `mad` uses 1.4826 times the median absolute deviation of the residuals instead of their standard deviation, so one past spike does not widen the band. |
 | `exclude` | `red` | Which judged values stay out of the trend history: `red` drops periods whose light or trend was red, `flagged` also yellow, `none` keeps all. The values are still stored and reported. |
+| `season` | `0` (off) | A season length `>= 2` (12 for monthly, 7 for daily). The line and additive seasonal effects (mean of the detrended values of each phase, median for a robust `fit`) are fitted together and the expectation adds the effect of the phase being judged; `transform: log` makes it multiplicative. It needs two observations in every phase: below that the plain line is used and `trend_model` says `line:insufficient_history`. The history read is `max(window, 2 * season)` periods; use `window` of three cycles to survive an excluded period. |
+| `per` | `period` | `business_day` trends `row_count` divided by the number of business days of its period (day or month periods), so a short month with the same per-day volume is green. |
+| `calendar` | Saturday and Sunday, no holidays | With `per: business_day`: `{"weekend": [5, 6], "holidays": ["2025-12-25"]}`, weekday numbers from Monday 0 and ISO dates. The library ships no holiday list. |
+| `drift` | `none` | `cusum` (Page, k = 0.5, h = 5) or `ewma` (lambda = 0.2, 3-sigma limit) over the standardized deviations of every judged period, in the direction the metric calls worse (both sides for `both`). Fills `drift_status` (`green` or `red`) next to the point check. |
+| `change_point` | `false` | Searches the same deviations for a level shift (an exact penalized least-squares segmentation, BIC penalty). `change_point_suggested` is true while the latest change point leaves at least two periods and moves the level in the worse direction: confirm it as a regime change instead of living with alerts for a whole window. |
 
 A flat history has no spread: the deviation is stored empty (never infinite) and the point is red only when it
 exceeds the floor. The result also carries `trend_sigma` (the prediction standard error in the fitted scale) and
 `trend_lower` / `trend_upper` (the red-level interval, in the original scale) so a dashboard can draw the band.
 The trend history of a period at the start of a rewritten window is seeded from the stored results of the `window`
 periods before it, so a re-judged window gives the same trend status as the first judgment.
+
+**Seasonality, calendar and sustained shifts.** A straight line flags every seasonal peak: with `season: 12` the expected
+December of a monthly table is green and a real December break is red, and `trend_model` records what was fitted
+(`line`, `seasonal` or `line:insufficient_history`, with `+business_day` when `row_count` was divided by business
+days; `trend_expected` is then per business day). While the history is shorter than two cycles a peak judged by the
+fallback line never excludes its period from the history (only its light does), so the first cycles do not hide the
+seasonal pattern from the model. A series with a gap (a segment absent in some period) should be contiguous, because the
+phase is the position in the series. `drift` and `change_point` are reported, not alerted: they never open an alert by
+themselves. A point rule needs about 44 periods on average to signal a 1σ shift; CUSUM and EWMA need about 10 at a
+similar in-control run length. The detectors read deviations from the adaptive line, so they flag a sustained
+departure the line keeps lagging (accelerating growth, a repeated same-sign miss); a step the line absorbs within a few
+periods is what `change_point_suggested` is for. `per`, `drift` and `change_point` belong to the stability monitor; the
+model monitor takes `season` and rejects the others.
 
 **Anomalous periods.** With `exclude: red` a red spike no longer enters the history, so it cannot mask a later jump
 (a clean history flagging a 5.3σ jump kept reporting it green after one earlier spike). The caveat: a genuine permanent
@@ -475,16 +545,16 @@ which reports never use.
 
 | Table | Key | Main columns |
 |---|---|---|
-| `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body |
+| `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body, schema |
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
-| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper, mark, mark_reason |
+| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper, trend_model, drift_status, change_point_suggested, mark, mark_reason |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
 | `stability_marks` | dataset, mark_id | period, segment, column, metric, mark, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
 | `stability_results_history` | dataset, run_id, version, period, segment, column, metric | only with `history`: the judged columns of `stability_results`, run_id, judged_at, judgment_fingerprint, data_version; append-only |
 | `stability_alert_events` | dataset, alert_id, event, run_id, action_id | only with `history`: period, severity, state, resolution, message, occurred_at; one row per alert transition |
-| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed |
+| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed, schema |
 
 Table-level metrics use column `""`, and the whole population uses segment `""` (label `(all)`). Segment keys are
 canonical text, `col=value,col2=value2`, with `(null)` for nulls. `period_date` is the first day the period
@@ -573,9 +643,15 @@ fails with `stability_gate`, and `sales_report` is blocked.
   binning version only: periods × segment values × columns × bins rows. The filters on version and period run in the
   storage read, so older periods and other versions are never collected. Open and closed alerts of the dataset and the
   runs of the active version are read as well. Keep `max_periods`, `max_segments` and the column list proportionate.
-- Results compare periods within one binning version. Changing the bin-relevant configuration fits a new version in
-  the next run, which profiles and judges every period of the window at once (the first run of a version is not quiet,
-  and the gate can fail in it). Alerts of the previous version are marked `superseded`.
+- Distribution results compare periods within one binning version. Changing the bin-relevant configuration fits a new
+  version in the next run, which profiles and judges every period of the window at once (the first run of a version is
+  not quiet, and the gate can fail in it). Column alerts of the previous version are marked `superseded`.
+- The table-level metrics (`row_count`, `volume_change`, `weight_change`, `schema_change`) do not depend on bins, so
+  their series continue across versions of the same period column: the baseline, the trend history and the alerts read
+  the totals of the earlier versions too, including periods the table no longer holds, within the horizon of
+  `max_periods` and the baseline's reach. A table-level alert keeps its `alert_id` through a refit instead of being
+  superseded. Reading them collects, per earlier version, the profile rows of one column. A version fitted with another
+  period column is left out.
 - Revision reliability compares stored profiles, not rows: it says that a period changed and by how much, not which
   keys changed, and it does not read the Delta history of the table.
 - Not yet covered: reading rules from a Delta table. It is captured as a follow-up specification.

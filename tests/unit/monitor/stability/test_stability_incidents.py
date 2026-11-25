@@ -144,7 +144,15 @@ def _wide_rows(months: int, broken: int, drift_from: int = 2) -> list[dict[str, 
 
 
 def _run(store: MemoryStore, run_id: str, rows: list[dict[str, object]], **declared: object) -> CheckResult:
-    config = parse_config({"period": "month", "persistence": {"immediate_red": True}, **declared})
+    config = parse_config(
+        {
+            "period": "month",
+            "psi_limits": "fixed",
+            "min_rows_per_bin": 0,
+            "persistence": {"immediate_red": True},
+            **declared,
+        }
+    )
     result = check(rows, config, store, dataset="orders", run_id=run_id, physical="main.s.orders")
     for kind, table in result.tables.items():
         store.tables[kind] = list(merge_rows(kind, store.tables.get(kind, []), table))

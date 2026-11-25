@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from bricksmith.monitor.actions import STATE_ACCEPTED, STATE_CLOSED, apply_actions, latest_actions
 from bricksmith.monitor.adapter import is_rows
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import COLORS, RED, YELLOW
+from bricksmith.monitor.limits import COLORS, NO_RULE, RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.stability.cadence import (
@@ -31,7 +31,9 @@ from bricksmith.monitor.stability.config import (
     CADENCE_METRICS,
     CHANGED,
     ESCALATED,
+    EXTEND,
     FIXED,
+    MISSING_COLUMN,
     OPENED,
     PERIOD_LATE,
     PREVIOUS,
@@ -39,6 +41,7 @@ from bricksmith.monitor.stability.config import (
     RECURRED,
     REMINDED,
     ROLLING,
+    SCHEMA_METRICS,
     VOLUME_CHANGE,
 )
 from bricksmith.monitor.stability.incident import (
@@ -49,9 +52,20 @@ from bricksmith.monitor.stability.incident import (
     false_positive_rates,
 )
 from bricksmith.monitor.stability.marks import ACCEPTED, MarkSet, effective_marks, marks_digest
-from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
+from bricksmith.monitor.stability.metrics import Context, alerts, compute, counts_in, table_level, trend_value
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
+from bricksmith.monitor.stability.schema import (
+    Drift,
+    Schema,
+    diff,
+    live_binning,
+    missing_columns,
+    parse_schema,
+    rows_schema,
+    schema_results,
+    schema_text,
+)
 from bricksmith.monitor.stability.tables import (
     ACTIONS,
     ALERT_EVENTS,
@@ -88,7 +102,7 @@ class StabilityGateError(MonitorError):
 class Store(Protocol):
     """Reads the rows already stored for a dataset in one stability table."""
 
-    def rows(
+    def rows(  # noqa: PLR0913 - one keyword per storage filter
         self,
         kind: str,
         dataset: str,
@@ -96,11 +110,13 @@ class Store(Protocol):
         version: int | None = None,
         periods: Collection[str] | None = None,
         states: Collection[str] | None = None,
+        columns: Collection[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return the rows of table ``kind`` whose ``dataset`` column equals ``dataset``.
 
-        ``version``, ``periods`` and ``states`` narrow the read to one binning version, a set of periods and a set of
-        alert states; a filter left ``None`` keeps every row. Implementations push them into the storage read.
+        ``version``, ``periods``, ``states`` and ``columns`` narrow the read to one binning version, a set of periods,
+        a set of alert states and a set of monitored columns; a filter left ``None`` keeps every row.
+        Implementations push them into the storage read.
         """
         ...
 
@@ -111,7 +127,7 @@ class MemoryStore:
 
     tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
-    def rows(
+    def rows(  # noqa: PLR0913 - one keyword per storage filter
         self,
         kind: str,
         dataset: str,
@@ -119,6 +135,7 @@ class MemoryStore:
         version: int | None = None,
         periods: Collection[str] | None = None,
         states: Collection[str] | None = None,
+        columns: Collection[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return the stored rows of ``dataset``, narrowed by the optional filters."""
         keep = {} if periods is None else dict.fromkeys(periods)
@@ -129,6 +146,7 @@ class MemoryStore:
             and (version is None or int(r.get("version") or 0) == version)
             and (periods is None or str(r.get("period")) in keep)
             and (states is None or r.get("state") in states)
+            and (columns is None or r.get("column") in columns)
         ]
 
 
@@ -257,6 +275,14 @@ def _engine_periods(data: Any, period: str) -> list[str]:  # noqa: ANN401 - rows
     return periods_spark(data, period)
 
 
+def _schema(data: Any) -> Schema:  # noqa: ANN401 - rows or DataFrame
+    if is_rows(data):
+        return rows_schema(data)
+    from bricksmith.monitor.stability.spark import schema_spark  # noqa: PLC0415 - heavy integration
+
+    return schema_spark(data)
+
+
 def _fit(  # noqa: PLR0913 - one keyword per reference field
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -322,6 +348,28 @@ def fit_range(config: StabilityConfig, periods: Sequence[str]) -> list[str]:
     return list(periods[: config.fit_periods])
 
 
+@dataclass(frozen=True)
+class Active:
+    """The binning a run uses, the row to store when it was just fitted, and the schema drift is judged against."""
+
+    binning: Reference
+    rows: list[dict[str, Any]]
+    skipped: dict[str, str]
+    reference: Schema | None = None
+    label: str = ""
+    refitted: bool = False
+
+
+def _wanted_fingerprint(config: StabilityConfig, current: Schema) -> str:
+    """Return the fingerprint a binning must carry; ``extend`` also hashes the table's columns and types."""
+    wanted = config.binning_fingerprint()
+    if not (config.auto and config.auto_columns == EXTEND):
+        return wanted
+    excluded = set(config.excluded())
+    shape = [[c, t] for c, t, _ in current if c not in excluded]
+    return hashlib.sha256(json.dumps([wanted, shape]).encode()).hexdigest()
+
+
 def _active_binning(  # noqa: PLR0913 - one keyword per binning input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -332,24 +380,37 @@ def _active_binning(  # noqa: PLR0913 - one keyword per binning input
     source: str,
     run_id: str,
     now: str,
-) -> tuple[Reference, list[dict[str, Any]], dict[str, str]]:
+    schema: Schema,
+) -> Active:
     """Return the binning of the current configuration, fitting a new version when none matches."""
-    wanted = config.binning_fingerprint()
+    wanted = _wanted_fingerprint(config, schema)
     stored = store.rows(BINNINGS, dataset)
     matching = [r for r in stored if r.get("config_fingerprint") == wanted]
     if matching:
         row = max(matching, key=lambda r: int(r["version"]))
         skipped = dict(item.split(":", 1) for item in str(row.get("skipped") or "").split(",") if ":" in item)
-        return Reference.from_json(str(row["body"])), [], skipped
+        return Active(Reference.from_json(str(row["body"])), [], skipped, parse_schema(row.get("schema")), "fit schema")
     version = max((int(r["version"]) for r in stored), default=0) + 1
-    binning, skipped = _fit(data, config, fit_range(config, periods), dataset=dataset, version=version, source=source)
+    latest = config.auto and config.auto_columns == EXTEND and bool(stored)
+    chosen = _latest_range(config, periods) if latest else fit_range(config, periods)
+    binning, skipped = _fit(data, config, chosen, dataset=dataset, version=version, source=source)
     row = {
         "dataset": dataset, "version": version, "config_fingerprint": wanted, "fingerprint": binning.fingerprint,
         "period_column": config.period, "fit_periods": ",".join(fit_periods_of(binning)), "fit_rows": binning.fit_rows,
         "columns": len(binning.columns), "skipped": ",".join(f"{c}:{r}" for c, r in sorted(skipped.items())),
-        "body": binning.to_json(), "created_run_id": run_id, "created_at": now,
+        "body": binning.to_json(), "created_run_id": run_id, "created_at": now, "schema": schema_text(schema),
     }  # fmt: skip
-    return binning, [row], skipped
+    earlier = max(stored, key=lambda r: int(r["version"]), default=None)
+    reference = parse_schema(earlier.get("schema")) if earlier else schema
+    label = f"schema of binning version {earlier['version']}" if earlier else "fit schema"
+    return Active(binning, [row], skipped, reference, label, refitted=earlier is not None)
+
+
+def _latest_range(config: StabilityConfig, periods: Sequence[str]) -> list[str]:
+    """Return the periods an ``extend`` refit fits on: the fixed baseline range, else the latest ``fit_periods``."""
+    if config.baseline.kind == FIXED and config.baseline.start:
+        return fit_range(config, periods)
+    return list(periods[-config.fit_periods :])
 
 
 def _history_span(config: StabilityConfig) -> int:
@@ -425,6 +486,17 @@ def _gap_of(cal: Any) -> Any:  # noqa: ANN401 - the cadence calendar or None
     return gap
 
 
+def _trended(config: StabilityConfig, row: Mapping[str, Any]) -> bool:
+    """Tell whether a stored result belongs to a trended series: a colored settled value with a trend direction."""
+    metric = str(row.get("metric") or "")
+    return (
+        metric in config.trend_metrics
+        and row.get("status") in (*COLORS, NO_RULE)
+        and bool(row.get("direction") or config.trend_direction(metric))
+        and not row.get("settling")
+    )
+
+
 def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
     config: StabilityConfig,
     store: Store,
@@ -436,30 +508,62 @@ def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
     excluded: Collection[str] = (),
     regimes: Collection[str] = (),
 ) -> dict[tuple[str, str, str], list[float]]:
-    """Return the stored colored values of the ``trend.window`` periods before the window, per series.
+    """Return the stored colored values of the periods before the window, per series.
 
-    Periods in ``excluded`` are left out, and nothing before the latest of ``regimes`` that precedes the window.
+    A series is read over the last ``trend.span`` periods. With a season it keeps one position per period (``NaN`` for
+    a period left out of the history), so the phase of every value survives; ``per: business_day`` seeds ``row_count``
+    per business day, as the judgment sees it. Periods in ``excluded`` leave the history, and nothing before the latest
+    of ``regimes`` that precedes the window is read.
     """
     policy = config.trend
     if policy is None or not window:
         return {}
     restart = max((r for r in regimes if r < window[0]), default="")
-    before = [p for p in periods if restart <= p < window[0] and p not in excluded][-policy.window :]
+    before = [p for p in periods if restart <= p < window[0]][-policy.span :]
     if not before:
         return {}
-    series: dict[tuple[str, str, str], list[tuple[str, float]]] = {}
+    series: dict[tuple[str, str, str], dict[str, float]] = {}
     for row in store.rows(RESULTS, dataset, version=version, periods=before):
         value = row.get("value")
-        if row.get("metric") not in config.trend_metrics or row.get("status") not in COLORS or not row.get("direction"):
-            continue
-        if row.get("settling"):
+        if str(row["period"]) in excluded or not _trended(config, row):
             continue
         if value is None or not math.isfinite(float(value)):
             continue
-        if not keeps(policy, str(row.get("status") or ""), str(row.get("trend_status") or "")):
+        if not keeps(
+            policy, str(row.get("status") or ""), str(row.get("trend_status") or ""), str(row.get("trend_model") or "")
+        ):
+            continue
+        seen = trend_value(policy, str(row["metric"]), str(row["period"]), float(value))
+        if seen is None:
             continue
         key = (str(row.get("segment") or ""), str(row.get("column") or ""), str(row["metric"]))
-        series.setdefault(key, []).append((str(row["period"]), float(value)))
+        series.setdefault(key, {})[str(row["period"])] = seen
+    if policy.season:
+        return {key: [points.get(p, math.nan) for p in before] for key, points in series.items()}
+    return {key: [v for _, v in sorted(points.items())] for key, points in series.items()}
+
+
+def _score_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
+    config: StabilityConfig,
+    store: Store,
+    periods: Sequence[str],
+    window: Sequence[str],
+    *,
+    dataset: str,
+    version: int,
+) -> dict[tuple[str, str, str], list[float]]:
+    """Return the stored standardized trend deviations before the window, per series, for the shift detectors."""
+    policy = config.trend
+    if policy is None or (policy.drift == "none" and not policy.change_point) or not window:
+        return {}
+    before = [p for p in periods if p < window[0]][-policy.span :]
+    series: dict[tuple[str, str, str], list[tuple[str, float]]] = {}
+    for row in store.rows(RESULTS, dataset, version=version, periods=before) if before else ():
+        deviation = row.get("trend_deviation")
+        if row.get("metric") not in config.trend_metrics or deviation is None or not math.isfinite(float(deviation)):
+            continue
+        key = (str(row.get("segment") or ""), str(row.get("column") or ""), str(row["metric"]))
+        series.setdefault(key, []).append((str(row["period"]), float(deviation)))
     return {key: [v for _, v in sorted(points)] for key, points in series.items()}
 
 
@@ -559,12 +663,14 @@ def _superseded(  # noqa: PLR0913 - the rows to compare and where the replay sta
     version: int,
     start: str,
     rejudged: bool = False,
+    lineage: Collection[int] = (),
 ) -> list[dict[str, Any]]:
     """Return stored alerts that the replay no longer produces, marked ``superseded``.
 
     A ``closed`` alert of ``version`` is final when it opened at or before the window ``start`` (the replay can no
     longer re-judge its opening) or when the judgment is unchanged (``rejudged`` false): the window only slid past
-    the run that produced it. Either way it stays closed.
+    the run that produced it. Either way it stays closed. The table-level alerts of the other ``lineage`` versions
+    count as ``version``'s own.
     """
     ids = {r["alert_id"] for r in fresh}
     return [
@@ -574,7 +680,7 @@ def _superseded(  # noqa: PLR0913 - the rows to compare and where the replay sta
         and r.get("state") in (OPEN, CLOSED)
         and not (
             r.get("state") == CLOSED
-            and int(r.get("version") or 0) == version
+            and (int(r.get("version") or 0) == version or (table_level(r) and int(r.get("version") or 0) in lineage))
             and (not rejudged or str(r.get("opened_period") or "") <= start)
         )
     ]
@@ -834,6 +940,107 @@ def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one
     return snapshot_rows(first, new, run_id=run_id, published_at=now)
 
 
+def _lineage(
+    config: StabilityConfig, store: Store, periods: Sequence[str], *, dataset: str, version: int
+) -> tuple[list[int], list[dict[str, Any]]]:
+    """Return the earlier versions with the same period column, and their table-level profile rows.
+
+    Only one column is read per version (its first one: every row falls in a bin of each column). Periods older than
+    the horizon a single version would load (``max_periods`` and the baseline's reach, counted over the data's periods
+    and the earlier versions') are left out.
+    """
+    earlier = [r for r in store.rows(BINNINGS, dataset) if int(r["version"]) != version]
+    versions = sorted(int(r["version"]) for r in earlier if r.get("period_column") == config.period)
+    rows: list[dict[str, Any]] = []
+    for row in sorted(earlier, key=lambda r: int(r["version"])):
+        if int(row["version"]) not in versions:
+            continue
+        first = Reference.from_json(str(row["body"])).columns[0].column
+        rows += store.rows(PROFILES, dataset, version=int(row["version"]), columns=[first])
+    known = sorted({*periods, *(str(r["period"]) for r in rows)})
+    cutoff = known[max(0, len(known) - config.max_periods - _history_span(config))]
+    return versions, [r for r in rows if str(r["period"]) >= cutoff]
+
+
+def _schema_results(
+    ctx: Context,
+    current: tuple[str, Active, Schema, Sequence[str]],
+    store: Store,
+    stored_alerts: Sequence[Mapping[str, Any]],
+    *,
+    dataset: str,
+) -> list[dict[str, Any]]:
+    """Return the ``schema_change`` and ``missing_column`` results of the latest period of the window."""
+    period, active, schema, absent = current
+    reference, label = active.reference, active.label
+    if reference is None:
+        runs = [r for r in store.rows(RUNS, dataset) if parse_schema(r.get("schema")) is not None]
+        last = max(runs, key=lambda r: str(r.get("finished_at") or ""), default=None)
+        reference, label = (parse_schema(last["schema"]), "schema of the previous run") if last else (None, "")
+    drift: Drift | None = diff(reference, schema, ctx.config.exclude) if reference is not None else None
+    added = bool(drift and drift.added)
+    if active.refitted:
+        note = f"binning refitted as version {ctx.binning.version}"
+    elif added and ctx.config.auto and ctx.config.auto_columns != EXTEND:
+        note = "new columns are not monitored until the binning is refitted (auto_columns: freeze)"
+    elif added:
+        note = "new columns are not monitored (explicit columns)"
+    else:
+        note = ""
+    flagged = {
+        str(r["column"])
+        for r in stored_alerts
+        if r.get("state") == OPEN
+        and r.get("metric") == MISSING_COLUMN
+        and int(r.get("version") or 0) == ctx.binning.version
+    }
+    returned = sorted(c for c in flagged - set(absent) if c in {s.column for s in ctx.binning.columns})
+    return schema_results(ctx, period, drift=drift, label=label, note=note, missing=absent, returned=returned)
+
+
+def _bind(  # noqa: PLR0913 - one keyword per binning input
+    data: Any,  # noqa: ANN401 - rows or DataFrame
+    config: StabilityConfig,
+    store: Store,
+    periods: Sequence[str],
+    *,
+    dataset: str,
+    source: str,
+    run_id: str,
+    now: str,
+) -> tuple[Schema, Active, list[str]]:
+    """Return the table schema, the active binning and the monitored columns the table no longer has."""
+    schema = _schema(data)
+    active = _active_binning(
+        data, config, store, periods, dataset=dataset, source=source, run_id=run_id, now=now, schema=schema
+    )
+    return schema, active, missing_columns(active.binning, schema)
+
+
+def _emitted(
+    config: StabilityConfig,
+    results: Sequence[dict[str, Any]],
+    periods: tuple[Sequence[str], Sequence[str], Sequence[str]],
+    *,
+    rewrite_all: bool,
+) -> list[dict[str, Any]]:
+    """Return the results of the emitted periods (``window``, ``todo``, ``vanished``) and of the schema."""
+    window, todo, vanished = periods
+    everything = rewrite_all or bool(config.settle_periods or config.settle_days)
+    emitted = (set(window) if everything else set(todo) & set(window)) | set(vanished)
+    return [r for r in results if r["period"] in emitted or r["metric"] in SCHEMA_METRICS]
+
+
+def _with_shares(rows: list[dict[str, Any]], computed: Any) -> list[dict[str, Any]]:  # noqa: ANN401 - metrics.Computed
+    """Set the share, baseline share and contribution the metrics computed on every profile row."""
+    for row in rows:
+        share, base, contribution = computed.shares.get(
+            (row["period"], row["segment"], row["column"], row["bin"]), (None, None, None)
+        )
+        row.update(share=share, baseline_share=base, contribution=contribution)
+    return rows
+
+
 def _budgeted(
     alert_rows: list[dict[str, Any]],
     stored: Sequence[Mapping[str, Any]],
@@ -934,9 +1141,10 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
         msg = f"stability: {dataset} has no rows with a {config.period!r} period"
         raise MonitorError(msg)
     redo = reprocessed_periods(config, periods, reprocess, skip_unknown=skip_unknown)
-    binning, binning_rows, skipped = _active_binning(
+    schema, active, absent = _bind(
         data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started
     )
+    binning, binning_rows, skipped = live_binning(active.binning, absent), active.rows, active.skipped
     stored_profiles = store.rows(
         PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
     )
@@ -954,15 +1162,22 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
     )
     profiles = [r for r in stored_profiles if r["period"] in keep] + fresh + emptied
     marks = window_marks(config, store, periods, loaded, window, dataset=dataset, as_of=started[:10])
+    lineage, earlier = _lineage(config, store, periods, dataset=dataset, version=binning.version)
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
-        emptied=vanished, settling=settling, gap=_gap_of(cal),
+        emptied=vanished, earlier=earlier, settling=settling, gap=_gap_of(cal),
         trend_seed=_trend_seed(
             config, store, periods, window, dataset=dataset, version=binning.version,
             excluded=marks.excluded, regimes=marks.regimes,
         ),
+        score_seed=_score_seed(config, store, periods, window, dataset=dataset, version=binning.version),
         excluded=marks.excluded, regimes=marks.regimes, invalid=marks.invalid,
         red_seed=_red_seed(config, store, periods, window, dataset=dataset, version=binning.version),
+    )  # fmt: skip
+    stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
+    computed.results += _schema_results(
+        Context(config, binning, dataset, run_id, started), (window[-1], active, schema, absent),
+        store, stored_alerts, dataset=dataset,
     )  # fmt: skip
     revision_rows = (
         _revisions(
@@ -973,12 +1188,7 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
         else []
     )  # fmt: skip
     label_results(computed.results, marks)
-    fresh = fresh + emptied
-    for row in fresh:
-        share, base, contribution = computed.shares.get(
-            (row["period"], row["segment"], row["column"], row["bin"]), (None, None, None)
-        )
-        row.update(share=share, baseline_share=base, contribution=contribution)
+    fresh = _with_shares(fresh + emptied, computed)
     actions = store.rows(ACTIONS, dataset)
     judgment = judgment_fingerprint(config, actions, marks.marks)
     rewrite_all = _rewrites(store.rows(RUNS, dataset, version=binning.version), judgment) or bool(redo)
@@ -991,15 +1201,12 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
         if cal is not None
         else []
     )  # fmt: skip
-    emitted = (
-        set(window) if rewrite_all or config.settle_periods or config.settle_days else set(todo) & set(window)
-    ) | set(vanished)
-    results = [r for r in computed.results if r["period"] in emitted] + cadence_rows
-    stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
+    results = _emitted(config, computed.results, (window, todo, vanished), rewrite_all=rewrite_all) + cadence_rows
     alert_rows = alerts(
         [*computed.results, *cadence_rows], config, dataset=dataset, version=binning.version, run_id=run_id,
         updated_at=started,
-        stored=stored_alerts, periods=sorted({*periods, *vanished}), keep_inside=not rewrite_all,
+        stored=stored_alerts, periods=sorted({*periods, *vanished, *(str(r["period"]) for r in earlier)}),
+        keep_inside=not rewrite_all, lineage=lineage,
     )  # fmt: skip
     latest = max(
         [window[-1], *vanished, *(r["period"] for r in cadence_rows if r["metric"] == PERIOD_LATE and r["value"])]
@@ -1011,8 +1218,9 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
         occurred_at=started,
     )  # fmt: skip
     superseded = _superseded(
-        stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
-    )
+        stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all,
+        lineage=lineage,
+    )  # fmt: skip
     alert_rows += superseded
     judged = {latest} | (set(todo) & set(window) | set(vanished) if config.gate.periods == "profiled" else set())
     counts = _counts([*computed.results, *cadence_rows], judged)
@@ -1040,6 +1248,7 @@ def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one ste
         "gate": ",".join(config.gate.fail_on), "red": counts[RED], "yellow": counts[YELLOW],
         "open_alerts": len(open_rows), "critical_alerts": critical, "message": message,
         "judgment_fingerprint": judgment, "started_at": started, "finished_at": _now(),
+        "schema": schema_text(schema),
         "periods_reprocessed": ",".join(redo),
     }  # fmt: skip
     tables = {

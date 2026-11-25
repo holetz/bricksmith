@@ -17,7 +17,13 @@ if TYPE_CHECKING:
 
     import pytest
 
-CRITICAL_GATE = {"period": "month", "gate": {"fail_on": ["critical"]}, "persistence": {"immediate_red": True}}
+CRITICAL_GATE = {
+    "period": "month",
+    "psi_limits": "fixed",
+    "min_rows_per_bin": 0,
+    "gate": {"fail_on": ["critical"]},
+    "persistence": {"immediate_red": True},
+}
 
 
 def _rows(months: int = 4, drift_from: int = 2) -> list[dict[str, object]]:

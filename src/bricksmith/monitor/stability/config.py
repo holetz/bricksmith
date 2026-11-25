@@ -31,16 +31,20 @@ WEIGHT_CHANGE = "weight_change"
 REVISION_ROW_CHANGE = "revision_row_change"
 REVISION_PSI = "revision_psi"
 REVISION_MEAN_SHIFT = "revision_mean_shift"
+SCHEMA_CHANGE = "schema_change"
+MISSING_COLUMN = "missing_column"
 #: Metrics judged per column, and per period and segment for the whole table (column ``""``).
 COLUMN_METRICS = (PSI, NULL_RATE, NULL_RATE_DELTA, UNSEEN_RATE, UNSEEN_RATE_DELTA, MEAN, MEAN_SHIFT)
 TABLE_METRICS = (ROW_COUNT, VOLUME_CHANGE, WEIGHT_CHANGE)
 #: Metrics comparing a period with its own first publication; judged only when ``revision`` is declared.
 REVISION_METRICS = (REVISION_ROW_CHANGE, REVISION_PSI, REVISION_MEAN_SHIFT)
+#: Metrics about the table schema: ``schema_change`` for the whole table, ``missing_column`` per dropped column.
+SCHEMA_METRICS = (SCHEMA_CHANGE, MISSING_COLUMN)
 PERIOD_MISSING = "period_missing"
 PERIOD_LATE = "period_late"
 #: Metrics judged against the expected cadence; written only when ``cadence`` is declared.
 CADENCE_METRICS = (PERIOD_MISSING, PERIOD_LATE)
-METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS, *CADENCE_METRICS)
+METRICS = (*COLUMN_METRICS, *TABLE_METRICS, *REVISION_METRICS, *SCHEMA_METRICS, *CADENCE_METRICS)
 #: Metrics computed from bin shares, so too few rows make them unreliable (``min_rows``).
 DISTRIBUTION_METRICS = frozenset({
     PSI, NULL_RATE_DELTA, UNSEEN_RATE_DELTA, MEAN_SHIFT, REVISION_PSI, REVISION_MEAN_SHIFT,
@@ -59,6 +63,11 @@ REVISION_LIMITS: dict[str, Limits] = {
     REVISION_PSI: Limits(0.05, 0.10, HIGHER),
     REVISION_MEAN_SHIFT: Limits(0.10, 0.25, BOTH),
 }
+#: Used only for the schema metrics (one or two changed columns warn, more are red; a missing column is red).
+SCHEMA_LIMITS: dict[str, Limits] = {
+    SCHEMA_CHANGE: Limits(0.0, 2.0, HIGHER),
+    MISSING_COLUMN: Limits(0.0, 0.0, HIGHER),
+}
 #: Used only for the cadence metrics (value 1 when a period is missing or late), so serialized limits stay.
 CADENCE_LIMITS: dict[str, Limits] = {
     PERIOD_MISSING: Limits(0.0, 0.5, HIGHER),
@@ -73,6 +82,17 @@ PREVIOUS = "previous"
 ROLLING = "rolling"
 BASELINE_EXCLUDES = ("red", "none")
 BASELINES = (FIXED, PREVIOUS, ROLLING)
+FREEZE = "freeze"
+EXTEND = "extend"
+AUTO_COLUMNS = (FREEZE, EXTEND)
+#: ``psi_limits``: the declared PSI limits as they are, or raised to the sampling-noise floor of the sample sizes.
+SAMPLE_SIZE = "sample_size"
+PSI_LIMITS = (FIXED, SAMPLE_SIZE)
+#: ``psi_smoothing``: how empty bins are kept from dominating the index: the ``epsilon`` share floor or Laplace counts.
+EPSILON_FLOOR = "epsilon"
+LAPLACE = "laplace"
+PSI_SMOOTHINGS = (EPSILON_FLOOR, LAPLACE)
+DEFAULT_MIN_ROWS_PER_BIN = 10
 GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
 GATE_PERIODS = ("latest", "profiled")
 TABLES = ("binnings", "profiles", "results", "alerts", "runs")
@@ -80,6 +100,7 @@ KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "trend_directions", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
+    "auto_columns", "psi_limits", "min_rows_per_bin", "psi_smoothing",
     "noise", "cadence", "expected_by", "settle_periods", "settle_days",
     "history", "history_periods",
 })  # fmt: skip
@@ -340,6 +361,10 @@ class StabilityConfig:
     rules: tuple[LimitRule, ...] = ()
     notify: NotifyPolicy | None = None
     revision: bool = False
+    auto_columns: str = FREEZE
+    psi_limits: str = SAMPLE_SIZE
+    min_rows_per_bin: int = DEFAULT_MIN_ROWS_PER_BIN
+    psi_smoothing: str = EPSILON_FLOOR
     noise: NoiseBudget | None = None
     cadence: str = "none"
     expected_by: int = 0
@@ -364,7 +389,7 @@ class StabilityConfig:
             return override[metric]
         if metric in self.limits:
             return self.limits[metric]
-        return REVISION_LIMITS.get(metric) or CADENCE_LIMITS.get(metric)
+        return REVISION_LIMITS.get(metric) or SCHEMA_LIMITS.get(metric) or CADENCE_LIMITS.get(metric)
 
     def trend_direction(self, metric: str) -> str:
         """Return the trend direction of a metric without limits: the declared one, else the default, else ``""``."""
@@ -401,7 +426,7 @@ class StabilityConfig:
         return hashlib.sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the serializable form (``rules``, ``notify``, ``revision`` only when declared: fingerprints stay)."""
+        """Return the serializable form (``rules``, ``notify``, ``revision``, ``auto_columns`` only when set)."""
         data = self._base_dict()
         if self.rules:
             data["rules"] = [r.to_dict() for r in self.rules]
@@ -409,6 +434,7 @@ class StabilityConfig:
             data["notify"] = self.notify.to_dict()
         if self.revision:
             data["revision"] = True
+        data.update(self._psi_options())
         for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
             if getattr(self, name) not in ("none", 0):
                 data[name] = getattr(self, name)
@@ -421,6 +447,19 @@ class StabilityConfig:
         if self.noise is not None:
             data["noise"] = self.noise.to_dict()
         return data
+
+    def _psi_options(self) -> dict[str, Any]:
+        """Return the PSI and column options that differ from their defaults (the rest serialize as before)."""
+        options: dict[str, Any] = {}
+        if self.auto_columns != FREEZE:
+            options["auto_columns"] = self.auto_columns
+        if self.psi_limits != SAMPLE_SIZE:
+            options["psi_limits"] = self.psi_limits
+        if self.min_rows_per_bin != DEFAULT_MIN_ROWS_PER_BIN:
+            options["min_rows_per_bin"] = self.min_rows_per_bin
+        if self.psi_smoothing != EPSILON_FLOOR:
+            options["psi_smoothing"] = self.psi_smoothing
+        return options
 
     def _base_dict(self) -> dict[str, Any]:
         return {
@@ -590,6 +629,14 @@ def _inference(value: object) -> InferenceOptions:
     return InferenceOptions(**value)
 
 
+def _choice(data: dict[str, Any], key: str, default: str, allowed: tuple[str, ...]) -> str:
+    value = data.get(key, default)
+    if value not in allowed:
+        msg = f"{key} must be one of {', '.join(allowed)}, got {value!r}"
+        raise _fail(msg)
+    return str(value)
+
+
 def _revision(value: object) -> bool:
     if value is None:
         return False
@@ -597,6 +644,18 @@ def _revision(value: object) -> bool:
         msg = f"revision must be true or false, got {value!r}"
         raise _fail(msg)
     return value
+
+
+def _auto_columns(value: object, columns: object) -> str:
+    if value is None:
+        return FREEZE
+    if value not in AUTO_COLUMNS:
+        msg = f"auto_columns must be {' or '.join(AUTO_COLUMNS)}, got {value!r}"
+        raise _fail(msg)
+    if value == EXTEND and columns not in (None, "auto"):
+        msg = "auto_columns: extend applies to columns: auto only"
+        raise _fail(msg)
+    return str(value)
 
 
 def _cadence(value: object) -> str:
@@ -705,6 +764,10 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             rules=_rules(data.get("rules"), root),
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
+            auto_columns=_auto_columns(data.get("auto_columns"), data.get("columns", "auto")),
+            psi_limits=_choice(data, "psi_limits", SAMPLE_SIZE, PSI_LIMITS),
+            min_rows_per_bin=_int(data, "min_rows_per_bin", DEFAULT_MIN_ROWS_PER_BIN, 0),
+            psi_smoothing=_choice(data, "psi_smoothing", EPSILON_FLOOR, PSI_SMOOTHINGS),
             cadence=_cadence(data.get("cadence")),
             expected_by=_int(data, "expected_by", 0, 0),
             settle_periods=_int(data, "settle_periods", 0, 0),
@@ -745,7 +808,10 @@ __all__ = [
     "COLUMN_METRICS",
     "DEFAULT_LIMITS",
     "ESCALATED",
+    "EXTEND",
+    "FREEZE",
     "METRICS",
+    "MISSING_COLUMN",
     "OPENED",
     "PERIOD_LATE",
     "PERIOD_MISSING",
@@ -753,6 +819,9 @@ __all__ = [
     "REMINDED",
     "REVISION_LIMITS",
     "REVISION_METRICS",
+    "SCHEMA_CHANGE",
+    "SCHEMA_LIMITS",
+    "SCHEMA_METRICS",
     "TABLES",
     "TABLE_METRICS",
     "TRANSITIONS",

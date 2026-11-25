@@ -58,7 +58,16 @@ def _check(
     reprocess: list[str] | None = None,
     **declared: object,
 ) -> CheckResult:
-    config = parse_config({"period": "month", "min_rows": 10, "baseline": "previous", **declared})
+    config = parse_config(
+        {
+            "period": "month",
+            "min_rows": 10,
+            "psi_limits": "fixed",
+            "min_rows_per_bin": 0,
+            "baseline": "previous",
+            **declared,
+        }
+    )
     return check(rows, config, store, dataset="orders", run_id=run_id, reprocess=reprocess or ())
 
 
@@ -159,7 +168,7 @@ def _project(root: Path) -> Path:
             from bricksmith.tasks import task
 
             @task(kind="table", outputs="orders", metadata={"stability": {
-                "period": "month", "min_rows": 10, "baseline": "previous",
+                "period": "month", "min_rows": 10, "psi_limits": "fixed", "min_rows_per_bin": 0, "baseline": "previous",
                 "gate": {"fail_on": ["red"], "periods": "profiled"}}})
             def orders(ctx):
                 shifted = ctx.execution.parameters.get("shifted")
@@ -202,6 +211,8 @@ def test_command_reprocess_profiles_a_changed_older_period_and_fails_the_gate(tm
     declared = {
         "period": "month",
         "min_rows": 10,
+        "psi_limits": "fixed",
+        "min_rows_per_bin": 0,
         "baseline": "previous",
         "gate": {"fail_on": ["red"], "periods": "profiled"},
     }

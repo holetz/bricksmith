@@ -82,6 +82,6 @@ def test_the_trend_seed_drops_excluded_periods_and_those_before_a_regime() -> No
     full = _trend_seed(config, store, PERIODS, window, dataset="d", version=1)[key]
     assert full == [30.0, 30.0, 30.0, 90.0, 90.0, 90.0]
     dropped = _trend_seed(config, store, PERIODS, window, dataset="d", version=1, excluded=["2025-09"])[key]
-    assert dropped == [30.0, 30.0, 30.0, 30.0, 90.0, 90.0]  # the six before the window, without 2025-09
+    assert dropped == [30.0, 30.0, 30.0, 90.0, 90.0]  # the same six periods, without 2025-09
     restarted = _trend_seed(config, store, PERIODS, window, dataset="d", version=1, regimes=["2025-08"])[key]
     assert restarted == [90.0, 90.0]

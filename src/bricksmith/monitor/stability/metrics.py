@@ -16,31 +16,50 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN
-from bricksmith.monitor.limits import COLORS, GREEN, INFORMATIONAL, NO_RULE, RED, YELLOW, Light, classify, rank
+from bricksmith.monitor.business import business_days
+from bricksmith.monitor.limits import (
+    COLORS,
+    GREEN,
+    HIGHER,
+    INFORMATIONAL,
+    NO_RULE,
+    RED,
+    YELLOW,
+    Light,
+    Limits,
+    classify,
+    rank,
+)
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, WARNING, AlertSpan, PersistencePolicy, alert_spans
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
+from bricksmith.monitor.shifts import change_point_suggested, drift_status
 from bricksmith.monitor.stability.config import (
     DISTRIBUTION_METRICS,
     FIXED,
+    LAPLACE,
     MEAN,
     MEAN_SHIFT,
     NULL_RATE,
     NULL_RATE_DELTA,
     PREVIOUS,
     PSI,
+    REVISION_PSI,
     ROW_COUNT,
+    SAMPLE_SIZE,
+    SCHEMA_METRICS,
     UNSEEN_RATE,
     UNSEEN_RATE_DELTA,
     VOLUME_CHANGE,
     WEIGHT_CHANGE,
 )
 from bricksmith.monitor.stability.profile import fit_periods_of, period_date, segment_label
-from bricksmith.monitor.stats import psi_terms
-from bricksmith.monitor.trend import keeps, trend_check
+from bricksmith.monitor.stats import chi2_ppf, psi_terms
+from bricksmith.monitor.trend import TrendPolicy, keeps, remember, trend_check
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -53,6 +72,12 @@ INVALID_REASON = "period marked invalid: "
 TABLE = ""
 PERSISTENCE = "persistence"
 TREND = "trend"
+
+#: Significance of the yellow and red sampling-noise floors of a PSI (``psi_limits: sample_size``).
+YELLOW_ALPHA = 0.05
+RED_ALPHA = 0.01
+PSI_METRICS = frozenset({PSI, REVISION_PSI})
+LAPLACE_COUNT = 1.0
 
 type Slot = tuple[int, float, float, float]  # count, weight, value sum, value sum of squares
 type Key = tuple[str, str, str]  # segment, column, metric
@@ -92,6 +117,36 @@ def index_profiles(binning: Reference, profiles: Iterable[Mapping[str, Any]]) ->
             weights[period] = weights.get(period, 0.0) + slot[1]
     history.periods = sorted(found)
     return history
+
+
+def table_totals(history: History, earlier: Iterable[Mapping[str, Any]] = ()) -> History:
+    """Return the rows and weights per segment and period of the whole lineage: earlier versions, then ``history``.
+
+    ``earlier`` holds profile rows of earlier binning versions (of one column each: the first column of a version
+    is counted, since every row falls in one bin of every column). A period known to several versions takes the
+    newest version's totals; the active ``history`` overrides them all.
+    """
+    columns: dict[int, str] = {}
+    sums: dict[tuple[int, str, str], list[float]] = {}
+    for row in earlier:
+        version, column = int(row["version"]), str(row["column"])
+        columns[version] = min(column, columns.get(version, column))
+    for row in earlier:
+        version = int(row["version"])
+        if str(row["column"]) != columns[version]:
+            continue
+        slot = sums.setdefault((version, str(row["segment"]), str(row["period"])), [0.0, 0.0])
+        slot[0] += int(row["count"] or 0)
+        slot[1] += float(row.get("weight") or 0.0)
+    totals = History()
+    for (_, segment, period), (count, weight) in sorted(sums.items()):
+        totals.rows.setdefault(segment, {})[period] = int(count)
+        totals.weights.setdefault(segment, {})[period] = weight
+    for segment, by_period in history.rows.items():
+        totals.rows.setdefault(segment, {}).update(by_period)
+        totals.weights.setdefault(segment, {}).update(history.weights.get(segment, {}))
+    totals.periods = sorted({p for by_period in totals.rows.values() for p in by_period})
+    return totals
 
 
 def baseline_periods(config: StabilityConfig, binning: Reference, periods: Sequence[str], period: str) -> list[str]:
@@ -156,12 +211,58 @@ class _Context:
     run_id: str
     computed_at: str
     trend_history: dict[Key, list[float]] = field(default_factory=dict)
+    scores: dict[Key, list[float]] = field(default_factory=dict)
     settling: frozenset[str] = frozenset()
     gap: int = 0
     excluded: frozenset[str] = frozenset()
     regimes: frozenset[str] = frozenset()
     invalid: Mapping[str, str] = field(default_factory=dict)
     red_periods: dict[str, set[str]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Sample:
+    """The sizes a distribution metric rests on: current rows, baseline rows and the bins they are spread over."""
+
+    current: float
+    baseline: float
+    bins: int
+
+
+def sample_of(current: Mapping[str, Sequence[float]], baseline: Mapping[str, Sequence[float]]) -> Sample:
+    """Return the :class:`Sample` of two bin maps (unweighted counts: sampling noise depends on rows)."""
+    return Sample(sum(s[0] for s in current.values()), sum(s[0] for s in baseline.values()), len({*current, *baseline}))
+
+
+def smoothing_of(config: StabilityConfig) -> float:
+    """Return the pseudo-count added to every bin of a PSI (``0`` unless ``psi_smoothing: laplace``)."""
+    return LAPLACE_COUNT if config.psi_smoothing == LAPLACE else 0.0
+
+
+@lru_cache(maxsize=256)
+def _chi2(bins: int, alpha: float) -> float:
+    return chi2_ppf(1 - alpha, bins - 1)
+
+
+def effective_limits(
+    config: StabilityConfig, metric: str, limits: Limits | None, sample: Sample | None
+) -> Limits | None:
+    """Return ``limits`` raised to the sampling-noise floor of ``sample`` for a PSI under ``psi_limits: sample_size``.
+
+    A PSI between two samples of the same population is about ``chi2(bins - 1) * (1/n + 1/m)``, so a limit below
+    that is crossed by noise alone. The floor never lowers a declared limit.
+    """
+    if (
+        limits is None or sample is None or config.psi_limits != SAMPLE_SIZE or metric not in PSI_METRICS
+        or limits.direction != HIGHER or sample.bins < 2 or sample.current <= 0 or sample.baseline <= 0  # noqa: PLR2004
+    ):  # fmt: skip
+        return limits
+    scale = 1 / sample.current + 1 / sample.baseline
+    return replace(
+        limits,
+        green=max(limits.green, _chi2(sample.bins, YELLOW_ALPHA) * scale),
+        red=max(limits.red, _chi2(sample.bins, RED_ALPHA) * scale),
+    )
 
 
 def _result(  # noqa: PLR0913 - one keyword per result field
@@ -178,12 +279,14 @@ def _result(  # noqa: PLR0913 - one keyword per result field
     rows: int = 0,
     baseline_rows: float | None = None,
     in_baseline: bool = False,
+    sample: Sample | None = None,
 ) -> dict[str, Any]:
     found = ctx.config.resolve(
         dataset=ctx.dataset, column=column, segment=segment, metric=metric, period_date=period_date(period)
     )
     informational = found.informational or period in ctx.invalid
     limits = None if informational else ctx.config.limits_of(found, metric, column)
+    limits = effective_limits(ctx.config, metric, limits, sample)
     if informational and light.status in (*COLORS, NO_RULE):
         reason = INVALID_REASON + ctx.invalid[period] if period in ctx.invalid else INFORMATIONAL_REASON
         light = Light(INFORMATIONAL, reason)
@@ -197,6 +300,7 @@ def _result(  # noqa: PLR0913 - one keyword per result field
         "baseline_kind": ctx.config.baseline.kind, "baseline_label": ctx.config.baseline.label,
         "trend_status": "", "trend_expected": None, "trend_deviation": None,
         "trend_sigma": None, "trend_lower": None, "trend_upper": None,
+        "trend_model": "", "drift_status": "", "change_point_suggested": None,
         "baseline_gap": ctx.gap, "settling": period in ctx.settling,
         "run_id": ctx.run_id, "computed_at": ctx.computed_at, "rule_id": found.rule_id,
         "rule_version": found.rule_version,
@@ -213,23 +317,59 @@ def _finite(value: float | None) -> float | None:
     return value if value is None or math.isfinite(value) else None
 
 
+def trend_value(policy: TrendPolicy, metric: str, period: str, value: float) -> float | None:
+    """Return the value the trend sees: ``row_count`` per business day with ``per: business_day``, else ``value``.
+
+    ``None`` when the period has no business day (or is not a day or month): such a period is not trended.
+    """
+    if policy.per != "business_day" or metric != ROW_COUNT:
+        return value
+    days = business_days(period, policy.business_calendar)
+    return value / days if days else None
+
+
 def _trend(ctx: _Context, row: dict[str, Any], value: float | None, light: Light, direction: str) -> None:
     policy = ctx.config.trend
     if policy is None or row["metric"] not in ctx.config.trend_metrics or not direction:
         return
-    if light.status not in (*COLORS, NO_RULE) or value is None or not math.isfinite(value) or row["settling"]:
+    if row["settling"]:
         return
     key = (row["segment"], row["column"], row["metric"])
     history = ctx.trend_history.setdefault(key, [])
-    found = trend_check(history, value, policy, direction)
-    if row["period"] not in ctx.excluded and keeps(policy, light.status, found.status):
-        history.append(value)
+    seen = (
+        None if value is None or not math.isfinite(value) else trend_value(policy, row["metric"], row["period"], value)
+    )
+    if light.status not in (*COLORS, NO_RULE) or seen is None:
+        remember(history, math.nan, kept=False, policy=policy)
+        return
+    found = trend_check(history, seen, policy, direction)
+    kept = row["period"] not in ctx.excluded and keeps(policy, light.status, found.status, found.model)
+    remember(history, seen, kept=kept, policy=policy)
     row["trend_status"] = found.status
     row["trend_expected"] = _finite(found.expected)
     row["trend_deviation"] = _finite(found.deviation)
     row["trend_sigma"] = _finite(found.sigma)
     row["trend_lower"] = _finite(found.lower)
     row["trend_upper"] = _finite(found.upper)
+    normalized = policy.per == "business_day" and row["metric"] == ROW_COUNT
+    row["trend_model"] = found.model + ("+business_day" if normalized else "")
+    if policy.drift != "none" or policy.change_point:
+        _shifts(ctx, row, key, found.deviation, direction)
+
+
+def _shifts(ctx: _Context, row: dict[str, Any], key: Key, deviation: float | None, direction: str) -> None:
+    """Add the period's standardized deviation to its series and fill the drift and change-point columns."""
+    policy = ctx.config.trend
+    if policy is None:
+        return
+    scores = ctx.scores.setdefault(key, [])
+    if deviation is not None and math.isfinite(deviation):
+        scores.append(deviation)
+    recent = scores[-policy.span :]
+    if policy.drift != "none":
+        row["drift_status"] = drift_status(recent, policy.drift, direction)
+    if policy.change_point:
+        row["change_point_suggested"] = change_point_suggested(recent, direction)
 
 
 def _judge(  # noqa: PLR0913 - the metric and its suppression inputs
@@ -242,20 +382,24 @@ def _judge(  # noqa: PLR0913 - the metric and its suppression inputs
     rows: int,
     has_baseline: bool,
     reason: str = "",
+    sample: Sample | None = None,
 ) -> Light:
     period, segment = where
     found = ctx.config.resolve(
         dataset=ctx.dataset, column=column, segment=segment, metric=metric, period_date=period_date(period)
     )
-    limits = ctx.config.limits_of(found, metric, column)
+    limits = effective_limits(ctx.config, metric, ctx.config.limits_of(found, metric, column), sample)
     needs_volume = metric in DISTRIBUTION_METRICS
+    min_count = ctx.config.min_rows
+    if needs_volume and sample is not None:
+        min_count = max(min_count, math.ceil(ctx.config.min_rows_per_bin * sample.bins))
     if not has_baseline and value is None:
         value = 0.0  # nothing to compare with: let ``no_baseline`` (or too few rows) explain the gap
     return classify(
         value,
         limits,
         count=rows if needs_volume else None,
-        min_count=ctx.config.min_rows,
+        min_count=min_count,
         has_baseline=has_baseline,
         reason=reason,
     )
@@ -271,6 +415,7 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     run_id: str = "",
     computed_at: str = "",
     emptied: Collection[str] = (),
+    earlier: Iterable[Mapping[str, Any]] = (),
     settling: Collection[str] = (),
     gap: Callable[[Sequence[str], str], int] | None = None,
     trend_seed: Mapping[Key, Sequence[float]] | None = None,
@@ -278,11 +423,16 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     regimes: Collection[str] = (),
     invalid: Mapping[str, str] | None = None,
     red_seed: Mapping[str, Collection[str]] | None = None,
+    score_seed: Mapping[Key, Sequence[float]] | None = None,
 ) -> Computed:
     """Compute the result rows of every period of ``window`` and ``emptied`` (in order) from the stored profiles.
 
     An ``emptied`` period is reported like any other, but its zero-count profile is never a baseline period for
     another period: the ``previous`` and ``rolling`` rules skip it and take the next eligible period.
+
+    The table-level metrics (``row_count``, ``volume_change``, ``weight_change``) do not depend on bins, so they
+    read the totals of the whole lineage: ``earlier`` are profile rows of earlier binning versions. Periods only
+    those versions know are judged too (their results feed trends and alert replays) and are the caller's to drop.
 
     A ``settling`` period is judged and shown (``settling`` true) like any other, but it is never a baseline
     period, never enters a trend history and is not counted by the gate. ``gap(baseline periods, period)`` gives
@@ -294,7 +444,8 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     ``excluded`` lists periods kept out of every trend history and every ``previous``/``rolling`` baseline (the one
     input a human mark of an anomalous period plugs into). With ``baseline.exclude = red`` a period whose
     ``volume_change`` or ``psi`` was red in a segment is skipped for that segment too; ``red_seed`` carries, per
-    segment, the red periods already stored before the window.
+    segment, the red periods already stored before the window. ``score_seed`` carries, per series, the stored
+    standardized trend deviations before the window, which the drift and change-point detectors read.
 
     ``regimes`` lists periods where a new regime starts: the trend history is emptied there and a ``previous`` or
     ``rolling`` baseline never reaches before the latest regime (the regime period itself has no baseline). ``invalid``
@@ -311,31 +462,49 @@ def compute(  # noqa: PLR0913 - one keyword per result field
         ctx.red_periods[segment_name] = set(reds)
     for key, values in (trend_seed or {}).items():
         ctx.trend_history[key] = list(values)
+    for key, values in (score_seed or {}).items():
+        ctx.scores[key] = list(values)
     out = Computed()
     numeric = {s.column: s.kind == "numeric" for s in binning.columns}
     in_window = [p for p in history.periods if p in {*window, *emptied}]
     skipped = {*emptied, *settling}
     eligible = [p for p in history.periods if p not in skipped]
-    for period in in_window:
+    totals = table_totals(history, earlier)
+    table_eligible = [p for p in totals.periods if p not in skipped]
+    earlier_only = [p for p in totals.periods if p not in set(history.periods)]
+    for period in sorted({*in_window, *earlier_only}):
+        in_active = period in in_window
         if period in ctx.regimes:
             ctx.trend_history.clear()
         start = max((r for r in ctx.regimes if r <= period), default="")
         ordered = sorted([*eligible, period]) if period in skipped else eligible
-        wanted = [p for p in baseline_periods(config, binning, ordered, period) if p not in settling]
-        ctx.gap = gap(wanted, period) if gap and wanted else 0
-        for segment in sorted(history.rows):
-            if period not in history.rows[segment]:
+        table_order = sorted([*table_eligible, period]) if period in skipped else table_eligible
+        counted = [p for p in baseline_periods(config, binning, table_order, period) if p not in settling]
+        ctx.gap = gap(counted, period) if gap and counted else 0
+        for segment in sorted(totals.rows):
+            if period not in totals.rows[segment]:
                 continue
             skip = _skipped(ctx, segment)
-            reach = [
-                p for p in ordered if p == period or (p not in skip and (config.baseline.kind == FIXED or p >= start))
-            ]
-            wanted = baseline_periods(config, binning, reach, period)
+            table_wanted = baseline_periods(
+                config,
+                binning,
+                [p for p in table_order if p == period or (p not in skip and _reaches(config, p, start))],
+                period,
+            )
             first = len(out.results)
-            present = [p for p in wanted if p in history.rows[segment]]
-            enough = len(present) >= (config.baseline.min_periods if config.baseline.kind == "rolling" else 1)
-            usable = present if enough else []
-            out.results += _table_results(ctx, history, segment, period, usable, wanted)
+            out.results += _table_results(
+                ctx, totals, segment, period, _usable(config, totals, segment, table_wanted), table_wanted
+            )
+            if not in_active or period not in history.rows.get(segment, {}):
+                _mark_red(ctx, segment, period, out.results[first:])
+                continue
+            wanted = baseline_periods(
+                config,
+                binning,
+                [p for p in ordered if p == period or (p not in skip and _reaches(config, p, start))],
+                period,
+            )
+            usable = _usable(config, history, segment, wanted)
             for spec in binning.columns:
                 out.results += _column_results(
                     ctx, out, history, (segment, spec.column), period, usable,
@@ -343,6 +512,18 @@ def compute(  # noqa: PLR0913 - one keyword per result field
                 )  # fmt: skip
             _mark_red(ctx, segment, period, out.results[first:])
     return out
+
+
+def _usable(config: StabilityConfig, history: History, segment: str, wanted: Sequence[str]) -> list[str]:
+    """Return the ``wanted`` baseline periods the segment has, or none when there are too few of them."""
+    present = [p for p in wanted if p in history.rows[segment]]
+    enough = len(present) >= (config.baseline.min_periods if config.baseline.kind == "rolling" else 1)
+    return present if enough else []
+
+
+def _reaches(config: StabilityConfig, period: str, start: str) -> bool:
+    """Tell whether a baseline may take ``period``: a fixed one always, the others only from the latest regime."""
+    return config.baseline.kind == FIXED or period >= start
 
 
 def _skipped(ctx: _Context, segment: str) -> set[str]:
@@ -416,9 +597,11 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
     cur = _stats(current_bins, numeric=numeric)
     base = _stats(base_bins, numeric=numeric) if has_base else None
     psi_value = _psi(ctx, out, (period, segment, column), current_bins, base_bins if has_base else {})
+    sample = sample_of(current_bins, base_bins if has_base else {})
+    common["sample"] = sample
     results = [
         _result(ctx, metric=PSI, value=psi_value, light=_judge(
-            ctx, PSI, column, psi_value, where=where, rows=rows, has_baseline=has_base), **common),
+            ctx, PSI, column, psi_value, where=where, rows=rows, has_baseline=has_base, sample=sample), **common),
         _result(ctx, metric=NULL_RATE, value=cur.null_rate, current=cur.null_rate,
                 baseline=base.null_rate if base else None, light=_judge(
             ctx, NULL_RATE, column, cur.null_rate, where=where, rows=rows, has_baseline=True), **common),
@@ -434,7 +617,9 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
                     light=_judge(ctx, MEAN, column, cur.mean, where=where, rows=rows, has_baseline=True), **common)
         )  # fmt: skip
         shift, reason = _shift(cur, base)
-        light = _judge(ctx, MEAN_SHIFT, column, shift, where=where, rows=rows, has_baseline=has_base, reason=reason)
+        light = _judge(
+            ctx, MEAN_SHIFT, column, shift, where=where, rows=rows, has_baseline=has_base, reason=reason, sample=sample
+        )
         results.append(
             _result(ctx, metric=MEAN_SHIFT, value=shift, current=cur.mean, baseline=base.mean if base else None,
                     light=light, **common)
@@ -453,7 +638,10 @@ def _delta(  # noqa: PLR0913, PLR0917 - the metric and its context
 ) -> dict[str, Any]:
     value = current - baseline if baseline is not None else None
     where = (common["period"], common["segment"])
-    light = _judge(ctx, metric, common["column"], value, where=where, rows=rows, has_baseline=has_base)
+    light = _judge(
+        ctx, metric, common["column"], value, where=where, rows=rows, has_baseline=has_base,
+        sample=common.get("sample"),
+    )  # fmt: skip
     return _result(ctx, metric=metric, value=value, current=current, baseline=baseline, light=light, **common)
 
 
@@ -473,6 +661,7 @@ def _psi(
     baseline: Mapping[str, Sequence[float]],
 ) -> float | None:
     basis = 1 if ctx.config.weight else 0
+    smoothing = smoothing_of(ctx.config)
     cur = {b: float(s[basis]) for b, s in current.items()}
     total = sum(cur.values())
     base = {b: float(s[basis]) for b, s in baseline.items()}
@@ -480,7 +669,7 @@ def _psi(
         for b, value in cur.items():
             out.shares[(*key, b)] = (value / total if total > 0 else 0.0, None, None)
         return None
-    terms = psi_terms(base, cur, ctx.config.epsilon)  # type: ignore[arg-type] - weights are floats
+    terms = psi_terms(base, cur, ctx.config.epsilon, smoothing)  # type: ignore[arg-type] - weights are floats
     for b, value in cur.items():
         term = terms.get(b)
         out.shares[(*key, b)] = (
@@ -505,14 +694,23 @@ def alert_id(dataset: str, version: int, key: Key, kind: str, opened: str) -> st
     return hashlib.sha256(text.encode()).hexdigest()[:20]
 
 
+def table_level(row: Mapping[str, Any]) -> bool:
+    """Tell whether an alert or result is about the whole table (column ``""``), whatever the binning version."""
+    return str(row["column"]) == TABLE
+
+
 def _stored_by_key(
-    stored: Iterable[Mapping[str, Any]], version: int
+    stored: Iterable[Mapping[str, Any]], version: int, lineage: Collection[int] = ()
 ) -> tuple[dict[tuple[str, ...], Mapping[str, Any]], dict[tuple[str, ...], list[str]]]:
-    """Return the stored open alert and the stored close periods of ``version``, per (segment, column, metric, kind)."""
+    """Return the stored open alert and the stored close periods of ``version``, per (segment, column, metric, kind).
+
+    Table-level alerts of the other versions in ``lineage`` count as ``version``'s own: they survive a refit.
+    """
     carried: dict[tuple[str, ...], Mapping[str, Any]] = {}
     closes: dict[tuple[str, ...], list[str]] = {}
     for r in stored:
-        if int(r.get("version") or 0) != version:
+        stored_version = int(r.get("version") or 0)
+        if stored_version != version and not (table_level(r) and stored_version in lineage):
             continue
         key = (str(r["segment"]), str(r["column"]), str(r["metric"]), str(r["kind"]))
         if r.get("state") == OPEN:
@@ -588,6 +786,7 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     stored: Iterable[Mapping[str, Any]] = (),
     periods: Sequence[str] = (),
     keep_inside: bool = True,
+    lineage: Collection[int] = (),
 ) -> list[dict[str, Any]]:
     """Replay the status and trend series of every judged metric into alert rows (persistence and trend kinds).
 
@@ -600,17 +799,26 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     A stored open alert that opened inside the window, when the window alone no longer reproduces it (its red run
     began before the window), is carried too and replayed from its opening period; ``keep_inside=False`` (the
     judgment changed) lets the replay re-judge it instead.
+
+    ``lineage`` lists the other versions of the same dataset and period column: a table-level alert is carried across
+    them and, once opened, keeps the identity of the lineage's first version, so a refit neither closes nor reopens it.
     """
-    carried, closes = _stored_by_key(stored, version)
-    statuses, trends, values = _series(results)
+    carried, closes = _stored_by_key(stored, version, lineage)
+    anchor = min([version, *lineage])
+    rows = list(results)
+    statuses, trends, values = _series(rows)
+    reasons = {(_key_of(r), r["period"]): str(r["reason"] or "") for r in rows}
     persistence = config.persistence
     trend_policy = PersistencePolicy(
         yellow=0, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
     )
+    schema_policy = PersistencePolicy(
+        yellow=1, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
+    )
     out: list[dict[str, Any]] = []
     for key in sorted(trends):
         for kind, series, policy in (
-            (PERSISTENCE, statuses.get(key, []), persistence),
+            (PERSISTENCE, statuses.get(key, []), schema_policy if key[2] in SCHEMA_METRICS else persistence),
             (TREND, trends[key], trend_policy),
         ):
             if not series:
@@ -647,10 +855,17 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
                     f"{subject} [{segment_label(segment)}] {verb}: {span.severity} since {span.opened}, "
                     f"last {span.last_status} in {span.last_period}"
                     + (f" (value {value:.4g})" if value is not None else "")
+                    + (
+                        f": {why}"
+                        if (why := reasons.get((key, span.last_period), "")) and metric in SCHEMA_METRICS
+                        else ""
+                    )
                 )
                 out.append(
                     {
-                        "dataset": dataset, "alert_id": alert_id(dataset, version, key, kind, span.opened),
+                        "dataset": dataset,
+                        "alert_id": str(old["alert_id"]) if old is not None and old.get("alert_id")
+                        else alert_id(dataset, anchor if key[1] == TABLE else version, key, kind, span.opened),
                         "version": version, "kind": kind, "metric": metric, "column": column, "segment": segment,
                         "segment_label": segment_label(segment), "severity": span.severity,
                         "severity_rank": 2 if span.severity == CRITICAL else 1, "state": span.state,
@@ -691,4 +906,6 @@ __all__ = [
     "mean_shift",
     "rank",
     "result_row",
+    "table_level",
+    "table_totals",
 ]

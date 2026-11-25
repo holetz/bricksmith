@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     from bricksmith.monitor.reference import Reference
     from bricksmith.monitor.stability.config import StabilityConfig
+    from bricksmith.monitor.stability.schema import Schema
 
 EXACT_DISTINCT_LIMIT = 100_000
 
@@ -72,6 +73,13 @@ def _text(df: DataFrame, name: str) -> Column:
         return _float_text(df, name)
     text = f.col(name).cast("string")
     return f.lower(text) if kind == "boolean" else text
+
+
+def schema_spark(df: DataFrame) -> Schema:
+    """Return the schema of ``df`` (column, type name, nullable), sorted by column."""
+    return tuple(
+        sorted((field.name, field.dataType.simpleString(), bool(field.nullable)) for field in df.schema.fields)
+    )
 
 
 def period_column(df: DataFrame, period: str) -> Column:
@@ -283,5 +291,6 @@ __all__ = [
     "period_column",
     "periods_spark",
     "profile_spark",
+    "schema_spark",
     "segment_column",
 ]

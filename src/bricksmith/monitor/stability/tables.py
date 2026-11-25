@@ -37,6 +37,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "dataset": "STRING", "version": "INT", "config_fingerprint": "STRING", "fingerprint": "STRING",
         "period_column": "STRING", "fit_periods": "STRING", "fit_rows": "BIGINT", "columns": "INT",
         "skipped": "STRING", "body": "STRING", "created_run_id": "STRING", "created_at": "STRING",
+        "schema": "STRING",
     },
     PROFILES: {
         "dataset": "STRING", "version": "INT", "period": "STRING", "period_date": "DATE", "segment": "STRING",
@@ -51,7 +52,8 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "green_limit": "DOUBLE", "red_limit": "DOUBLE", "direction": "STRING", "rows": "BIGINT",
         "baseline_rows": "DOUBLE", "in_baseline": "BOOLEAN", "baseline_kind": "STRING", "baseline_label": "STRING",
         "trend_status": "STRING", "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE", "trend_sigma": "DOUBLE",
-        "trend_lower": "DOUBLE", "trend_upper": "DOUBLE", "run_id": "STRING",
+        "trend_lower": "DOUBLE", "trend_upper": "DOUBLE", "trend_model": "STRING", "drift_status": "STRING",
+        "change_point_suggested": "BOOLEAN", "run_id": "STRING",
         "computed_at": "STRING", "rule_id": "STRING", "rule_version": "INT", "baseline_gap": "INT",
         "settling": "BOOLEAN", "mark": "STRING", "mark_reason": "STRING",
     },
@@ -98,7 +100,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
         "red": "INT", "yellow": "INT", "open_alerts": "INT", "critical_alerts": "INT", "message": "STRING",
         "judgment_fingerprint": "STRING", "started_at": "STRING", "finished_at": "STRING",
-        "periods_reprocessed": "STRING",
+        "periods_reprocessed": "STRING", "schema": "STRING",
     },
 }  # fmt: skip
 KEYS: dict[str, tuple[str, ...]] = {

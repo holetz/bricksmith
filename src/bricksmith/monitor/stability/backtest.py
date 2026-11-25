@@ -19,6 +19,7 @@ from bricksmith.monitor.actions import STATE_ACCEPTED, STATE_CLOSED, apply_actio
 from bricksmith.monitor.limits import COLORS, GREEN, RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN
 from bricksmith.monitor.reference import Reference
+from bricksmith.monitor.stability.config import SCHEMA_METRICS
 from bricksmith.monitor.stability.engine import (
     FAILED,
     PASSED,
@@ -26,6 +27,7 @@ from bricksmith.monitor.stability.engine import (
     _accepted_alerts,  # pyright: ignore[reportPrivateUsage]
     _gate,  # pyright: ignore[reportPrivateUsage]
     _loaded_periods,  # pyright: ignore[reportPrivateUsage]
+    _score_seed,  # pyright: ignore[reportPrivateUsage]
     _trend_seed,  # pyright: ignore[reportPrivateUsage]
     judgment_fingerprint,
     label_results,
@@ -348,6 +350,7 @@ def backtest(  # noqa: PLR0913 - one keyword per documented input
     )  # fmt: skip
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, emptied=emptied, trend_seed=seed_rows,
+        score_seed=_score_seed(config, store, live, window, dataset=dataset, version=binning.version),
         excluded=marks.excluded, regimes=marks.regimes, invalid=marks.invalid,
     )  # fmt: skip
     label_results(computed.results, marks)
@@ -361,9 +364,15 @@ def backtest(  # noqa: PLR0913 - one keyword per documented input
         computed.results, config, dataset=dataset, version=binning.version, stored=stored_alerts,
         periods=known, keep_inside=not report.judgment_changed,
     )  # fmt: skip
-    stored_alerts = [r for r in stored_alerts if int(r.get("version") or 0) == binning.version]
+    stored_alerts = [
+        r for r in stored_alerts if int(r.get("version") or 0) == binning.version and r["metric"] not in SCHEMA_METRICS
+    ]
     covered = {*window, *emptied}
-    stored_results = [r for r in store.rows(RESULTS, dataset, version=binning.version) if r["period"] in covered]
+    stored_results = [  # schema results come from the table schema, which stored profiles cannot replay
+        r
+        for r in store.rows(RESULTS, dataset, version=binning.version)
+        if r["period"] in covered and r["metric"] not in SCHEMA_METRICS
+    ]
     human_after = _human_states(fresh_alerts, actions, today)
     human_after |= _accepted_alerts(fresh_alerts, computed.results, human_after)
     human_before = _human_states(stored_alerts, actions, today)
