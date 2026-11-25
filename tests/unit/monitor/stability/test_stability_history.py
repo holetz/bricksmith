@@ -17,7 +17,9 @@ from bricksmith.monitor.stability.tables import (
     RESULTS,
     RESULTS_HISTORY,
     SCHEMAS,
+    as_of_statement,
     merge_rows,
+    results_as_of,
     table_name,
 )
 
@@ -165,3 +167,30 @@ def test_events_record_each_human_action_once() -> None:
     applied = [r for r in store.tables["alert_events"] if r["event"] == "action_applied"]
     assert len(applied) == 1 and applied[0]["action_id"] == "a1" and applied[0]["alert_id"] == alert_id
     assert applied[0]["state"] == "risk_accepted" and applied[0]["message"] == "known backfill"
+
+
+def test_as_of_returns_the_judgment_that_stood_at_a_date() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows(), store, "r1", now="2026-06-01T08:00:00+00:00"))
+    _commit(store, _check(_rows("2026-02"), store, "r2", now="2026-06-03T08:00:00+00:00", reprocess=["2026-02"]))
+    history = store.tables["results_history"]
+
+    def status(as_of: str) -> str | None:
+        found = _psi(results_as_of(history, as_of), "2026-02")
+        return str(found[0]["status"]) if found else None
+
+    assert status("2026-05-31") is None  # nothing was reported yet
+    assert status("2026-06-01") not in (None, "red") and status("2026-06-02T00:00:00+00:00") == status("2026-06-01")
+    assert status("2026-06-03") == "red"  # a date covers its whole day
+    assert status("2026-06-03T07:59:59+00:00") != "red"
+
+
+def test_as_of_statement_is_one_select_over_the_history_and_refuses_what_is_not_a_date() -> None:
+    sql = as_of_statement("c.s", "2026-03-31")
+    assert "c.s.stability_results_history" in sql and "substr(judged_at, 1, 10) <= '2026-03-31'" in sql
+    assert "judged_at <= '2026-03-31T12:00:00Z'" in as_of_statement("c.s", "2026-03-31T12:00:00Z", "x_").replace(
+        "x_results_history", ""
+    )
+    for bad in ("tomorrow", "2026-03-31' OR 1=1 --", ""):
+        with pytest.raises(MonitorError):
+            as_of_statement("c.s", bad)
