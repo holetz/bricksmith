@@ -447,6 +447,27 @@ def _since_close(closes: Sequence[str], periods: Sequence[str], first: str) -> i
     return sum(1 for p in periods if last < p < first)
 
 
+def _resume(
+    stored_open: Mapping[str, Any] | None,
+    series: list[tuple[str, str]],
+    policy: PersistencePolicy,
+    first_period: str,
+    *,
+    keep_inside: bool,
+) -> tuple[Mapping[str, Any] | None, list[tuple[str, str]]]:
+    """Return the stored open alert to carry (or ``None``) and the series to replay it over.
+
+    An alert opened inside the window is left to the replay when the replay reproduces it, or when the judgment
+    changed (``keep_inside`` false); otherwise it is carried and the series starts at its opening period.
+    """
+    if stored_open is None or str(stored_open["opened_period"]) <= first_period:
+        return stored_open, series
+    opened = str(stored_open["opened_period"])
+    if not keep_inside or any(s.opened == opened for s in alert_spans(series, policy)):
+        return None, series
+    return stored_open, [(p, status) for p, status in series if p >= opened]
+
+
 def alerts(  # noqa: PLR0913 - one keyword per alert field
     results: Iterable[Mapping[str, Any]],
     config: StabilityConfig,
@@ -457,6 +478,7 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     updated_at: str = "",
     stored: Iterable[Mapping[str, Any]] = (),
     periods: Sequence[str] = (),
+    keep_inside: bool = True,
 ) -> list[dict[str, Any]]:
     """Replay the status and trend series of every judged metric into alert rows (persistence and trend kinds).
 
@@ -465,6 +487,10 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     and closes after ``close_after`` greens even when the window alone would not open it. The last ``closed``
     alert of the same key that closed before the window counts for recurrence: the distance is the number of
     ``periods`` (the known periods of the data) between its close and the window.
+
+    A stored open alert that opened inside the window, when the window alone no longer reproduces it (its red run
+    began before the window), is carried too and replayed from its opening period; ``keep_inside=False`` (the
+    judgment changed) lets the replay re-judge it instead.
     """
     carried, closes = _stored_by_key(stored, version)
     statuses: dict[Key, list[tuple[str, str]]] = {}
@@ -488,9 +514,9 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
             (TREND, trends[key], trend_policy),
         ):
             first_period = min((p for p, _ in series), default="")
-            stored_open = carried.get((*key, kind))
-            if stored_open is not None and str(stored_open["opened_period"]) > first_period:
-                stored_open = None  # it opened inside the window, so the replay reproduces it
+            stored_open, replayed = _resume(
+                carried.get((*key, kind)), series, policy, first_period, keep_inside=keep_inside
+            )
             since_close = _since_close(closes.get((*key, kind), ()), periods, first_period)
             seed = None
             if stored_open is not None:
@@ -500,7 +526,7 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
                     last_period=str(stored_open.get("last_period") or ""),
                     last_status=str(stored_open.get("last_status") or ""),
                 )
-            for number, span in enumerate(alert_spans(series, policy, carry=seed, since_close=since_close)):
+            for number, span in enumerate(alert_spans(replayed, policy, carry=seed, since_close=since_close)):
                 old = stored_open if number == 0 else None
                 flagged = len(span.flagged)
                 if old is not None:

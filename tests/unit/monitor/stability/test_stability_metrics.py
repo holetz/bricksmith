@@ -25,6 +25,8 @@ from bricksmith.monitor.stability.tables import merge_rows
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from bricksmith.monitor.stability.config import StabilityConfig
+
 A, B, C = "2026-01", "2026-02", "2026-03"
 
 
@@ -354,3 +356,51 @@ def test_new_binning_version_profiles_and_judges_the_whole_window_in_its_first_r
     refit, _ = results_of(rows, config(baseline="previous", columns={"x": {"edges": [0, 2, 3]}}), store)
     assert refit.outcome.version == 2 and refit.outcome.periods_profiled == 2
     assert {r["period"] for r in refit.tables["results"]} == {A, B}
+
+
+def _replay(history: Mapping[str, Sequence[object]], cfg: StabilityConfig, store: MemoryStore) -> dict[str, list]:
+    """Run one check per month (from the fifth) and return the persistence alerts seen after each."""
+    """Run one check per month (from the ``start``-th) and return the persistence alerts seen after each."""
+    months = sorted(history)
+    seen: dict[str, list] = {}
+    for count in range(5, len(months) + 1):
+        found, _ = results_of(rows_of({m: history[m] for m in months[:count]}), cfg, store)
+        for kind, items in found.tables.items():
+            store.tables[kind] = merge_rows(kind, store.tables.get(kind, []), items)
+        seen[months[count - 1]] = sorted(
+            (a["opened_period"], a["state"], a["closed_period"])
+            for a in store.tables["alerts"]
+            if a["metric"] == "psi" and a["kind"] == "persistence"
+        )
+    return seen
+
+
+def test_open_alert_whose_red_run_began_before_the_window_closes_instead_of_being_superseded() -> None:
+    months = [f"2026-{m:02d}" for m in range(1, 11)]
+    drifted = {"2026-05", "2026-06", "2026-07"}
+    history = {m: [2, 2, 2, 2] if m in drifted else [1, 2, 1, 2] for m in months}
+    cfg = config(
+        max_periods=3, baseline={"kind": "fixed", "start": "2026-01", "end": "2026-04"},
+        persistence={"red": 3, "yellow": 3},
+    )  # fmt: skip
+    store = MemoryStore()
+    seen = _replay(history, cfg, store)
+    assert seen["2026-07"] == [("2026-07", "open", "")]
+    assert seen["2026-08"] == [("2026-07", "open", "")]  # the window holds only two reds: carried, not superseded
+    assert seen["2026-10"] == [("2026-07", "closed", "2026-10")]
+    assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]
+
+
+def test_closed_alert_opened_inside_the_window_stays_closed_when_the_window_slides() -> None:
+    months = [f"2026-{m:02d}" for m in range(1, 13)]
+    drifted = {"2026-05", "2026-06", "2026-07"}
+    history = {m: [2, 2, 2, 2] if m in drifted else [1, 2, 1, 2] for m in months}
+    cfg = config(
+        max_periods=5, baseline={"kind": "fixed", "start": "2026-01", "end": "2026-04"},
+        persistence={"red": 3, "yellow": 3, "close_after": 1},
+    )  # fmt: skip
+    store = MemoryStore()
+    seen = _replay(history, cfg, store)
+    assert seen["2026-08"] == [("2026-07", "closed", "2026-08")]
+    assert seen["2026-12"] == [("2026-07", "closed", "2026-08")]  # slid past its run, never superseded
+    assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]
