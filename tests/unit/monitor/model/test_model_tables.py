@@ -39,6 +39,7 @@ def test_every_key_is_a_column_and_results_are_keyed_by_run() -> None:
 def test_judgment_and_alert_span_columns_are_additive() -> None:
     assert {"limit_kind", "limit_reference", "compared_value", "baseline_mean", "baseline_sd", "baseline_points",
             "trend_status", "trend_expected", "trend_deviation"} <= set(SCHEMAS[RESULTS])  # fmt: skip
+    assert {"trend_sigma", "trend_lower", "trend_upper"} <= set(SCHEMAS[RESULTS])
     assert {"kind", "state", "opened_period", "escalated_period", "closed_period", "last_period",
             "flagged_periods", "recurrence"} <= set(SCHEMAS[ALERTS])  # fmt: skip
     assert {"open_alerts", "critical_alerts"} <= set(SCHEMAS[RUNS])
