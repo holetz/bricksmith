@@ -42,6 +42,9 @@ def add_run_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--retry-delay", type=float, default=0.0, help="seconds before the first retry")
     parser.add_argument("--fail-fast", action="store_true", help="start no new task after a failure")
     parser.add_argument("--report", help="write the run report JSON to this file")
+    parser.add_argument(
+        "--reprocess", help="periods the run rewrote, for the stability check: a list (a,b) or ranges (first..last)"
+    )
 
 
 def plan_from_args(args: argparse.Namespace) -> tuple[Plan, TaskGraph]:
@@ -98,6 +101,11 @@ def run_summary(report: RunReport) -> str:
     return "\n".join(lines)
 
 
+def reprocess_periods(value: str | None) -> tuple[str, ...]:
+    """Return the periods (or ``first..last`` ranges) of the ``--reprocess`` option, in order."""
+    return tuple(p.strip() for p in (value or "").split(",") if p.strip())
+
+
 def apply_from_args(
     args: argparse.Namespace,
     plan: Plan,
@@ -120,6 +128,7 @@ def apply_from_args(
         dry_run=args.dry_run,
         fail_fast=args.fail_fast,
         externals=externals,
+        reprocess=reprocess_periods(getattr(args, "reprocess", None)),
     )
     if args.report:
         Path(args.report).write_text(report.to_json(), encoding="utf-8")
