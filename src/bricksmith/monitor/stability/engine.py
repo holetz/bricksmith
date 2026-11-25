@@ -286,15 +286,31 @@ def _gate(config: StabilityConfig, red: int, yellow: int, open_alerts: int, crit
     return reasons
 
 
-def _superseded(
-    stored: Sequence[Mapping[str, Any]], fresh: Sequence[Mapping[str, Any]], run_id: str, now: str
+def _superseded(  # noqa: PLR0913 - the rows to compare and where the replay starts
+    stored: Sequence[Mapping[str, Any]],
+    fresh: Sequence[Mapping[str, Any]],
+    run_id: str,
+    now: str,
+    *,
+    version: int,
+    start: str,
 ) -> list[dict[str, Any]]:
-    """Return stored alerts that the replay no longer produces, marked ``superseded``."""
+    """Return stored alerts that the replay no longer produces, marked ``superseded``.
+
+    A ``closed`` alert of ``version`` that opened at or before the window ``start`` is final: the replay can no longer
+    re-judge its opening, so it stays closed.
+    """
     ids = {r["alert_id"] for r in fresh}
     return [
         {**r, "state": SUPERSEDED, "run_id": run_id, "updated_at": now}
         for r in stored
-        if r["alert_id"] not in ids and r.get("state") in (OPEN, CLOSED)
+        if r["alert_id"] not in ids
+        and r.get("state") in (OPEN, CLOSED)
+        and not (
+            r.get("state") == CLOSED
+            and int(r.get("version") or 0) == version
+            and str(r.get("opened_period") or "") <= start
+        )
     ]
 
 
@@ -441,13 +457,13 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
     alert_rows = alerts(
         computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
-        stored=stored_alerts,
+        stored=stored_alerts, periods=periods,
     )  # fmt: skip
     notifications = alert_events(
         alert_rows, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
         occurred_at=started,
     )  # fmt: skip
-    alert_rows += _superseded(stored_alerts, alert_rows, run_id, started)
+    alert_rows += _superseded(stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0])
     latest = window[-1]
     counts = counts_in(computed.results, latest)
     open_rows = [r for r in alert_rows if r["state"] == OPEN]

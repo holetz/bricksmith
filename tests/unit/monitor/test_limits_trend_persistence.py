@@ -189,6 +189,19 @@ def test_persistence_resumes_a_carried_open_alert() -> None:
     assert len(again) == 2 and again[1].opened == "2026-08" and again[1].recurrence
 
 
+def test_persistence_counts_recurrence_from_a_close_before_the_series() -> None:
+    # Closed 3 periods before the series: the opening on the third yellow sits 3 + 3 = 6 periods after it.
+    near = alert_spans(series("yyy"), since_close=3)
+    assert len(near) == 1 and near[0].recurrence
+    assert not alert_spans(series("yyy"), since_close=10)[0].recurrence  # 13 periods > recurrence 12
+    assert not alert_spans(series("yyy"))[0].recurrence  # no close known
+    assert alert_spans(series("yyy"), since_close=0)[0].recurrence
+    assert not alert_spans(series("yyy"), PersistencePolicy(recurrence=0), since_close=0)[0].recurrence
+    # A close inside the series still counts from itself.
+    inner = alert_spans(series("yyyggg" + "yyy"), since_close=20)
+    assert not inner[0].recurrence and inner[1].recurrence
+
+
 def test_persistence_policy_validation() -> None:
     assert alert_spans(series("yyyyyy"), PersistencePolicy(yellow=0)) == []
     with pytest.raises(MonitorError):

@@ -120,19 +120,25 @@ def _trigger(policy: PersistencePolicy, status: str, yellows: int, reds: int) ->
 
 
 def alert_spans(
-    series: Sequence[tuple[str, str]], policy: PersistencePolicy | None = None, *, carry: AlertSpan | None = None
+    series: Sequence[tuple[str, str]],
+    policy: PersistencePolicy | None = None,
+    *,
+    carry: AlertSpan | None = None,
+    since_close: int | None = None,
 ) -> list[AlertSpan]:
     """Replay ``(period, status)`` pairs (sorted by period here) into alert spans, oldest first.
 
     ``carry`` is an alert already open before the series starts: the replay resumes it as the first span, so its
     statuses escalate and close it, and a span opened after its close can be flagged as a recurrence.
+    ``since_close`` is the number of periods between an alert closed before the series and its first period: a
+    span opened within ``recurrence`` periods of that close is flagged as a recurrence too.
     """
     rule = policy or PersistencePolicy()
     spans: list[AlertSpan] = [carry] if carry is not None else []
     current: AlertSpan | None = carry
     yellows = reds = greens = 0
     index = 0
-    last_close = -1
+    last_close = None if since_close is None else -since_close
     for period, status in sorted(series):
         if status not in (GREEN, YELLOW, RED):
             continue
@@ -143,7 +149,7 @@ def alert_spans(
         severity = _trigger(rule, status, yellows, reds)
         if current is None:
             if severity:
-                recurrence = last_close >= 0 and rule.recurrence > 0 and index - last_close <= rule.recurrence
+                recurrence = last_close is not None and rule.recurrence > 0 and index - last_close <= rule.recurrence
                 current = AlertSpan(severity, period, recurrence=recurrence)
                 spans.append(current)
         elif severity == CRITICAL and current.severity == WARNING:

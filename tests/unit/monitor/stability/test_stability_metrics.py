@@ -265,6 +265,52 @@ def test_carried_open_alert_closes_instead_of_being_superseded() -> None:
     assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]
 
 
+def test_closed_alert_stays_closed_and_recurs_across_the_window() -> None:
+    months = [f"2026-{m:02d}" for m in range(1, 13)] + [f"2027-{m:02d}" for m in (1, 2, 3)]
+    drifted = {"2026-05", "2026-06", "2027-02", "2027-03"}
+    history = {m: [2, 2, 2, 2] if m in drifted else [1, 2, 1, 2] for m in months}
+    cfg = config(max_periods=5, baseline={"kind": "fixed", "start": "2026-01", "end": "2026-04"}, notify=True)
+    store = MemoryStore()
+    seen: dict[str, list[tuple[str, str, str, bool]]] = {}
+    events: dict[str, dict[str, str]] = {}
+    for count in range(5, len(months) + 1):
+        found, _ = results_of(rows_of({m: history[m] for m in months[:count]}), cfg, store)
+        for kind, items in found.tables.items():
+            store.tables[kind] = merge_rows(kind, store.tables.get(kind, []), items)
+        mine = [a for a in store.tables["alerts"] if a["metric"] == "psi" and a["kind"] == "persistence"]
+        seen[months[count - 1]] = sorted(
+            (a["opened_period"], a["state"], a["closed_period"], bool(a["recurrence"])) for a in mine
+        )
+        events[months[count - 1]] = {e.details["alert_id"]: e.details["transition"] for e in found.notifications}
+    first = ("2026-06", "closed", "2026-09", False)
+    assert seen["2026-09"] == [first]
+    assert seen["2026-10"] == [first]  # its opening left the window: it stays closed, never superseded
+    assert seen["2027-03"] == [first, ("2027-03", "open", "", True)]  # 6 periods after the close <= recurrence 12
+    reopened = next(
+        a
+        for a in store.tables["alerts"]
+        if a["metric"] == "psi" and a["kind"] == "persistence" and a["opened_period"] == "2027-03"
+    )
+    assert events["2027-03"][reopened["alert_id"]] == "recurred"
+    assert not [a for a in store.tables["alerts"] if a["state"] == "superseded"]
+
+
+def test_closed_alert_inside_the_window_is_superseded_when_the_judgment_changes() -> None:
+    history = {A: [1, 2, 1, 2], B: [2, 2, 2, 2], C: [2, 2, 2, 2], "2026-04": [1, 2, 1, 2], "2026-05": [1, 2, 1, 2]}
+    history |= {"2026-06": [1, 2, 1, 2], "2026-07": [1, 2, 1, 2]}
+    rows = rows_of(history)
+    baseline = {"kind": "fixed", "start": A, "end": A}
+    store = MemoryStore()
+    found, _ = results_of(rows, config(max_periods=7, baseline=baseline), store)
+    for kind, items in found.tables.items():
+        store.tables[kind] = merge_rows(kind, store.tables.get(kind, []), items)
+    assert [a["state"] for a in store.tables["alerts"] if a["metric"] == "psi" and a["column"] == "x"] == ["closed"]
+    relaxed = config(max_periods=7, baseline=baseline, persistence={"red": 5, "yellow": 5})
+    again, _ = results_of(rows, relaxed, store)
+    states = [a["state"] for a in again.tables["alerts"] if a["metric"] == "psi" and a["column"] == "x"]
+    assert states == ["superseded"]
+
+
 class _SpyStore(MemoryStore):
     """A MemoryStore that records the filters of every read and the rows it returned."""
 
