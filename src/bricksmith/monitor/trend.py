@@ -6,13 +6,19 @@ to x = k. The current residual is standardized by the prediction standard error
 quantiles at ``k - 2`` degrees of freedom; only the side the direction calls worse counts. ``yellow`` and ``red``
 are sigma-equivalents: each maps to the normal tail probability it implies, and the critical value is the
 Student-t quantile of that tail. A residual within the practical-significance floor is never yellow or red.
+
+``fit`` chooses the line: ``ols`` (the default), ``theil_sen`` (median of the pairwise slopes, resistant to outliers
+in the history) or ``huber`` (iteratively reweighted least squares with Huber weights). ``scale`` chooses the residual
+scale: ``std`` (residual standard deviation, ``k - 2`` degrees of freedom) or ``mad`` (1.4826 times the median
+absolute deviation of the residuals). ``exclude`` says which judged values stay out of the history the caller keeps:
+:func:`keeps` is the one rule.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from statistics import NormalDist
+from statistics import NormalDist, median
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.errors import MonitorError
@@ -24,6 +30,12 @@ if TYPE_CHECKING:
 INSUFFICIENT_HISTORY = "insufficient_history"
 MIN_FIT_POINTS = 3
 TRANSFORMS = ("none", "log")
+FITS = ("ols", "theil_sen", "huber")
+SCALES = ("std", "mad")
+EXCLUDES = ("red", "flagged", "none")
+_MAD_FACTOR = 1.4826
+_HUBER_C = 1.345
+_HUBER_ITERATIONS = 100
 _NORMAL = NormalDist()
 _LARGE_DF = 100_000
 _BETA_ITERATIONS = 300
@@ -118,6 +130,9 @@ class TrendPolicy:
     min_abs_change: float = 0.0
     min_rel_change: float = 0.01
     transform: str = "none"
+    fit: str = "ols"
+    scale: str = "std"
+    exclude: str = "red"
 
     def __post_init__(self) -> None:
         """Validate sizes and thresholds."""
@@ -133,14 +148,25 @@ class TrendPolicy:
         if self.transform not in TRANSFORMS:
             msg = f"trend transform must be one of {', '.join(TRANSFORMS)}"
             raise MonitorError(msg)
+        for name, value, allowed in (
+            ("fit", self.fit, FITS),
+            ("scale", self.scale, SCALES),
+            ("exclude", self.exclude, EXCLUDES),
+        ):
+            if value not in allowed:
+                msg = f"trend {name} must be one of {', '.join(allowed)}"
+                raise MonitorError(msg)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the serializable form."""
         return {
+            "exclude": self.exclude,
+            "fit": self.fit,
             "min_abs_change": self.min_abs_change,
             "min_points": self.min_points,
             "min_rel_change": self.min_rel_change,
             "red": self.red,
+            "scale": self.scale,
             "transform": self.transform,
             "window": self.window,
             "yellow": self.yellow,
@@ -151,8 +177,8 @@ class TrendPolicy:
         """Build a policy from a mapping, rejecting unknown keys."""
         if not isinstance(data, dict) or set(data) - set(cls.__dataclass_fields__):
             msg = (
-                "trend takes window, min_points, yellow, red, min_abs_change, min_rel_change and transform; "
-                f"got {data!r}"
+                "trend takes window, min_points, yellow, red, min_abs_change, min_rel_change, transform, "
+                f"fit, scale and exclude; got {data!r}"
             )
             raise MonitorError(msg)
         try:
@@ -164,6 +190,9 @@ class TrendPolicy:
                 min_abs_change=float(data.get("min_abs_change", 0.0)),
                 min_rel_change=float(data.get("min_rel_change", 0.01)),
                 transform=str(data.get("transform", "none")),
+                fit=str(data.get("fit", "ols")),
+                scale=str(data.get("scale", "std")),
+                exclude=str(data.get("exclude", "red")),
             )
         except (TypeError, ValueError):
             msg = f"trend values must be numbers, got {data!r}"
@@ -201,17 +230,72 @@ class Trend:
         }
 
 
-def _fit(ys: Sequence[float]) -> tuple[float, float, float, float, float]:
-    """Return ``(slope, intercept, residual sigma, x_mean, Sxx)`` of the OLS line through ``(i, ys[i])``."""
+def _mad(values: Sequence[float]) -> float:
+    """Return the consistent median absolute deviation (a standard-deviation estimate)."""
+    centre = median(values)
+    return _MAD_FACTOR * median([abs(v - centre) for v in values])
+
+
+def _theil_sen(ys: Sequence[float]) -> tuple[float, float]:
+    """Return ``(slope, intercept)``: the median pairwise slope and the median intercept through it."""
+    k = len(ys)
+    slope = median([(ys[j] - ys[i]) / (j - i) for i in range(k) for j in range(i + 1, k)])
+    return slope, median([y - slope * i for i, y in enumerate(ys)])
+
+
+def _weighted_line(ys: Sequence[float], weights: Sequence[float]) -> tuple[float, float]:
+    total = sum(weights)
+    x_mean = sum(w * i for i, w in enumerate(weights)) / total
+    y_mean = sum(w * y for w, y in zip(weights, ys, strict=True)) / total
+    sxx = sum(w * (i - x_mean) ** 2 for i, w in enumerate(weights))
+    sxy = sum(w * (i - x_mean) * (y - y_mean) for i, (w, y) in enumerate(zip(weights, ys, strict=True)))
+    slope = sxy / sxx
+    return slope, y_mean - slope * x_mean
+
+
+def _huber(ys: Sequence[float]) -> tuple[float, float]:
+    """Return ``(slope, intercept)`` by Huber-weighted least squares, started at the Theil-Sen line."""
+    slope, intercept = _theil_sen(ys)
+    for _ in range(_HUBER_ITERATIONS):
+        residuals = [y - (intercept + slope * i) for i, y in enumerate(ys)]
+        scale = _mad(residuals)
+        if scale <= 1e-12 * max(1.0, *(abs(y) for y in ys)):
+            break
+        bound = _HUBER_C * scale
+        weights = [1.0 if abs(r) <= bound else bound / abs(r) for r in residuals]
+        new_slope, new_intercept = _weighted_line(ys, weights)
+        done = abs(new_slope - slope) <= 1e-12 * max(1.0, abs(slope))
+        slope, intercept = new_slope, new_intercept
+        if done:
+            break
+    return slope, intercept
+
+
+def _fit(ys: Sequence[float], fit: str = "ols", scale: str = "std") -> tuple[float, float, float, float, float]:
+    """Return ``(slope, intercept, residual sigma, x_mean, Sxx)`` of the line through ``(i, ys[i])``."""
     k = len(ys)
     x_mean = (k - 1) / 2
-    y_mean = sum(ys) / k
     sxx = sum((i - x_mean) ** 2 for i in range(k))
-    sxy = sum((i - x_mean) * (y - y_mean) for i, y in enumerate(ys))
-    slope = sxy / sxx
-    intercept = y_mean - slope * x_mean
-    sse = sum((y - (intercept + slope * i)) ** 2 for i, y in enumerate(ys))
-    return slope, intercept, math.sqrt(sse / (k - 2)), x_mean, sxx
+    if fit == "theil_sen":
+        slope, intercept = _theil_sen(ys)
+    elif fit == "huber":
+        slope, intercept = _huber(ys)
+    else:
+        y_mean = sum(ys) / k
+        sxy = sum((i - x_mean) * (y - y_mean) for i, y in enumerate(ys))
+        slope = sxy / sxx
+        intercept = y_mean - slope * x_mean
+    residuals = [y - (intercept + slope * i) for i, y in enumerate(ys)]
+    sigma = _mad(residuals) if scale == "mad" else math.sqrt(sum(r * r for r in residuals) / (k - 2))
+    return slope, intercept, sigma, x_mean, sxx
+
+
+def keeps(policy: TrendPolicy, light: str, trend: str) -> bool:
+    """Tell whether a judged value joins the history: ``red`` drops red lights or trends, ``flagged`` also yellow."""
+    if policy.exclude == "none":
+        return True
+    bad = {RED} if policy.exclude == "red" else {RED, YELLOW}
+    return light not in bad and trend not in bad
 
 
 def _forward(value: float, transform: str) -> float:
@@ -242,7 +326,7 @@ def trend_check(
         return Trend(INSUFFICIENT_HISTORY, points=len(points))
     ys = [_forward(v, rule.transform) for v in points]
     k = len(ys)
-    slope, intercept, s, x_mean, sxx = _fit(ys)
+    slope, intercept, s, x_mean, sxx = _fit(ys, rule.fit, rule.scale)
     fitted = intercept + slope * k
     expected = _back(fitted, rule.transform)
     leverage = math.sqrt(1.0 + 1.0 / k + (k - x_mean) ** 2 / sxx)
@@ -274,4 +358,4 @@ def trend_check(
     return Trend(status, expected, z, slope, k, se, lower, upper)
 
 
-__all__ = ["INSUFFICIENT_HISTORY", "Trend", "TrendPolicy", "critical_value", "t_cdf", "t_ppf", "trend_check"]
+__all__ = ["INSUFFICIENT_HISTORY", "Trend", "TrendPolicy", "critical_value", "keeps", "t_cdf", "t_ppf", "trend_check"]

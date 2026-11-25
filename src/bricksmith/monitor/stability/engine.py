@@ -19,7 +19,16 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import COLORS, RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
-from bricksmith.monitor.stability.config import ESCALATED, FIXED, OPENED, PREVIOUS, RECURRED, ROLLING
+from bricksmith.monitor.stability.config import (
+    ESCALATED,
+    FIXED,
+    OPENED,
+    PREVIOUS,
+    PSI,
+    RECURRED,
+    ROLLING,
+    VOLUME_CHANGE,
+)
 from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
@@ -35,6 +44,7 @@ from bricksmith.monitor.stability.tables import (
     RUNS,
     SCHEMAS,
 )
+from bricksmith.monitor.trend import keeps
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -361,9 +371,33 @@ def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
             continue
         if value is None or not math.isfinite(float(value)):
             continue
+        if not keeps(policy, str(row.get("status") or ""), str(row.get("trend_status") or "")):
+            continue
         key = (str(row.get("segment") or ""), str(row.get("column") or ""), str(row["metric"]))
         series.setdefault(key, []).append((str(row["period"]), float(value)))
     return {key: [v for _, v in sorted(points)] for key, points in series.items()}
+
+
+def _red_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
+    config: StabilityConfig,
+    store: Store,
+    periods: Sequence[str],
+    window: Sequence[str],
+    *,
+    dataset: str,
+    version: int,
+) -> dict[str, set[str]]:
+    """Return, per segment, the stored periods before the window whose ``volume_change`` or ``psi`` was red."""
+    if config.baseline.exclude != "red" or config.baseline.kind == FIXED or not window:
+        return {}
+    before = [p for p in periods if p < window[0]][-_history_span(config) :]
+    if not before:
+        return {}
+    found: dict[str, set[str]] = {}
+    for row in store.rows(RESULTS, dataset, version=version, periods=before):
+        if row.get("status") == RED and row.get("metric") in (VOLUME_CHANGE, PSI):
+            found.setdefault(str(row.get("segment") or ""), set()).add(str(row["period"]))
+    return found
 
 
 def _counts(results: Sequence[Mapping[str, Any]], periods: Collection[str]) -> dict[str, int]:
@@ -705,6 +739,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
         emptied=vanished,
         trend_seed=_trend_seed(config, store, periods, window, dataset=dataset, version=binning.version),
+        red_seed=_red_seed(config, store, periods, window, dataset=dataset, version=binning.version),
     )  # fmt: skip
     revision_rows = (
         _revisions(
