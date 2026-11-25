@@ -60,3 +60,21 @@ def test_valid_epsilon_is_kept() -> None:
     assert parse_config(BASE).epsilon == pytest.approx(1e-4)
     assert parse_config({**BASE, "epsilon": 1e-6}).epsilon == pytest.approx(1e-6)
     assert parse_config({**BASE, "epsilon": "0.001"}).epsilon == pytest.approx(1e-3)
+
+
+def test_sample_size_options_default_and_validate() -> None:
+    config = parse_config(BASE)
+    assert (config.psi_limits, config.min_rows_per_bin, config.psi_smoothing) == ("sample_size", 10, "epsilon")
+    assert "psi_limits" not in config.to_dict()  # defaults keep the serialized form
+    custom = parse_config({**BASE, "psi_limits": "fixed", "min_rows_per_bin": 0, "psi_smoothing": "laplace"})
+    assert (custom.psi_limits, custom.min_rows_per_bin, custom.psi_smoothing) == ("fixed", 0, "laplace")
+    assert custom.to_dict()["psi_limits"] == "fixed"
+    assert custom.to_dict()["psi_smoothing"] == "laplace"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"), [("psi_limits", "relative"), ("psi_smoothing", "bayes"), ("min_rows_per_bin", -1)]
+)
+def test_invalid_sample_size_options_fail_at_plan(key: str, value: object) -> None:
+    with pytest.raises(MonitorError, match=f"stability: {key} must be"):
+        parse_config({**BASE, key: value})

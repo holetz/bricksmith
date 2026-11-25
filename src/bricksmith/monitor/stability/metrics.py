@@ -16,30 +16,46 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN
-from bricksmith.monitor.limits import COLORS, GREEN, INFORMATIONAL, NO_RULE, RED, YELLOW, Light, classify, rank
+from bricksmith.monitor.limits import (
+    COLORS,
+    GREEN,
+    HIGHER,
+    INFORMATIONAL,
+    NO_RULE,
+    RED,
+    YELLOW,
+    Light,
+    Limits,
+    classify,
+    rank,
+)
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, WARNING, AlertSpan, PersistencePolicy, alert_spans
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
 from bricksmith.monitor.stability.config import (
     DISTRIBUTION_METRICS,
     FIXED,
+    LAPLACE,
     MEAN,
     MEAN_SHIFT,
     NULL_RATE,
     NULL_RATE_DELTA,
     PREVIOUS,
     PSI,
+    REVISION_PSI,
     ROW_COUNT,
+    SAMPLE_SIZE,
     UNSEEN_RATE,
     UNSEEN_RATE_DELTA,
     VOLUME_CHANGE,
     WEIGHT_CHANGE,
 )
 from bricksmith.monitor.stability.profile import fit_periods_of, period_date, segment_label
-from bricksmith.monitor.stats import psi_terms
+from bricksmith.monitor.stats import chi2_ppf, psi_terms
 from bricksmith.monitor.trend import keeps, trend_check
 
 if TYPE_CHECKING:
@@ -52,6 +68,12 @@ OUTSIDE = frozenset({UNSEEN, BELOW, ABOVE})
 TABLE = ""
 PERSISTENCE = "persistence"
 TREND = "trend"
+
+#: Significance of the yellow and red sampling-noise floors of a PSI (``psi_limits: sample_size``).
+YELLOW_ALPHA = 0.05
+RED_ALPHA = 0.01
+PSI_METRICS = frozenset({PSI, REVISION_PSI})
+LAPLACE_COUNT = 1.0
 
 type Slot = tuple[int, float, float, float]  # count, weight, value sum, value sum of squares
 type Key = tuple[str, str, str]  # segment, column, metric
@@ -161,6 +183,51 @@ class _Context:
     red_periods: dict[str, set[str]] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class Sample:
+    """The sizes a distribution metric rests on: current rows, baseline rows and the bins they are spread over."""
+
+    current: float
+    baseline: float
+    bins: int
+
+
+def sample_of(current: Mapping[str, Sequence[float]], baseline: Mapping[str, Sequence[float]]) -> Sample:
+    """Return the :class:`Sample` of two bin maps (unweighted counts: sampling noise depends on rows)."""
+    return Sample(sum(s[0] for s in current.values()), sum(s[0] for s in baseline.values()), len({*current, *baseline}))
+
+
+def smoothing_of(config: StabilityConfig) -> float:
+    """Return the pseudo-count added to every bin of a PSI (``0`` unless ``psi_smoothing: laplace``)."""
+    return LAPLACE_COUNT if config.psi_smoothing == LAPLACE else 0.0
+
+
+@lru_cache(maxsize=256)
+def _chi2(bins: int, alpha: float) -> float:
+    return chi2_ppf(1 - alpha, bins - 1)
+
+
+def effective_limits(
+    config: StabilityConfig, metric: str, limits: Limits | None, sample: Sample | None
+) -> Limits | None:
+    """Return ``limits`` raised to the sampling-noise floor of ``sample`` for a PSI under ``psi_limits: sample_size``.
+
+    A PSI between two samples of the same population is about ``chi2(bins - 1) * (1/n + 1/m)``, so a limit below
+    that is crossed by noise alone. The floor never lowers a declared limit.
+    """
+    if (
+        limits is None or sample is None or config.psi_limits != SAMPLE_SIZE or metric not in PSI_METRICS
+        or limits.direction != HIGHER or sample.bins < 2 or sample.current <= 0 or sample.baseline <= 0  # noqa: PLR2004
+    ):  # fmt: skip
+        return limits
+    scale = 1 / sample.current + 1 / sample.baseline
+    return replace(
+        limits,
+        green=max(limits.green, _chi2(sample.bins, YELLOW_ALPHA) * scale),
+        red=max(limits.red, _chi2(sample.bins, RED_ALPHA) * scale),
+    )
+
+
 def _result(  # noqa: PLR0913 - one keyword per result field
     ctx: _Context,
     *,
@@ -175,11 +242,13 @@ def _result(  # noqa: PLR0913 - one keyword per result field
     rows: int = 0,
     baseline_rows: float | None = None,
     in_baseline: bool = False,
+    sample: Sample | None = None,
 ) -> dict[str, Any]:
     found = ctx.config.resolve(
         dataset=ctx.dataset, column=column, segment=segment, metric=metric, period_date=period_date(period)
     )
     limits = None if found.informational else ctx.config.limits_of(found, metric, column)
+    limits = effective_limits(ctx.config, metric, limits, sample)
     if found.informational and light.status in (*COLORS, NO_RULE):
         light = Light(INFORMATIONAL, INFORMATIONAL_REASON)
     row: dict[str, Any] = {
@@ -237,20 +306,24 @@ def _judge(  # noqa: PLR0913 - the metric and its suppression inputs
     rows: int,
     has_baseline: bool,
     reason: str = "",
+    sample: Sample | None = None,
 ) -> Light:
     period, segment = where
     found = ctx.config.resolve(
         dataset=ctx.dataset, column=column, segment=segment, metric=metric, period_date=period_date(period)
     )
-    limits = ctx.config.limits_of(found, metric, column)
+    limits = effective_limits(ctx.config, metric, ctx.config.limits_of(found, metric, column), sample)
     needs_volume = metric in DISTRIBUTION_METRICS
+    min_count = ctx.config.min_rows
+    if needs_volume and sample is not None:
+        min_count = max(min_count, math.ceil(ctx.config.min_rows_per_bin * sample.bins))
     if not has_baseline and value is None:
         value = 0.0  # nothing to compare with: let ``no_baseline`` (or too few rows) explain the gap
     return classify(
         value,
         limits,
         count=rows if needs_volume else None,
-        min_count=ctx.config.min_rows,
+        min_count=min_count,
         has_baseline=has_baseline,
         reason=reason,
     )
@@ -396,9 +469,11 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
     cur = _stats(current_bins, numeric=numeric)
     base = _stats(base_bins, numeric=numeric) if has_base else None
     psi_value = _psi(ctx, out, (period, segment, column), current_bins, base_bins if has_base else {})
+    sample = sample_of(current_bins, base_bins if has_base else {})
+    common["sample"] = sample
     results = [
         _result(ctx, metric=PSI, value=psi_value, light=_judge(
-            ctx, PSI, column, psi_value, where=where, rows=rows, has_baseline=has_base), **common),
+            ctx, PSI, column, psi_value, where=where, rows=rows, has_baseline=has_base, sample=sample), **common),
         _result(ctx, metric=NULL_RATE, value=cur.null_rate, current=cur.null_rate,
                 baseline=base.null_rate if base else None, light=_judge(
             ctx, NULL_RATE, column, cur.null_rate, where=where, rows=rows, has_baseline=True), **common),
@@ -414,7 +489,9 @@ def _column_results(  # noqa: PLR0913, PLR0917 - the period's full context
                     light=_judge(ctx, MEAN, column, cur.mean, where=where, rows=rows, has_baseline=True), **common)
         )  # fmt: skip
         shift, reason = _shift(cur, base)
-        light = _judge(ctx, MEAN_SHIFT, column, shift, where=where, rows=rows, has_baseline=has_base, reason=reason)
+        light = _judge(
+            ctx, MEAN_SHIFT, column, shift, where=where, rows=rows, has_baseline=has_base, reason=reason, sample=sample
+        )
         results.append(
             _result(ctx, metric=MEAN_SHIFT, value=shift, current=cur.mean, baseline=base.mean if base else None,
                     light=light, **common)
@@ -433,7 +510,10 @@ def _delta(  # noqa: PLR0913, PLR0917 - the metric and its context
 ) -> dict[str, Any]:
     value = current - baseline if baseline is not None else None
     where = (common["period"], common["segment"])
-    light = _judge(ctx, metric, common["column"], value, where=where, rows=rows, has_baseline=has_base)
+    light = _judge(
+        ctx, metric, common["column"], value, where=where, rows=rows, has_baseline=has_base,
+        sample=common.get("sample"),
+    )  # fmt: skip
     return _result(ctx, metric=metric, value=value, current=current, baseline=baseline, light=light, **common)
 
 
@@ -453,6 +533,7 @@ def _psi(
     baseline: Mapping[str, Sequence[float]],
 ) -> float | None:
     basis = 1 if ctx.config.weight else 0
+    smoothing = smoothing_of(ctx.config)
     cur = {b: float(s[basis]) for b, s in current.items()}
     total = sum(cur.values())
     base = {b: float(s[basis]) for b, s in baseline.items()}
@@ -460,7 +541,7 @@ def _psi(
         for b, value in cur.items():
             out.shares[(*key, b)] = (value / total if total > 0 else 0.0, None, None)
         return None
-    terms = psi_terms(base, cur, ctx.config.epsilon)  # type: ignore[arg-type] - weights are floats
+    terms = psi_terms(base, cur, ctx.config.epsilon, smoothing)  # type: ignore[arg-type] - weights are floats
     for b, value in cur.items():
         term = terms.get(b)
         out.shares[(*key, b)] = (

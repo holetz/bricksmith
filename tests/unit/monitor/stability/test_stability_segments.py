@@ -23,6 +23,8 @@ DECLARATION = {
     "max_segments": 2,
     "baseline": {"kind": "fixed", "start": "2026-01", "end": "2026-03"},
     "min_rows": 0,
+    "psi_limits": "fixed",
+    "min_rows_per_bin": 0,
     "persistence": {"immediate_red": True},
     "gate": {"fail_on": ["red"]},
 }

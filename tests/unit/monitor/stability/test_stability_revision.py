@@ -76,7 +76,9 @@ def _compare(first_rows: list[dict[str, object]], now_rows: list[dict[str, objec
 
 
 def test_metrics_an_unrevised_period_is_green_and_zero() -> None:
-    config = parse_config({"period": "month", "revision": True, "min_rows": 10})
+    config = parse_config(
+        {"period": "month", "revision": True, "min_rows": 10, "psi_limits": "fixed", "min_rows_per_bin": 0}
+    )
     rows = _month("2026-01", 100)
     found = _compare(rows, rows, config)
     assert found[("", "revision_row_change")]["value"] == 0.0
@@ -88,7 +90,9 @@ def test_metrics_an_unrevised_period_is_green_and_zero() -> None:
 
 
 def test_metrics_a_republished_period_reports_changed_rows_psi_and_value_delta() -> None:
-    config = parse_config({"period": "month", "revision": True, "min_rows": 10})
+    config = parse_config(
+        {"period": "month", "revision": True, "min_rows": 10, "psi_limits": "fixed", "min_rows_per_bin": 0}
+    )
     found = _compare(_month("2026-01", 100), _month("2026-01", 150, shift=8.0), config)
     assert found[("", "revision_row_change")]["value"] == pytest.approx(0.5)
     assert found[("", "revision_row_change")]["status"] == "red"
@@ -123,7 +127,16 @@ def _rows(months: int, *, republished: bool = False) -> list[dict[str, object]]:
 
 
 def _check(rows: list[dict[str, object]], store: MemoryStore, run_id: str, **declared: object) -> CheckResult:
-    config = parse_config({"period": "month", "min_rows": 10, "refresh_periods": 2, **declared})
+    config = parse_config(
+        {
+            "period": "month",
+            "min_rows": 10,
+            "psi_limits": "fixed",
+            "min_rows_per_bin": 0,
+            "refresh_periods": 2,
+            **declared,
+        }
+    )
     return check(rows, config, store, dataset="orders", run_id=run_id)
 
 
@@ -295,7 +308,13 @@ def _run(root: Path, io: InMemoryTableIO, late: str) -> RunReport:
 
 
 def test_hook_writes_the_revisions_table_only_when_declared(tmp_path: Path) -> None:
-    declared: dict[str, object] = {"period": "month", "min_rows": 10, "refresh_periods": 2}
+    declared: dict[str, object] = {
+        "period": "month",
+        "min_rows": 10,
+        "psi_limits": "fixed",
+        "min_rows_per_bin": 0,
+        "refresh_periods": 2,
+    }
     plain = build_plan(load_graph(_project(tmp_path / "plain", declared)))
     assert not [t for t in plain.entry("main.sales.orders").targets if t.physical.endswith("revisions")]
     root = _project(tmp_path / "rev", {**declared, "revision": True})
@@ -318,7 +337,14 @@ def _cli_check(tmp_path: Path, rows: list[dict[str, object]], state: Path, *, re
     data = tmp_path / "orders.jsonl"
     data.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     config = tmp_path / "config.json"
-    declared = {"period": "month", "min_rows": 10, "refresh_periods": 2, "revision": revision}
+    declared = {
+        "period": "month",
+        "min_rows": 10,
+        "psi_limits": "fixed",
+        "min_rows_per_bin": 0,
+        "refresh_periods": 2,
+        "revision": revision,
+    }
     config.write_text(json.dumps(declared), encoding="utf-8")
     args = ["stability", "check", "--config", str(config), "--data", str(data), "--state", str(state)]
     main([*args, "--dataset", "orders", "--json"])
