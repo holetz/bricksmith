@@ -315,6 +315,7 @@ def digest_event(  # noqa: PLR0913 - one keyword per event field
     run_id: str,
     occurred_at: str,
     top: int,
+    meta: Mapping[str, str] | None = None,
 ) -> AlertEvent:
     """Collapse the per-alert ``events`` of one run into one message listing the incident and its top causes.
 
@@ -350,6 +351,7 @@ def digest_event(  # noqa: PLR0913 - one keyword per event field
             "incident_id": incident.incident_id if incident else "",
             "segments": segments,
             "transitions": sorted({str(e.details.get("transition")) for e in events}),
+            **(meta or {}),
         },
     )
 

@@ -60,7 +60,7 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "severity_rank": "INT", "state": "STRING", "opened_period": "STRING", "escalated_period": "STRING",
         "closed_period": "STRING", "last_period": "STRING", "last_status": "STRING", "last_value": "DOUBLE",
         "flagged_periods": "INT", "recurrence": "BOOLEAN", "message": "STRING", "run_id": "STRING",
-        "updated_at": "STRING",
+        "updated_at": "STRING", "upstream": "STRING",
     },
     ACTIONS: {
         "action_id": "STRING", "dataset": "STRING", "alert_id": "STRING", "action": "STRING",
@@ -92,7 +92,8 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
         "red": "INT", "yellow": "INT", "open_alerts": "INT", "critical_alerts": "INT", "message": "STRING",
         "judgment_fingerprint": "STRING", "started_at": "STRING", "finished_at": "STRING",
-        "periods_reprocessed": "STRING",
+        "periods_reprocessed": "STRING", "owner": "STRING", "domain": "STRING", "criticality": "STRING",
+        "severity_score": "DOUBLE", "upstream": "STRING",
     },
 }  # fmt: skip
 KEYS: dict[str, tuple[str, ...]] = {
@@ -238,6 +239,8 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
     human action and the ``effective_state`` it gives. ``<prefix>actions_latest``, ``<prefix>alert_response`` and
     ``<prefix>response_summary`` hold the actions and the time to first action and to close;
     ``<prefix>false_positive_rate`` counts the closures typed ``false_positive`` per rule.
+    ``<prefix>datasets`` is the dimension of the latest run per dataset: owner, domain, criticality, severity score
+    and the upstream origin, to filter dashboards by responsibility.
     """
     results = table_name(scope, prefix, RESULTS)
     alerts = table_name(scope, prefix, ALERTS)
@@ -311,7 +314,14 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
         f"  ON a.dataset = r.dataset AND a.segment = r.segment AND a.`column` = r.`column` AND a.metric = r.metric\n"
         f"WHERE l.action = 'closed' AND r.rule_id IS NOT NULL GROUP BY r.rule_id"
     )
-    return [latest, status, actions_latest, open_alerts, alert_response, response_summary, false_positives]
+    runs = table_name(scope, prefix, RUNS)
+    datasets = (
+        f"CREATE OR REPLACE VIEW {table_name(scope, prefix, 'datasets')} AS\n"
+        f"SELECT dataset, owner, domain, criticality, severity_score, upstream, latest_period, status FROM (\n"
+        f"  SELECT r.*, row_number() OVER (PARTITION BY dataset ORDER BY finished_at DESC, run_id DESC) AS rn\n"
+        f"  FROM {runs} r) WHERE rn = 1"
+    )
+    return [latest, status, actions_latest, open_alerts, alert_response, response_summary, false_positives, datasets]
 
 
 __all__ = [

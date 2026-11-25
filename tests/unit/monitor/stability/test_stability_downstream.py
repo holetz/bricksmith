@@ -7,7 +7,9 @@ import pytest
 
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.stability.config import CRITICALITY_WEIGHTS, parse_config
+from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
 from bricksmith.monitor.stability.incident import Upstream, build_incident, upstream_origin
+from bricksmith.monitor.stability.tables import SCHEMAS, merge_rows, view_statements
 
 
 def test_declaration_of_ownership_and_suppression() -> None:
@@ -85,3 +87,63 @@ def test_upstream_match_needs_the_same_period_and_picks_the_first_origin() -> No
     assert upstream_origin(records, "2026-04") == "raw_a"
     assert upstream_origin(records, "2026-05") == ""
     assert upstream_origin([], "2026-04") == ""
+
+
+def _wide_rows(months: int, broken: int) -> list[dict[str, object]]:
+    rows = []
+    for m in range(months):
+        for i in range(60):
+            row: dict[str, object] = {"month": f"2026-{m + 1:02d}"}
+            for c in range(6):
+                row[f"c{c}"] = float(i % 20 + (80 if m >= 2 and c < broken else 0))
+            rows.append(row)
+    return rows
+
+
+def _run(
+    dataset: str, rows: list[dict[str, object]], upstream: list[Upstream] | None = None, **declared: object
+) -> CheckResult:
+    config = parse_config({"period": "month", "persistence": {"immediate_red": True}, "notify": True, **declared})
+    return check(rows, config, MemoryStore(), dataset=dataset, run_id="r1", upstream=upstream or [])
+
+
+def test_a_broken_source_notifies_and_its_downstream_is_labeled_and_silent() -> None:
+    source = _run("raw", _wide_rows(4, 3), owner="ingest", domain="sales", criticality="high")
+    assert source.incident is not None and source.notifications and source.outcome.red
+    assert source.outcome.upstream == "" and all(e.details["owner"] == "ingest" for e in source.notifications)
+    assert {e.details["criticality"] for e in source.notifications} == {"high"}
+    seen = [Upstream("raw", source.incident.period, "raw")]
+    derived = _run("orders", _wide_rows(4, 3), seen, owner="sales-team")
+    assert derived.incident is not None and derived.incident.upstream == "raw"
+    assert derived.notifications == [] and derived.outcome.silenced > 0 and derived.outcome.upstream == "raw"
+    assert "caused upstream by raw" in derived.outcome.message and derived.outcome.to_dict()["upstream"] == "raw"
+    opened = [r for r in derived.tables["alerts"] if r["state"] == "open"]
+    assert opened and {r["upstream"] for r in opened} == {"raw"} and derived.tables["results"]  # stored, never dropped
+    assert derived.tables["runs"][0]["upstream"] == "raw" and derived.tables["runs"][0]["owner"] == "sales-team"
+
+
+def test_downstream_notifies_when_suppression_is_off_or_the_period_differs() -> None:
+    seen = [Upstream("raw", "2026-04", "raw")]
+    kept = _run("orders", _wide_rows(4, 3), seen, suppress_downstream=False)
+    assert kept.notifications and kept.incident is not None and kept.incident.upstream == "raw"
+    assert all(e.details["upstream"] == "raw" for e in kept.notifications) and kept.outcome.silenced == 0
+    other = _run("orders", _wide_rows(4, 3), [Upstream("raw", "2026-03", "raw")])
+    assert other.notifications and other.outcome.upstream == "" and other.incident is not None
+    assert other.incident.upstream == ""
+
+
+def test_a_downstream_digest_is_silenced_too_and_a_healthy_table_is_never_labeled() -> None:
+    seen = [Upstream("raw", "2026-04", "raw")]
+    assert _run("orders", _wide_rows(4, 3), seen, notify={"digest": True}).notifications == []
+    healthy = _run("orders", _wide_rows(4, 0), seen)
+    assert healthy.incident is None and healthy.outcome.upstream == "" and healthy.tables["runs"][0]["upstream"] == ""
+
+
+def test_run_rows_carry_ownership_and_the_severity_score_and_the_view_exposes_it() -> None:
+    result = _run("raw", _wide_rows(4, 3), owner="ingest", domain="sales", criticality="critical")
+    row = result.tables["runs"][0]
+    assert (row["owner"], row["domain"], row["criticality"]) == ("ingest", "sales", "critical")
+    assert result.incident is not None and row["severity_score"] == result.incident.severity_score > 0
+    stored = merge_rows("runs", [], [row])
+    assert set(stored[0]) == set(SCHEMAS["runs"]) and "upstream" in SCHEMAS["alerts"]
+    assert any("stability_datasets" in v and "criticality" in v for v in view_statements("main.s"))
