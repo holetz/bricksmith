@@ -10,7 +10,7 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from bricksmith.monitor.actions import STATE_ACCEPTED, STATE_CLOSED, apply_actions, latest_actions
@@ -19,10 +19,20 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import COLORS, NO_RULE, RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
+from bricksmith.monitor.stability.cadence import (
+    build_calendar,
+    cadence_results,
+    gap_between,
+    has_cadence,
+    parse_as_of,
+    settling_periods,
+)
 from bricksmith.monitor.stability.config import (
+    CADENCE_METRICS,
     ESCALATED,
     FIXED,
     OPENED,
+    PERIOD_LATE,
     PREVIOUS,
     PSI,
     RECURRED,
@@ -169,7 +179,9 @@ def judgment_fingerprint(config: StabilityConfig, actions: Sequence[Mapping[str,
     data = config.to_dict()
     content = {k: data[k] for k in ("baseline", "column_limits", "limits", "min_rows", "persistence", "trend")}
     content |= {"epsilon": config.epsilon, "trend_metrics": data["trend_metrics"], "weight": config.weight}
-    for optional in ("rules", "revision", "trend_directions"):
+    for optional in (
+        "rules", "revision", "trend_directions", "cadence", "expected_by", "settle_periods", "settle_days",
+    ):  # fmt: skip
         if optional in data:
             content[optional] = data[optional]
     if actions:
@@ -182,6 +194,14 @@ def judgment_fingerprint(config: StabilityConfig, actions: Sequence[Mapping[str,
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _date_of(stamp: str) -> date:
+    """Return the date of an ISO timestamp, or today when ``stamp`` is not one (tests pass labels as ``now``)."""
+    try:
+        return date.fromisoformat(stamp[:10])
+    except ValueError:
+        return parse_as_of(None)
 
 
 def _engine_periods(data: Any, period: str) -> list[str]:  # noqa: ANN401 - rows or DataFrame
@@ -348,6 +368,29 @@ def _plan_periods(
     return window, todo, loaded
 
 
+def _gap_of(cal: Any) -> Any:  # noqa: ANN401 - the cadence calendar or None
+    """Return the ``baseline_gap`` function for ``compute`` (``None`` without a cadence)."""
+    if cal is None:
+        return None
+
+    def gap(wanted: Sequence[str], period: str) -> int:
+        known = [cal.dates[p] for p in wanted if p in cal.dates]
+        return gap_between(cal, min(known), cal.dates[period]) if known and period in cal.dates else 0
+
+    return gap
+
+
+def _trended(config: StabilityConfig, row: Mapping[str, Any]) -> bool:
+    """Tell whether a stored result belongs to a trended series: a colored settled value with a trend direction."""
+    metric = str(row.get("metric") or "")
+    return (
+        metric in config.trend_metrics
+        and row.get("status") in (*COLORS, NO_RULE)
+        and bool(row.get("direction") or config.trend_direction(metric))
+        and not row.get("settling")
+    )
+
+
 def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
     config: StabilityConfig,
     store: Store,
@@ -372,12 +415,7 @@ def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
     series: dict[tuple[str, str, str], dict[str, float]] = {}
     for row in store.rows(RESULTS, dataset, version=version, periods=before):
         value = row.get("value")
-        metric = str(row.get("metric") or "")
-        if metric not in config.trend_metrics or row.get("status") not in (*COLORS, NO_RULE):
-            continue
-        if not (row.get("direction") or config.trend_direction(metric)):
-            continue
-        if value is None or not math.isfinite(float(value)):
+        if not _trended(config, row) or value is None or not math.isfinite(float(value)):
             continue
         if not keeps(
             policy, str(row.get("status") or ""), str(row.get("trend_status") or ""), str(row.get("trend_model") or "")
@@ -730,6 +768,29 @@ def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one
     return snapshot_rows(first, new, run_id=run_id, published_at=now)
 
 
+def _held(
+    alert_rows: list[dict[str, Any]], actions: list[dict[str, Any]], today: str
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """Return the alerts a human accepted or closed, and the rows with that state applied."""
+    human = {
+        str(a["alert_id"]): a["state"]
+        for a in apply_actions(alert_rows, actions, today, "dataset")
+        if a["state"] in (STATE_ACCEPTED, STATE_CLOSED)
+    }
+    return human, [{**r, "state": human[str(r["alert_id"])]} if str(r["alert_id"]) in human else r for r in alert_rows]
+
+
+def _accepted(alert_rows: Sequence[Mapping[str, Any]], human: Mapping[str, str]) -> int:
+    """Count the open alerts a human accepted."""
+    return sum(1 for r in alert_rows if r["state"] == OPEN and human.get(str(r["alert_id"])) == STATE_ACCEPTED)
+
+
+def _rewrites(previous: Sequence[Mapping[str, Any]], judgment: str) -> bool:
+    """Tell whether the whole window is judged again: no earlier run, or its judgment fingerprint differs."""
+    last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
+    return last is None or last.get("judgment_fingerprint") != judgment
+
+
 def check(  # noqa: PLR0913 - one keyword per documented input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -740,18 +801,21 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     task_id: str = "",
     physical: str = "",
     now: str | None = None,
+    as_of: str | date | None = None,
     reprocess: Sequence[str] = (),
     skip_unknown: bool = False,
     data_version: int | None = None,
 ) -> CheckResult:
     """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write.
 
+    ``as_of`` is the date the cadence is judged at (an ISO date); by default the date of ``now``.
     ``reprocess`` names periods rewritten since their stored profile (a backfill or a correction): they are
     profiled again with the declared refresh range, the whole window is judged again and the alerts are replayed.
     An item is a period or a ``first..last`` range; ``skip_unknown`` drops what the data does not have.
     ``data_version`` is the Delta version of the monitored table this run read, stored with the history rows.
     """
     started = now or _now()
+    as_of_date = parse_as_of(as_of) if as_of else _date_of(started)
     periods = _engine_periods(data, config.period)
     if not periods:
         msg = f"stability: {dataset} has no rows with a {config.period!r} period"
@@ -763,6 +827,8 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     stored_profiles = store.rows(
         PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
     )
+    cal = build_calendar(config, periods) if has_cadence(config) else None
+    settling = settling_periods(config, periods, as_of_date, cal)
     window, todo, loaded = _plan_periods(config, binning, periods, {str(r["period"]) for r in stored_profiles}, redo)
     keep = set(loaded) - set(todo)
     fresh = _profile(
@@ -776,7 +842,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     profiles = [r for r in stored_profiles if r["period"] in keep] + fresh + emptied
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
-        emptied=vanished,
+        emptied=vanished, settling=settling, gap=_gap_of(cal),
         trend_seed=_trend_seed(config, store, periods, window, dataset=dataset, version=binning.version),
         score_seed=_score_seed(config, store, periods, window, dataset=dataset, version=binning.version),
         red_seed=_red_seed(config, store, periods, window, dataset=dataset, version=binning.version),
@@ -797,22 +863,27 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         row.update(share=share, baseline_share=base, contribution=contribution)
     actions = store.rows(ACTIONS, dataset)
     judgment = judgment_fingerprint(config, actions)
-    previous = store.rows(RUNS, dataset, version=binning.version)
-    last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
-    rewrite_all = last is None or last.get("judgment_fingerprint") != judgment or bool(redo)
-    emitted = (set(window) if rewrite_all else set(todo) & set(window)) | set(vanished)
-    results = [r for r in computed.results if r["period"] in emitted]
+    rewrite_all = _rewrites(store.rows(RUNS, dataset, version=binning.version), judgment) or bool(redo)
+    cadence_rows = (
+        cadence_results(
+            config, cal, binning=binning, dataset=dataset, as_of=as_of_date, run_id=run_id, computed_at=started,
+            stored=[r for r in store.rows(RESULTS, dataset, version=binning.version, periods=window)
+                    if str(r.get("metric")) in CADENCE_METRICS],
+        )
+        if cal is not None
+        else []
+    )  # fmt: skip
+    emitted = (
+        set(window) if rewrite_all or config.settle_periods or config.settle_days else set(todo) & set(window)
+    ) | set(vanished)
+    results = [r for r in computed.results if r["period"] in emitted] + cadence_rows
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
     alert_rows = alerts(
-        computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
+        [*computed.results, *cadence_rows], config, dataset=dataset, version=binning.version, run_id=run_id,
+        updated_at=started,
         stored=stored_alerts, periods=sorted({*periods, *vanished}), keep_inside=not rewrite_all,
     )  # fmt: skip
-    human = {
-        str(a["alert_id"]): a["state"]
-        for a in apply_actions(alert_rows, actions, started[:10], "dataset")
-        if a["state"] in (STATE_ACCEPTED, STATE_CLOSED)
-    }
-    held = [{**r, "state": human[str(r["alert_id"])]} if str(r["alert_id"]) in human else r for r in alert_rows]
+    human, held = _held(alert_rows, actions, started[:10])
     notifications = alert_events(
         held, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
         occurred_at=started,
@@ -821,18 +892,19 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
     )
     alert_rows += superseded
-    latest = max([window[-1], *vanished])
+    latest = max(
+        [window[-1], *vanished, *(r["period"] for r in cadence_rows if r["metric"] == PERIOD_LATE and r["value"])]
+    )
     judged = {latest} | (set(todo) & set(window) | set(vanished) if config.gate.periods == "profiled" else set())
-    counts = _counts(computed.results, judged)
+    counts = _counts([*computed.results, *cadence_rows], judged)
     open_rows = [r for r in alert_rows if r["state"] == OPEN and str(r["alert_id"]) not in human]
-    accepted = sum(1 for r in alert_rows if r["state"] == OPEN and human.get(str(r["alert_id"])) == STATE_ACCEPTED)
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
     reasons = _gate(config, counts[RED], counts[YELLOW], len(open_rows), critical)
     status = FAILED if reasons else WARNED if counts[RED] + counts[YELLOW] + len(open_rows) else PASSED
     message = (
         f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)"
         + (f" over {len(judged)} periods" if len(judged) > 1 else "")
-        + (f"; {accepted} accepted" if accepted else "")
+        + (f"; {accepted} accepted" if (accepted := _accepted(alert_rows, human)) else "")
         + (f"; reprocessed {', '.join(redo)} ({len(todo)} periods profiled)" if redo else "")
         + (f"; gate failed on {'; '.join(reasons)}" if reasons else "")
     )
