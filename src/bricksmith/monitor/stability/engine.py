@@ -35,6 +35,8 @@ from bricksmith.monitor.stability.schema import (
     Drift,
     Schema,
     diff,
+    live_binning,
+    missing_columns,
     parse_schema,
     rows_schema,
     schema_results,
@@ -581,8 +583,8 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started,
         schema=schema,
     )  # fmt: skip
-    absent: list[str] = []
-    binning, binning_rows, skipped = active.binning, active.rows, active.skipped
+    absent = missing_columns(active.binning, schema)
+    binning, binning_rows, skipped = live_binning(active.binning, absent), active.rows, active.skipped
     stored_profiles = store.rows(
         PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
     )

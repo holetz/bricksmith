@@ -157,6 +157,46 @@ def test_engine_the_run_without_a_stored_fit_schema_compares_with_the_previous_r
     assert change["value"] == 1.0 and change["baseline_label"] == "schema of the previous run"
 
 
+def test_engine_a_dropped_monitored_column_is_reported_not_raised() -> None:
+    store = MemoryStore()
+    declared = {"columns": ["x", "y"]}
+    _commit(store, _check(_rows(3), store, "r1", **declared))
+    result = _check(_rows(3, drop=("y",)), store, "r2", **declared)
+    (missing,) = _metric(result, "missing_column", "y")
+    assert missing["value"] == 1.0 and missing["status"] == "red" and missing["period"] == "2026-03"
+    assert not [r for r in result.tables["results"] if r["column"] == "y" and r["metric"] != "missing_column"]
+    assert not [r for r in result.tables["profiles"] if r["column"] == "y"]
+    assert {r["column"] for r in _metric_rows(result, "psi")} == {"x"}
+    (alert,) = [a for a in result.tables["alerts"] if a["metric"] == "missing_column"]
+    assert alert["severity"] == "critical" and alert["state"] == "open" and alert["column"] == "y"
+    (change,) = _metric(result, "schema_change")
+    assert "dropped: y" in change["reason"]
+
+
+def _metric_rows(result: CheckResult, metric: str) -> list[dict]:
+    return [r for r in result.tables["results"] if r["metric"] == metric]
+
+
+def test_engine_a_returned_column_closes_its_missing_column_alert() -> None:
+    store = MemoryStore()
+    declared = {"columns": ["x", "y"], "persistence": {"close_after": 1}}
+    _commit(store, _check(_rows(3), store, "r1", **declared))
+    _commit(store, _check(_rows(3, drop=("y",)), store, "r2", **declared))
+    back = _check(_rows(3), store, "r3", **declared)
+    (returned,) = _metric(back, "missing_column", "y")
+    assert returned["value"] == 0.0 and returned["status"] == "green"
+    (alert,) = [a for a in back.tables["alerts"] if a["metric"] == "missing_column"]
+    assert alert["state"] == "closed"
+    assert {r["column"] for r in back.tables["profiles"]} == {"x", "y"}
+
+
+def test_engine_every_monitored_column_missing_raises() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows(3), store, "r1", columns=["y"]))
+    with pytest.raises(MonitorError, match="every monitored column is missing"):
+        _check(_rows(3, drop=("y",)), store, "r2", columns=["y"])
+
+
 def test_engine_schema_results_feed_the_gate() -> None:
     store = MemoryStore()
     _commit(store, _check(_rows(3), store, "r1"))
