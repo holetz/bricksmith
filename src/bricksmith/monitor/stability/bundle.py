@@ -3,7 +3,8 @@
 ``databricks-bundles`` (the ``bundle`` extra) is imported inside the functions that need it. Reference
 :func:`load_resources` from ``databricks.yml`` under ``python: resources:`` as
 ``bricksmith.monitor.stability.bundle:load_resources`` and declare the bundle variables ``dataset_catalog``,
-``dataset_schema`` and ``warehouse_id`` per target, or call :func:`stability_dashboard` from a resource function of your own to choose every value.
+``dataset_schema`` and ``warehouse_id`` per target, or call :func:`stability_dashboard` from a resource
+function of your own to choose every value.
 """
 
 from __future__ import annotations
