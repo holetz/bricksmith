@@ -256,14 +256,20 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     run_id: str = "",
     computed_at: str = "",
     emptied: Collection[str] = (),
+    trend_seed: Mapping[Key, Sequence[float]] | None = None,
 ) -> Computed:
     """Compute the result rows of every period of ``window`` and ``emptied`` (in order) from the stored profiles.
 
     An ``emptied`` period is reported like any other, but its zero-count profile is never a baseline period for
     another period: the ``previous`` and ``rolling`` rules skip it and take the next eligible period.
+
+    ``trend_seed`` carries, per ``(segment, column, metric)``, the stored values of the periods just before the
+    window, so a period at the start of a rewritten window is judged with the history it had the first time.
     """
     history = index_profiles(binning, profiles)
     ctx = _Context(config, binning, dataset, run_id, computed_at)
+    for key, values in (trend_seed or {}).items():
+        ctx.trend_history[key] = list(values)
     out = Computed()
     numeric = {s.column: s.kind == "numeric" for s in binning.columns}
     in_window = [p for p in history.periods if p in {*window, *emptied}]
