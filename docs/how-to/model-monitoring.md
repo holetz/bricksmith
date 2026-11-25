@@ -74,7 +74,7 @@ def churn_scores(ctx):
 | `trend`, `trend_metrics` | Trend check `{"window", "min_points", "yellow", "red"}` (default 12, 6, 2, 3; `null` disables) and the metrics it applies to (default `psi`, `ks`, `auc`, `calibration_ratio`). |
 | `persistence` | When alerts open, escalate and close: `{"yellow", "red", "close_after", "immediate_red", "recurrence"}` (default 3, 2, 3, false, 12). |
 | `gate` | `fail_on` (`red`, `yellow`, `critical`, `alert`) and `on_error` (`warn`, the default, or `fail`). |
-| `min_rows`, `max_periods`, `score_bins`, `calibration_bins`, `epsilon` | Volume floor for a light, monitored periods kept (default 24), score bins (default 10), calibration bins, PSI smoothing. |
+| `min_rows`, `max_periods`, `score_bins`, `calibration_bins`, `epsilon` | Volume floor for a light, monitored periods kept (default 24), score bins (default 10), calibration bins, PSI smoothing (`epsilon`, default `1e-4`, a finite number greater than 0). |
 | `scope`, `prefix` | Where the tables live (default: the output's schema) and their name prefix (default `model_monitoring_`). |
 | `credit` | Enables the [credit-model performance checks](#credit-model-performance-checks): probability horizons, grade order, the expected-events gate, early-warning labels and the exclusion column. |
 
