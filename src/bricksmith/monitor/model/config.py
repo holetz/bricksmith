@@ -181,8 +181,9 @@ class Credit:
 
     ``horizon`` is the number of periods the score's probability covers (0: no rescaling); ``label_horizon`` the
     periods the calibration label covers (0: the same as ``horizon``). ``grades`` lists the grades from best to
-    worst (empty: their sorted texts). A grade with fewer than ``min_expected_events`` expected events is not
-    judged. ``correlation`` enables the correlation-adjusted binomial test.
+    worst (empty, or for grades it leaves out: by number when every such grade text is a finite number, else by
+    text). A grade with fewer than ``min_expected_events`` expected events is not judged. ``correlation`` enables
+    the correlation-adjusted binomial test.
     """
 
     horizon: int = 0

@@ -9,6 +9,7 @@ horizon's label column.
 from __future__ import annotations
 
 import dataclasses
+import math
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.adapter import measure
@@ -35,10 +36,27 @@ def segments_of(frame: Frame, segment: str) -> list[tuple[str, Frame]]:
     return [("", frame)] + ([(s, frame.segment(segment, s)) for s in frame.segments(segment)] if segment else [])
 
 
+def _finite(text: str) -> float | None:
+    """Return the grade text as a finite number, or ``None`` when it is not one."""
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
 def grade_order(config: ModelMonitorConfig, present: Sequence[str]) -> list[str]:
-    """Return the grades from best to worst: the declared order, then undeclared grades in text order."""
+    """Return the grades from best to worst: the declared order, then the undeclared grades.
+
+    Undeclared grades are ordered by number when every one of their texts is a finite number (ties by text), else
+    by text.
+    """
     declared = [g for g in config.credit_options.grades if g in present]
-    return declared + sorted(set(present) - set(declared))
+    rest = set(present) - set(declared)
+    numbered = [(_finite(g), g) for g in rest]
+    if all(value is not None for value, _ in numbered):
+        return declared + [g for _, g in sorted(numbered)]
+    return declared + sorted(rest)
 
 
 def _column(config: ModelMonitorConfig, grade: str) -> str:
