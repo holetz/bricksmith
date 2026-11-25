@@ -538,6 +538,9 @@ def _trend(data: dict[str, Any]) -> tuple[TrendPolicy | None, tuple[str, ...]]:
         msg = f"trend_metrics must be a list of metrics among {', '.join(METRICS)}"
         raise _fail(msg)
     policy = None if value in (None, False) else TrendPolicy.from_dict(value or {})
+    if policy and (policy.per != "period" or policy.drift != "none" or policy.change_point):
+        msg = "trend per, drift and change_point belong to the stability monitor; the model monitor takes season"
+        raise _fail(msg)
     return policy, tuple(m for m in METRICS if m in metrics)
 
 

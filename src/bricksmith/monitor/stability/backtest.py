@@ -25,6 +25,7 @@ from bricksmith.monitor.stability.engine import (
     PASSED,
     WARNED,
     _gate,  # pyright: ignore[reportPrivateUsage]
+    _score_seed,  # pyright: ignore[reportPrivateUsage]
     _trend_seed,  # pyright: ignore[reportPrivateUsage]
     judgment_fingerprint,
 )
@@ -335,7 +336,10 @@ def backtest(  # noqa: PLR0913 - one keyword per documented input
         return report
     window = live[-config.max_periods :]
     seed_rows = _trend_seed(config, store, live, window, dataset=dataset, version=binning.version)
-    computed = compute(binning, profiles, config, dataset=dataset, window=window, emptied=emptied, trend_seed=seed_rows)
+    computed = compute(
+        binning, profiles, config, dataset=dataset, window=window, emptied=emptied, trend_seed=seed_rows,
+        score_seed=_score_seed(config, store, live, window, dataset=dataset, version=binning.version),
+    )  # fmt: skip
     actions = store.rows(ACTIONS, dataset)
     judgment = judgment_fingerprint(config, actions)
     runs = store.rows(RUNS, dataset, version=binning.version)

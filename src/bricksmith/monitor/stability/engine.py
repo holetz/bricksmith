@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from bricksmith.monitor.actions import STATE_ACCEPTED, STATE_CLOSED, apply_actions, latest_actions
 from bricksmith.monitor.adapter import is_rows
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import COLORS, RED, YELLOW
+from bricksmith.monitor.limits import COLORS, NO_RULE, RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.stability.cadence import (
@@ -51,7 +51,7 @@ from bricksmith.monitor.stability.incident import (
     digest_event,
     false_positive_rates,
 )
-from bricksmith.monitor.stability.metrics import Context, alerts, compute, counts_in, table_level
+from bricksmith.monitor.stability.metrics import Context, alerts, compute, counts_in, table_level, trend_value
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
 from bricksmith.monitor.stability.schema import (
@@ -457,6 +457,17 @@ def _gap_of(cal: Any) -> Any:  # noqa: ANN401 - the cadence calendar or None
     return gap
 
 
+def _trended(config: StabilityConfig, row: Mapping[str, Any]) -> bool:
+    """Tell whether a stored result belongs to a trended series: a colored settled value with a trend direction."""
+    metric = str(row.get("metric") or "")
+    return (
+        metric in config.trend_metrics
+        and row.get("status") in (*COLORS, NO_RULE)
+        and bool(row.get("direction") or config.trend_direction(metric))
+        and not row.get("settling")
+    )
+
+
 def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
     config: StabilityConfig,
     store: Store,
@@ -466,26 +477,58 @@ def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
     dataset: str,
     version: int,
 ) -> dict[tuple[str, str, str], list[float]]:
-    """Return the stored colored values of the ``trend.window`` periods before the window, per series."""
+    """Return the stored colored values of the periods before the window, per series.
+
+    A series is read over the last ``trend.span`` periods. With a season it keeps one position per period (``NaN`` for
+    a period left out of the history), so the phase of every value survives; ``per: business_day`` seeds ``row_count``
+    per business day, as the judgment sees it.
+    """
     policy = config.trend
     if policy is None or not window:
         return {}
-    before = [p for p in periods if p < window[0]][-policy.window :]
+    before = [p for p in periods if p < window[0]][-policy.span :]
     if not before:
         return {}
-    series: dict[tuple[str, str, str], list[tuple[str, float]]] = {}
+    series: dict[tuple[str, str, str], dict[str, float]] = {}
     for row in store.rows(RESULTS, dataset, version=version, periods=before):
         value = row.get("value")
-        if row.get("metric") not in config.trend_metrics or row.get("status") not in COLORS or not row.get("direction"):
+        if not _trended(config, row) or value is None or not math.isfinite(float(value)):
             continue
-        if row.get("settling"):
+        if not keeps(
+            policy, str(row.get("status") or ""), str(row.get("trend_status") or ""), str(row.get("trend_model") or "")
+        ):
             continue
-        if value is None or not math.isfinite(float(value)):
-            continue
-        if not keeps(policy, str(row.get("status") or ""), str(row.get("trend_status") or "")):
+        seen = trend_value(policy, str(row["metric"]), str(row["period"]), float(value))
+        if seen is None:
             continue
         key = (str(row.get("segment") or ""), str(row.get("column") or ""), str(row["metric"]))
-        series.setdefault(key, []).append((str(row["period"]), float(value)))
+        series.setdefault(key, {})[str(row["period"])] = seen
+    if policy.season:
+        return {key: [points.get(p, math.nan) for p in before] for key, points in series.items()}
+    return {key: [v for _, v in sorted(points.items())] for key, points in series.items()}
+
+
+def _score_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
+    config: StabilityConfig,
+    store: Store,
+    periods: Sequence[str],
+    window: Sequence[str],
+    *,
+    dataset: str,
+    version: int,
+) -> dict[tuple[str, str, str], list[float]]:
+    """Return the stored standardized trend deviations before the window, per series, for the shift detectors."""
+    policy = config.trend
+    if policy is None or (policy.drift == "none" and not policy.change_point) or not window:
+        return {}
+    before = [p for p in periods if p < window[0]][-policy.span :]
+    series: dict[tuple[str, str, str], list[tuple[str, float]]] = {}
+    for row in store.rows(RESULTS, dataset, version=version, periods=before) if before else ():
+        deviation = row.get("trend_deviation")
+        if row.get("metric") not in config.trend_metrics or deviation is None or not math.isfinite(float(deviation)):
+            continue
+        key = (str(row.get("segment") or ""), str(row.get("column") or ""), str(row["metric"]))
+        series.setdefault(key, []).append((str(row["period"]), float(deviation)))
     return {key: [v for _, v in sorted(points)] for key, points in series.items()}
 
 
@@ -1051,6 +1094,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
         emptied=vanished, earlier=earlier, settling=settling, gap=_gap_of(cal),
         trend_seed=_trend_seed(config, store, periods, window, dataset=dataset, version=binning.version),
+        score_seed=_score_seed(config, store, periods, window, dataset=dataset, version=binning.version),
         red_seed=_red_seed(config, store, periods, window, dataset=dataset, version=binning.version),
     )  # fmt: skip
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
