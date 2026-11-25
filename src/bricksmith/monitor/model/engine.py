@@ -1060,7 +1060,7 @@ def _measure_window(ctx: _Context, measurer: _Measurer, jobs: Sequence[tuple[str
     for period in out.periods:
         current = monitored.select(column=config.period, keep={period})
         version = _version(current, config)
-        out.versions.add(version)
+        out.versions.update(version.split(","))
         for family, column in jobs:
             _measure_family(ctx, measurer, (family, column), (period, version, current), (observed, monitored), out)
     return out

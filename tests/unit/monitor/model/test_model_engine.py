@@ -221,6 +221,7 @@ def test_a_lagged_period_scored_by_two_versions_is_stamped_with_both() -> None:
     gini = pick(results, metric="gini", segment="", monitoring_period="2025-08")[0]
     assert gini["data_period"] == "2025-07" and gini["model_version"] == "1,2"
     assert len(pick(results, metric="gini", segment="", monitoring_period="2025-08")) == 1
+    assert run(rows, label_lag=1).tables["runs"][0]["model_version"] == "1,2"
 
 
 def test_errors_when_nothing_can_be_measured() -> None:
