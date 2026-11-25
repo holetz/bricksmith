@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 72" role="img" aria-labelledby="title desc">
+  <title id="title">Project Design System</title>
+  <desc id="desc">A restrained wordmark lockup with one accent rule.</desc>
+  <rect width="360" height="72" fill="#FAFAF9"/>
+  <path d="M16 16h40v40H16z" fill="#0F766E"/>
+  <path d="M25 26h22v4H25zm0 8h16v4H25zm0 8h22v4H25z" fill="#FFFFFF"/>
+  <text x="72" y="34" fill="#1C1917" font-family="Montserrat, Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2">PROJECT</text>
+  <text x="72" y="55" fill="#0F766E" font-family="Montserrat, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="3">DESIGN SYSTEM</text>
+</svg>

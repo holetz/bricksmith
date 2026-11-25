@@ -1,0 +1,10 @@
+{
+  "assets": [
+    {
+      "path": "lockup.svg",
+      "role": "lockup",
+      "ink": "dark",
+      "orientation": "horizontal"
+    }
+  ]
+}
