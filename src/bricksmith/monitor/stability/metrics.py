@@ -33,6 +33,7 @@ from bricksmith.monitor.stability.config import (
     PREVIOUS,
     PSI,
     ROW_COUNT,
+    SCHEMA_METRICS,
     UNSEEN_RATE,
     UNSEEN_RATE_DELTA,
     VOLUME_CHANGE,
@@ -503,6 +504,7 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     statuses: dict[Key, list[tuple[str, str]]] = {}
     trends: dict[Key, list[tuple[str, str]]] = {}
     values: dict[tuple[Key, str], float | None] = {}
+    reasons: dict[tuple[Key, str], str] = {}
     for row in results:
         if row["direction"] == "":
             continue
@@ -510,14 +512,18 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
         statuses.setdefault(key, []).append((row["period"], row["status"]))
         trends.setdefault(key, []).append((row["period"], row["trend_status"] or "skipped"))
         values[(key, row["period"])] = row["value"]
+        reasons[(key, row["period"])] = str(row["reason"] or "")
     persistence = config.persistence
     trend_policy = PersistencePolicy(
         yellow=0, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
     )
+    schema_policy = PersistencePolicy(
+        yellow=1, red=1, close_after=persistence.close_after, immediate_red=True, recurrence=persistence.recurrence
+    )
     out: list[dict[str, Any]] = []
     for key in sorted(statuses):
         for kind, series, policy in (
-            (PERSISTENCE, statuses[key], persistence),
+            (PERSISTENCE, statuses[key], schema_policy if key[2] in SCHEMA_METRICS else persistence),
             (TREND, trends[key], trend_policy),
         ):
             first_period = min((p for p, _ in series), default="")
@@ -552,6 +558,11 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
                     f"{subject} [{segment_label(segment)}] {verb}: {span.severity} since {span.opened}, "
                     f"last {span.last_status} in {span.last_period}"
                     + (f" (value {value:.4g})" if value is not None else "")
+                    + (
+                        f": {why}"
+                        if (why := reasons.get((key, span.last_period), "")) and metric in SCHEMA_METRICS
+                        else ""
+                    )
                 )
                 out.append(
                     {

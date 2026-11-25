@@ -17,10 +17,29 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
-from bricksmith.monitor.stability.config import ESCALATED, FIXED, OPENED, PREVIOUS, RECURRED, ROLLING
-from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
+from bricksmith.monitor.stability.config import (
+    ESCALATED,
+    EXTEND,
+    FIXED,
+    MISSING_COLUMN,
+    OPENED,
+    PREVIOUS,
+    RECURRED,
+    ROLLING,
+    SCHEMA_METRICS,
+)
+from bricksmith.monitor.stability.metrics import Context, alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
+from bricksmith.monitor.stability.schema import (
+    Drift,
+    Schema,
+    diff,
+    parse_schema,
+    rows_schema,
+    schema_results,
+    schema_text,
+)
 from bricksmith.monitor.stability.tables import ALERTS, BINNINGS, PROFILES, RESULTS, REVISIONS, RUNS
 
 if TYPE_CHECKING:
@@ -160,6 +179,14 @@ def _engine_periods(data: Any, period: str) -> list[str]:  # noqa: ANN401 - rows
     return periods_spark(data, period)
 
 
+def _schema(data: Any) -> Schema:  # noqa: ANN401 - rows or DataFrame
+    if is_rows(data):
+        return rows_schema(data)
+    from bricksmith.monitor.stability.spark import schema_spark  # noqa: PLC0415 - heavy integration
+
+    return schema_spark(data)
+
+
 def _fit(  # noqa: PLR0913 - one keyword per reference field
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -225,6 +252,28 @@ def fit_range(config: StabilityConfig, periods: Sequence[str]) -> list[str]:
     return list(periods[: config.fit_periods])
 
 
+@dataclass(frozen=True)
+class Active:
+    """The binning a run uses, the row to store when it was just fitted, and the schema drift is judged against."""
+
+    binning: Reference
+    rows: list[dict[str, Any]]
+    skipped: dict[str, str]
+    reference: Schema | None = None
+    label: str = ""
+    refitted: bool = False
+
+
+def _wanted_fingerprint(config: StabilityConfig, current: Schema) -> str:
+    """Return the fingerprint a binning must carry; ``extend`` also hashes the table's columns and types."""
+    wanted = config.binning_fingerprint()
+    if not (config.auto and config.auto_columns == EXTEND):
+        return wanted
+    excluded = set(config.excluded())
+    shape = [[c, t] for c, t, _ in current if c not in excluded]
+    return hashlib.sha256(json.dumps([wanted, shape]).encode()).hexdigest()
+
+
 def _active_binning(  # noqa: PLR0913 - one keyword per binning input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -235,24 +284,37 @@ def _active_binning(  # noqa: PLR0913 - one keyword per binning input
     source: str,
     run_id: str,
     now: str,
-) -> tuple[Reference, list[dict[str, Any]], dict[str, str]]:
+    schema: Schema,
+) -> Active:
     """Return the binning of the current configuration, fitting a new version when none matches."""
-    wanted = config.binning_fingerprint()
+    wanted = _wanted_fingerprint(config, schema)
     stored = store.rows(BINNINGS, dataset)
     matching = [r for r in stored if r.get("config_fingerprint") == wanted]
     if matching:
         row = max(matching, key=lambda r: int(r["version"]))
         skipped = dict(item.split(":", 1) for item in str(row.get("skipped") or "").split(",") if ":" in item)
-        return Reference.from_json(str(row["body"])), [], skipped
+        return Active(Reference.from_json(str(row["body"])), [], skipped, parse_schema(row.get("schema")), "fit schema")
     version = max((int(r["version"]) for r in stored), default=0) + 1
-    binning, skipped = _fit(data, config, fit_range(config, periods), dataset=dataset, version=version, source=source)
+    latest = config.auto and config.auto_columns == EXTEND and bool(stored)
+    chosen = _latest_range(config, periods) if latest else fit_range(config, periods)
+    binning, skipped = _fit(data, config, chosen, dataset=dataset, version=version, source=source)
     row = {
         "dataset": dataset, "version": version, "config_fingerprint": wanted, "fingerprint": binning.fingerprint,
         "period_column": config.period, "fit_periods": ",".join(fit_periods_of(binning)), "fit_rows": binning.fit_rows,
         "columns": len(binning.columns), "skipped": ",".join(f"{c}:{r}" for c, r in sorted(skipped.items())),
-        "body": binning.to_json(), "created_run_id": run_id, "created_at": now,
+        "body": binning.to_json(), "created_run_id": run_id, "created_at": now, "schema": schema_text(schema),
     }  # fmt: skip
-    return binning, [row], skipped
+    earlier = max(stored, key=lambda r: int(r["version"]), default=None)
+    reference = parse_schema(earlier.get("schema")) if earlier else schema
+    label = f"schema of binning version {earlier['version']}" if earlier else "fit schema"
+    return Active(binning, [row], skipped, reference, label, refitted=earlier is not None)
+
+
+def _latest_range(config: StabilityConfig, periods: Sequence[str]) -> list[str]:
+    """Return the periods an ``extend`` refit fits on: the fixed baseline range, else the latest ``fit_periods``."""
+    if config.baseline.kind == FIXED and config.baseline.start:
+        return fit_range(config, periods)
+    return list(periods[-config.fit_periods :])
 
 
 def _history_span(config: StabilityConfig) -> int:
@@ -461,6 +523,42 @@ def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one
     return snapshot_rows(first, new, run_id=run_id, published_at=now)
 
 
+def _schema_results(
+    ctx: Context,
+    current: tuple[str, Active, Schema, Sequence[str]],
+    store: Store,
+    stored_alerts: Sequence[Mapping[str, Any]],
+    *,
+    dataset: str,
+) -> list[dict[str, Any]]:
+    """Return the ``schema_change`` and ``missing_column`` results of the latest period of the window."""
+    period, active, schema, absent = current
+    reference, label = active.reference, active.label
+    if reference is None:
+        runs = [r for r in store.rows(RUNS, dataset) if parse_schema(r.get("schema")) is not None]
+        last = max(runs, key=lambda r: str(r.get("finished_at") or ""), default=None)
+        reference, label = (parse_schema(last["schema"]), "schema of the previous run") if last else (None, "")
+    drift: Drift | None = diff(reference, schema, ctx.config.exclude) if reference is not None else None
+    added = bool(drift and drift.added)
+    if active.refitted:
+        note = f"binning refitted as version {ctx.binning.version}"
+    elif added and ctx.config.auto and ctx.config.auto_columns != EXTEND:
+        note = "new columns are not monitored until the binning is refitted (auto_columns: freeze)"
+    elif added:
+        note = "new columns are not monitored (explicit columns)"
+    else:
+        note = ""
+    flagged = {
+        str(r["column"])
+        for r in stored_alerts
+        if r.get("state") == OPEN
+        and r.get("metric") == MISSING_COLUMN
+        and int(r.get("version") or 0) == ctx.binning.version
+    }
+    returned = sorted(c for c in flagged - set(absent) if c in {s.column for s in ctx.binning.columns})
+    return schema_results(ctx, period, drift=drift, label=label, note=note, missing=absent, returned=returned)
+
+
 def check(  # noqa: PLR0913 - one keyword per documented input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -478,9 +576,13 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     if not periods:
         msg = f"stability: {dataset} has no rows with a {config.period!r} period"
         raise MonitorError(msg)
-    binning, binning_rows, skipped = _active_binning(
-        data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started
-    )
+    schema = _schema(data)
+    active = _active_binning(
+        data, config, store, periods, dataset=dataset, source=physical or dataset, run_id=run_id, now=started,
+        schema=schema,
+    )  # fmt: skip
+    absent: list[str] = []
+    binning, binning_rows, skipped = active.binning, active.rows, active.skipped
     stored_profiles = store.rows(
         PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
     )
@@ -498,6 +600,11 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
         emptied=vanished,
+    )  # fmt: skip
+    stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
+    computed.results += _schema_results(
+        Context(config, binning, dataset, run_id, started), (window[-1], active, schema, absent),
+        store, stored_alerts, dataset=dataset,
     )  # fmt: skip
     revision_rows = (
         _revisions(
@@ -518,8 +625,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     last = max(previous, key=lambda r: str(r.get("finished_at") or ""), default=None)
     rewrite_all = last is None or last.get("judgment_fingerprint") != judgment
     emitted = (set(window) if rewrite_all else set(todo) & set(window)) | set(vanished)
-    results = [r for r in computed.results if r["period"] in emitted]
-    stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
+    results = [r for r in computed.results if r["period"] in emitted or r["metric"] in SCHEMA_METRICS]
     alert_rows = alerts(
         computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
         stored=stored_alerts, periods=sorted({*periods, *vanished}), keep_inside=not rewrite_all,
@@ -550,6 +656,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         "gate": ",".join(config.gate.fail_on), "red": counts[RED], "yellow": counts[YELLOW],
         "open_alerts": len(open_rows), "critical_alerts": critical, "message": message,
         "judgment_fingerprint": judgment, "started_at": started, "finished_at": _now(),
+        "schema": schema_text(schema),
     }  # fmt: skip
     tables = {BINNINGS: binning_rows, PROFILES: fresh, RESULTS: results, ALERTS: alert_rows, RUNS: [run_row]}
     if config.revision:
