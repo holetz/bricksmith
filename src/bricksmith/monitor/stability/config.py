@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -330,6 +331,35 @@ def _columns(value: object) -> dict[str, dict[str, Any]] | None:
     raise _fail(msg)
 
 
+def _exclude(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        msg = f"exclude must be a list of column names, got {value!r}"
+        raise _fail(msg)
+    return tuple(_name(c, "exclude item") for c in value)
+
+
+def _epsilon(value: object) -> float:
+    number = math.nan
+    if isinstance(value, (int, float, str)) and not isinstance(value, bool):
+        try:
+            number = float(value)
+        except ValueError:
+            number = math.nan
+    if not math.isfinite(number) or number <= 0:
+        msg = f"epsilon must be a finite number > 0, got {value!r}"
+        raise _fail(msg)
+    return number
+
+
+def _rules(value: object, root: Path | str | None) -> tuple[LimitRule, ...]:
+    rules = parse_rules(value, owner="stability", root=root)
+    for rule in rules:
+        if rule.metric and rule.metric not in METRICS:
+            msg = f"rule {rule.id!r}: unknown metric {rule.metric!r}; known: {', '.join(METRICS)}"
+            raise _fail(msg)
+    return rules
+
+
 def _segments(value: object) -> tuple[tuple[str, ...], ...]:
     if not isinstance(value, list):
         msg = "segments must be a list of column names or lists of column names"
@@ -446,7 +476,7 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             output=str(data.get("output", "")),
             dataset=str(data.get("dataset", "")),
             columns=_columns(data.get("columns", "auto")),
-            exclude=tuple(_name(c, "exclude item") for c in data.get("exclude", [])),
+            exclude=_exclude(data.get("exclude", [])),
             segments=_segments(data.get("segments", [])),
             weight=str(data.get("weight", "") or ""),
             baseline=_baseline(data.get("baseline")),
@@ -464,8 +494,8 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             scope=str(data.get("scope", "")),
             prefix=prefix,
             inference=_inference(data.get("inference")),
-            epsilon=float(data.get("epsilon", 1e-4)),
-            rules=parse_rules(data.get("rules"), owner="stability", root=root),
+            epsilon=_epsilon(data.get("epsilon", 1e-4)),
+            rules=_rules(data.get("rules"), root),
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
         )
