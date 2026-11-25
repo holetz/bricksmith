@@ -43,7 +43,7 @@ from bricksmith.monitor.stats import psi_terms
 from bricksmith.monitor.trend import keeps, trend_check
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
     from bricksmith.monitor.reference import Reference
     from bricksmith.monitor.stability.config import StabilityConfig
@@ -155,6 +155,8 @@ class _Context:
     run_id: str
     computed_at: str
     trend_history: dict[Key, list[float]] = field(default_factory=dict)
+    settling: frozenset[str] = frozenset()
+    gap: int = 0
     excluded: frozenset[str] = frozenset()
     red_periods: dict[str, set[str]] = field(default_factory=dict)
 
@@ -190,6 +192,7 @@ def _result(  # noqa: PLR0913 - one keyword per result field
         "baseline_kind": ctx.config.baseline.kind, "baseline_label": ctx.config.baseline.label,
         "trend_status": "", "trend_expected": None, "trend_deviation": None,
         "trend_sigma": None, "trend_lower": None, "trend_upper": None,
+        "baseline_gap": ctx.gap, "settling": period in ctx.settling,
         "run_id": ctx.run_id, "computed_at": ctx.computed_at, "rule_id": found.rule_id,
         "rule_version": found.rule_version,
     }  # fmt: skip
@@ -209,7 +212,7 @@ def _trend(ctx: _Context, row: dict[str, Any], value: float | None, light: Light
     policy = ctx.config.trend
     if policy is None or row["metric"] not in ctx.config.trend_metrics or not direction:
         return
-    if light.status not in (*COLORS, NO_RULE) or value is None or not math.isfinite(value):
+    if light.status not in (*COLORS, NO_RULE) or value is None or not math.isfinite(value) or row["settling"]:
         return
     key = (row["segment"], row["column"], row["metric"])
     history = ctx.trend_history.setdefault(key, [])
@@ -263,6 +266,8 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     run_id: str = "",
     computed_at: str = "",
     emptied: Collection[str] = (),
+    settling: Collection[str] = (),
+    gap: Callable[[Sequence[str], str], int] | None = None,
     trend_seed: Mapping[Key, Sequence[float]] | None = None,
     excluded: Collection[str] = (),
     red_seed: Mapping[str, Collection[str]] | None = None,
@@ -271,6 +276,10 @@ def compute(  # noqa: PLR0913 - one keyword per result field
 
     An ``emptied`` period is reported like any other, but its zero-count profile is never a baseline period for
     another period: the ``previous`` and ``rolling`` rules skip it and take the next eligible period.
+
+    A ``settling`` period is judged and shown (``settling`` true) like any other, but it is never a baseline
+    period, never enters a trend history and is not counted by the gate. ``gap(baseline periods, period)`` gives
+    the ``baseline_gap`` of a result (calendar periods without rows between the earliest baseline period and it).
 
     ``trend_seed`` carries, per ``(segment, column, metric)``, the stored values of the periods just before the
     window, so a period at the start of a rewritten window is judged with the history it had the first time.
@@ -281,7 +290,9 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     segment, the red periods already stored before the window.
     """
     history = index_profiles(binning, profiles)
-    ctx = _Context(config, binning, dataset, run_id, computed_at, excluded=frozenset(excluded))
+    ctx = _Context(
+        config, binning, dataset, run_id, computed_at, settling=frozenset(settling), excluded=frozenset(excluded)
+    )
     for segment_name, reds in (red_seed or {}).items():
         ctx.red_periods[segment_name] = set(reds)
     for key, values in (trend_seed or {}).items():
@@ -289,9 +300,12 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     out = Computed()
     numeric = {s.column: s.kind == "numeric" for s in binning.columns}
     in_window = [p for p in history.periods if p in {*window, *emptied}]
-    eligible = [p for p in history.periods if p not in emptied]
+    skipped = {*emptied, *settling}
+    eligible = [p for p in history.periods if p not in skipped]
     for period in in_window:
-        ordered = sorted([*eligible, period]) if period in emptied else eligible
+        ordered = sorted([*eligible, period]) if period in skipped else eligible
+        wanted = [p for p in baseline_periods(config, binning, ordered, period) if p not in settling]
+        ctx.gap = gap(wanted, period) if gap and wanted else 0
         for segment in sorted(history.rows):
             if period not in history.rows[segment]:
                 continue
@@ -531,6 +545,8 @@ def _series(
     values: dict[tuple[Key, str], float | None] = {}
     trend_only = {_key_of(r) for r in rows if r["direction"] == "" and r["trend_status"]}
     for row in rows:
+        if row.get("settling"):
+            continue
         key = _key_of(row)
         if row["direction"] == "" and key not in trend_only:
             continue
@@ -629,10 +645,10 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
 
 
 def counts_in(results: Iterable[Mapping[str, Any]], period: str) -> dict[str, int]:
-    """Return how many results of ``period`` are red and yellow."""
+    """Return how many results of ``period`` are red and yellow (settling results are not counted)."""
     found = {RED: 0, YELLOW: 0, GREEN: 0}
     for row in results:
-        if row["period"] == period and row["status"] in found:
+        if row["period"] == period and row["status"] in found and not row.get("settling"):
             found[row["status"]] += 1
     return found
 
