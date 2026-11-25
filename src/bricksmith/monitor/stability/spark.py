@@ -42,10 +42,34 @@ def _f() -> Any:  # noqa: ANN401 - the pyspark functions module
     return f
 
 
+_PLAIN_LOW = 1e-3
+_PLAIN_HIGH = 1e7
+
+
+def _float_text(df: DataFrame, name: str) -> Column:
+    """Spell a float/double column like ``segment_text``: ``str(float)``, NaN as null.
+
+    Inside ``[1e-3, 1e7)`` the string cast spells like Python; the few finite values outside that range and the
+    infinities are collected and spelled by ``str``.
+    """
+    f = _f()
+    value = f.col(name).cast("double")
+    magnitude = f.abs(value)
+    tiny = (magnitude < _PLAIN_LOW) & (value != 0)
+    outside = magnitude.isNotNull() & ~f.isnan(value) & ((magnitude >= _PLAIN_HIGH) | tiny)
+    expr = f.when(value.isNull() | f.isnan(value), f.lit(None).cast("string"))
+    values = [r["v"] for r in df.where(outside).select(value.alias("v")).distinct().collect()]
+    for number in values:
+        expr = expr.when(value == f.lit(number), f.lit(str(number)))
+    return expr.otherwise(value.cast("string"))
+
+
 def _text(df: DataFrame, name: str) -> Column:
-    """Spell a column like ``category_text``: booleans ``true``/``false``, everything else cast to string."""
+    """Spell a column like ``category_text``: booleans ``true``/``false``, floats like ``str``, else cast to string."""
     f = _f()
     kind = dict(df.dtypes).get(name, "")
+    if kind in ("float", "double"):
+        return _float_text(df, name)
     text = f.col(name).cast("string")
     return f.lower(text) if kind == "boolean" else text
 
@@ -142,7 +166,8 @@ def _value_counts(df: DataFrame, names: Sequence[str], types: dict[str, str]) ->
 
 def _with_counts(spec: BinSpec, df: DataFrame) -> BinSpec:
     counts = dict.fromkeys(spec.bin_ids(), 0)
-    for row in df.groupBy(bin_expression(spec).alias("b")).count().collect():
+    dtype = dict(df.dtypes).get(spec.column, "")
+    for row in df.groupBy(bin_expression(spec, dtype).alias("b")).count().collect():
         counts[row["b"]] = int(row["count"])
     return BinSpec(spec.column, spec.kind, spec.edges, spec.outliers, spec.categories, counts, spec.method, spec.zero)
 
@@ -223,8 +248,9 @@ def profile_spark(  # noqa: PLR0913 - one keyword per profile field
     keys = [segment_column(df, columns) for columns in sets]
     keep, first = _kept_segments(ranking, config, sets, keys, carried or {}, info)
     cells = []
+    types = dict(df.dtypes)
     for spec in binning.columns:
-        bin_id = bin_expression(spec)
+        bin_id = bin_expression(spec, types.get(spec.column, ""))
         value = f.col(spec.column).cast("double") if spec.kind == "numeric" else f.lit(None).cast("double")
         x = f.when(bin_id == f.lit(NULL), f.lit(None).cast("double")).otherwise(value)
         cells.append(f.struct(f.lit(spec.column).alias("c"), bin_id.alias("b"), x.alias("x")))

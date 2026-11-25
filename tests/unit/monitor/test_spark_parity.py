@@ -109,3 +109,48 @@ def test_boolean_segments_are_named_alike(spark: Any) -> None:  # noqa: ANN401
 def test_double_and_nan_segments_are_named_alike(spark: Any) -> None:  # noqa: ANN401
     pure = assert_same(spark, reference("d"))
     assert {k[2] for k in pure} == {"", "0.5", "10000000.0", NULL_SEGMENT}
+
+
+STABILITY_SCHEMA = "month STRING, rate DOUBLE, seg DOUBLE"
+STABILITY_VALUES = (1e7, 0.5, 2.0, NAN, None, 1e-5, 0.25)
+STABILITY_ROWS = [
+    {"month": month, "rate": value, "seg": STABILITY_VALUES[(i + 3) % len(STABILITY_VALUES)]}
+    for month in ("2026-01", "2026-02")
+    for i, value in enumerate(STABILITY_VALUES * 6)
+]
+
+
+def stability_profiles(spark: Any, config_extra: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:  # noqa: ANN401
+    from bricksmith.monitor.stability import parse_config  # noqa: PLC0415
+    from bricksmith.monitor.stability.profile import fit_rows_binning, profile_rows  # noqa: PLC0415
+    from bricksmith.monitor.stability.spark import profile_spark  # noqa: PLC0415
+
+    config = parse_config(
+        {"period": "month", "columns": {"rate": {"type": "categorical"}}, **config_extra, "max_segments": 50}
+    )
+    fit = [r for r in STABILITY_ROWS if r["month"] == "2026-01" and r["rate"] in (1e7, 0.5)]
+    binning, _ = fit_rows_binning(fit, config, ["2026-01"], dataset="d", version=1)
+    periods = ["2026-01", "2026-02"]
+    pure, _ = profile_rows(binning, STABILITY_ROWS, config, periods, dataset="d", run_id="r")
+    frame = spark.createDataFrame([tuple(r.values()) for r in STABILITY_ROWS], STABILITY_SCHEMA)
+    remote, _ = profile_spark(binning, frame, config, periods, dataset="d", run_id="r")
+    return pure, remote
+
+
+def keyed(rows: list[dict[str, Any]]) -> dict[tuple[str, ...], Any]:
+    return {(r["period"], r["segment"], r["column"], r["bin"]): r["count"] for r in rows}
+
+
+def test_stability_profile_bins_double_and_nan_categories_alike(spark: Any) -> None:  # noqa: ANN401
+    pure, remote = stability_profiles(spark, {})
+    assert keyed(remote) == keyed(pure)
+    got = keyed(pure)
+    assert got["2026-01", "", "rate", "null"] > 0
+    assert got["2026-01", "", "rate", "unseen"] > 0
+    assert got["2026-01", "", "rate", "cat:10000000.0"] > 0
+
+
+def test_stability_segment_keys_spell_double_and_nan_alike(spark: Any) -> None:  # noqa: ANN401
+    pure, remote = stability_profiles(spark, {"segments": ["seg"]})
+    assert keyed(remote) == keyed(pure)
+    assert {k[1] for k in keyed(pure)} >= {"", "seg=10000000.0", "seg=1e-05", "seg=0.5", "seg=(null)"}
