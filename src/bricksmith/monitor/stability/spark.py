@@ -212,14 +212,12 @@ def profile_spark(  # noqa: PLR0913 - one keyword per profile field
         x = f.when(bin_id == f.lit(NULL), f.lit(None).cast("double")).otherwise(value)
         cells.append(f.struct(f.lit(spec.column).alias("c"), bin_id.alias("b"), x.alias("x")))
     segmented = scoped.select(
-        "__p",
-        *{c for s in config.segments for c in s},
-        weight.alias("__w"),
+        "*",
         f.explode(f.array(*(f.struct(f.lit(i).alias("i"), k.alias("k")) for i, k in enumerate(keys)))).alias("__seg"),
     )
     for i, kept in keep.items():
         segmented = segmented.where((f.col("__seg.i") != i) | f.col("__seg.k").isin(kept))
-    exploded = segmented.select("__p", "__seg", "__w", f.explode(f.array(*cells)).alias("__cell"))
+    exploded = segmented.select("__p", "__seg", weight.alias("__w"), f.explode(f.array(*cells)).alias("__cell"))
     totals: dict[tuple[str, str, str, str], list[float]] = {}
     grouped = exploded.groupBy(
         "__p", "__seg.i", f.col("__seg.k").alias("__s"), f.col("__cell.c").alias("c"), f.col("__cell.b").alias("b")
