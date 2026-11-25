@@ -328,12 +328,7 @@ class StabilityConfig:
             data["notify"] = self.notify.to_dict()
         if self.revision:
             data["revision"] = True
-        if self.psi_limits != SAMPLE_SIZE:
-            data["psi_limits"] = self.psi_limits
-        if self.min_rows_per_bin != DEFAULT_MIN_ROWS_PER_BIN:
-            data["min_rows_per_bin"] = self.min_rows_per_bin
-        if self.psi_smoothing != EPSILON_FLOOR:
-            data["psi_smoothing"] = self.psi_smoothing
+        data.update(self._psi_options())
         for name in ("cadence", "expected_by", "settle_periods", "settle_days"):
             if getattr(self, name) not in ("none", 0):
                 data[name] = getattr(self, name)
@@ -344,6 +339,17 @@ class StabilityConfig:
         if self.trend_directions:
             data["trend_directions"] = dict(sorted(self.trend_directions.items()))
         return data
+
+    def _psi_options(self) -> dict[str, Any]:
+        """Return the PSI options that differ from their defaults (so default declarations serialize as before)."""
+        options: dict[str, Any] = {}
+        if self.psi_limits != SAMPLE_SIZE:
+            options["psi_limits"] = self.psi_limits
+        if self.min_rows_per_bin != DEFAULT_MIN_ROWS_PER_BIN:
+            options["min_rows_per_bin"] = self.min_rows_per_bin
+        if self.psi_smoothing != EPSILON_FLOOR:
+            options["psi_smoothing"] = self.psi_smoothing
+        return options
 
     def _base_dict(self) -> dict[str, Any]:
         return {
