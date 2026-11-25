@@ -187,6 +187,7 @@ def _result(  # noqa: PLR0913 - one keyword per result field
         "rows": rows, "baseline_rows": _finite(baseline_rows), "in_baseline": in_baseline,
         "baseline_kind": ctx.config.baseline.kind, "baseline_label": ctx.config.baseline.label,
         "trend_status": "", "trend_expected": None, "trend_deviation": None,
+        "trend_sigma": None, "trend_lower": None, "trend_upper": None,
         "run_id": ctx.run_id, "computed_at": ctx.computed_at, "rule_id": found.rule_id,
         "rule_version": found.rule_version,
     }  # fmt: skip
@@ -211,6 +212,9 @@ def _trend(ctx: _Context, row: dict[str, Any], value: float | None, light: Light
     row["trend_status"] = found.status
     row["trend_expected"] = _finite(found.expected)
     row["trend_deviation"] = _finite(found.deviation)
+    row["trend_sigma"] = _finite(found.sigma)
+    row["trend_lower"] = _finite(found.lower)
+    row["trend_upper"] = _finite(found.upper)
 
 
 def _judge(  # noqa: PLR0913 - the metric and its suppression inputs

@@ -44,7 +44,8 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "baseline": "DOUBLE", "status": "STRING", "status_rank": "INT", "reason": "STRING",
         "green_limit": "DOUBLE", "red_limit": "DOUBLE", "direction": "STRING", "rows": "BIGINT",
         "baseline_rows": "DOUBLE", "in_baseline": "BOOLEAN", "baseline_kind": "STRING", "baseline_label": "STRING",
-        "trend_status": "STRING", "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE", "run_id": "STRING",
+        "trend_status": "STRING", "trend_expected": "DOUBLE", "trend_deviation": "DOUBLE", "trend_sigma": "DOUBLE",
+        "trend_lower": "DOUBLE", "trend_upper": "DOUBLE", "run_id": "STRING",
         "computed_at": "STRING", "rule_id": "STRING", "rule_version": "INT",
     },
     ALERTS: {
