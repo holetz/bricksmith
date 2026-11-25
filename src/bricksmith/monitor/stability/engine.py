@@ -184,14 +184,31 @@ def _profile(  # noqa: PLR0913 - one keyword per profile field
     *,
     dataset: str,
     run_id: str,
+    segments: tuple[Sequence[str], Mapping[str, str]] = ((), {}),
 ) -> list[dict[str, Any]]:
+    """Profile ``periods``; ``segments`` is ``(periods the kept set is ranked over, carried segments)``."""
     if not periods:
         return []
+    rank, carried = segments
     if is_rows(data):
-        return profile_rows(binning, data, config, periods, dataset=dataset, run_id=run_id)[0]
+        return profile_rows(
+            binning, data, config, periods, dataset=dataset, run_id=run_id, rank_periods=rank, carried=carried
+        )[0]
     from bricksmith.monitor.stability.spark import profile_spark  # noqa: PLC0415
 
-    return profile_spark(binning, data, config, periods, dataset=dataset, run_id=run_id)[0]
+    return profile_spark(
+        binning, data, config, periods, dataset=dataset, run_id=run_id, rank_periods=rank, carried=carried
+    )[0]
+
+
+def carried_segments(stored: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    """Return ``segment key -> earliest period`` of the segments with stored rows: they stay kept and judged."""
+    first: dict[str, str] = {}
+    for row in stored:
+        segment, period = str(row["segment"]), str(row["period"])
+        if segment and int(row.get("count") or 0) > 0:
+            first[segment] = min(period, first.get(segment, period))
+    return first
 
 
 def fit_range(config: StabilityConfig, periods: Sequence[str]) -> list[str]:
@@ -433,8 +450,11 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         PROFILES, dataset, version=binning.version, periods=_loaded_periods(config, binning, periods)
     )
     window, todo, loaded = _plan_periods(config, binning, periods, {str(r["period"]) for r in stored_profiles})
-    fresh = _profile(binning, data, config, todo, dataset=dataset, run_id=run_id)
     keep = set(loaded) - set(todo)
+    fresh = _profile(
+        binning, data, config, todo, dataset=dataset, run_id=run_id,
+        segments=(loaded, carried_segments([r for r in stored_profiles if r["period"] in keep])),
+    )  # fmt: skip
     profiles = [r for r in stored_profiles if r["period"] in keep] + fresh
     computed = compute(binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started)
     revision_rows = (
