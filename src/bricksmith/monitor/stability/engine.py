@@ -495,7 +495,10 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         store, vanished, dataset=dataset, version=binning.version, weighted=bool(config.weight), run_id=run_id
     )
     profiles = [r for r in stored_profiles if r["period"] in keep] + fresh + emptied
-    computed = compute(binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started)
+    computed = compute(
+        binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
+        emptied=vanished,
+    )  # fmt: skip
     revision_rows = (
         _revisions(
             computed, binning, config, store, (window, loaded), (stored_profiles, fresh, profiles),
