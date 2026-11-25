@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import shutil
 import textwrap
@@ -19,6 +20,8 @@ from bricksmith.runner import apply_plan
 from bricksmith.storage import SparkTableIO
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from bricksmith.clients import Clients
     from bricksmith.context import ExecutionContext
 
@@ -90,6 +93,80 @@ def test_spark_engine_equals_the_pure_engine(
         if (r["period"], r["segment"], r["column"], r["metric"]) == ("2026-03", "", "kind", "unseen_rate")
     )  # fmt: skip
     assert unseen["value"] > 0.2  # the new category "z" falls outside the fitted bins
+
+
+ACTIONS = ("collect", "count", "first", "toPandas")
+
+
+@contextlib.contextmanager
+def counting_actions(frame: Any) -> Iterator[list[str]]:  # noqa: ANN401
+    """Record the Spark actions issued on the frames of ``frame``'s class; nested calls count once."""
+    cls = type(frame)
+    seen: list[str] = []
+    depth = [0]
+    originals = {name: getattr(cls, name) for name in ACTIONS if hasattr(cls, name)}
+
+    def wrap(name: str, original: Any) -> Any:  # noqa: ANN401
+        def counted(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            if not depth[0]:
+                seen.append(name)
+            depth[0] += 1
+            try:
+                return original(*args, **kwargs)
+            finally:
+                depth[0] -= 1
+
+        return counted
+
+    for name, original in originals.items():
+        setattr(cls, name, wrap(name, original))
+    try:
+        yield seen
+    finally:
+        for name, original in originals.items():
+            setattr(cls, name, original)
+
+
+def wide_rows(columns: int) -> tuple[str, list[tuple[Any, ...]]]:
+    ddl = "month STRING, region STRING, flag BOOLEAN, " + ", ".join(
+        f"v{j} DOUBLE" if j % 2 == 0 else f"k{j} STRING" for j in range(columns)
+    )
+    rows = []
+    for m, month in enumerate(("2026-01", "2026-02")):
+        for i in range(60):
+            values = [float((i * (j + 3)) % 17 + m) if j % 2 == 0 else "abc"[(i + j) % 3] for j in range(columns)]
+            rows.append((month, "ns"[i % 2], i % 3 == 0, *values))
+    return ddl, rows
+
+
+def test_spark_action_count_is_the_same_for_narrow_and_wide_segmented_tables(
+    remote_clients: Clients,
+) -> None:
+    spark = remote_clients.spark()
+    periods = ["2026-01", "2026-02"]
+    small = {"period": "month", "segments": ["region"], "min_rows": 5, "inference": {"numeric_bins": 4}}
+    large = {**small, "segments": ["region", "flag", ["region", "flag"]]}
+    taken: dict[str, tuple[list[str], list[str]]] = {}
+    types: dict[str, set[str]] = {}
+    for label, columns, declaration in (("narrow", 2, small), ("wide", 12, large)):
+        ddl, rows = wide_rows(columns)
+        frame = spark.createDataFrame(rows, ddl)
+        config = parse_config(declaration)
+        with counting_actions(frame) as fit_actions:
+            binning, _ = fit_spark_binning(frame, config, periods[:1], dataset="d", version=1)
+        with counting_actions(frame) as profile_actions:
+            profile, _ = profile_spark(binning, frame, config, periods, dataset="d")
+        taken[label] = (list(fit_actions), list(profile_actions))
+        types[label] = {dict(frame.dtypes)[c.column] for c in binning.columns}
+        names = [c.split()[0] for c in ddl.split(", ")]
+        dicts = [dict(zip(names, r, strict=True)) for r in rows]
+        pure_bins, _ = fit_rows_binning(dicts, config, periods[:1], dataset="d", version=1)
+        assert binning.to_dict() == pure_bins.to_dict()
+        pure_profile, _ = profile_rows(pure_bins, dicts, config, periods, dataset="d")
+        assert_rows_equal(pure_profile, profile, ("period", "segment", "column", "bin"))
+    assert [len(taken[k][0]) - 1 for k in taken] == [len(types[k]) for k in taken]  # one job per column type
+    assert len(types["wide"]) <= 3
+    assert len(taken["narrow"][1]) == len(taken["wide"][1]) == 3
 
 
 def count(spark: Any, name: str) -> int:  # noqa: ANN401
