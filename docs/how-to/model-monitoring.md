@@ -362,7 +362,8 @@ latest action of an alert (by `created_at`) decides, so a later `analysis` re-op
 `created_at` must be an ISO-8601 timestamp: any offset is accepted, a value without one is read as UTC, and the
 row stores it converted to UTC (`2026-11-24T23:00:00-03:00` is stored as `2026-11-25T02:00:00+00:00`), so actions
 are compared by instant rather than by text; anything else is refused. Rows stored before this rule are read the
-same way, and a stored value that does not parse still counts, ordered before every valid timestamp. The
+same way, and a stored value that does not parse, or whose UTC instant falls outside the supported date range (year 1 to 9999),
+still counts, ordered before every valid timestamp. The
 `actions_latest` view sorts the column as text, which matches the instant order for rows written in UTC. Actions of
 other models, or for ids no alert carries, change nothing. `closed` on a `light` alert is bookkeeping only: the
 red result still counts for a `red` gate, while an active acceptance removes it from the count and the run
