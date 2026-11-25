@@ -294,11 +294,13 @@ def _superseded(  # noqa: PLR0913 - the rows to compare and where the replay sta
     *,
     version: int,
     start: str,
+    rejudged: bool = False,
 ) -> list[dict[str, Any]]:
     """Return stored alerts that the replay no longer produces, marked ``superseded``.
 
-    A ``closed`` alert of ``version`` that opened at or before the window ``start`` is final: the replay can no longer
-    re-judge its opening, so it stays closed.
+    A ``closed`` alert of ``version`` is final when it opened at or before the window ``start`` (the replay can no
+    longer re-judge its opening) or when the judgment is unchanged (``rejudged`` false): the window only slid past
+    the run that produced it. Either way it stays closed.
     """
     ids = {r["alert_id"] for r in fresh}
     return [
@@ -309,7 +311,7 @@ def _superseded(  # noqa: PLR0913 - the rows to compare and where the replay sta
         and not (
             r.get("state") == CLOSED
             and int(r.get("version") or 0) == version
-            and str(r.get("opened_period") or "") <= start
+            and (not rejudged or str(r.get("opened_period") or "") <= start)
         )
     ]
 
@@ -457,13 +459,15 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
     alert_rows = alerts(
         computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
-        stored=stored_alerts, periods=periods,
+        stored=stored_alerts, periods=periods, keep_inside=not rewrite_all,
     )  # fmt: skip
     notifications = alert_events(
         alert_rows, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
         occurred_at=started,
     )  # fmt: skip
-    alert_rows += _superseded(stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0])
+    alert_rows += _superseded(
+        stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
+    )
     latest = window[-1]
     counts = counts_in(computed.results, latest)
     open_rows = [r for r in alert_rows if r["state"] == OPEN]
