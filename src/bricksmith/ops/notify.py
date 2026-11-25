@@ -25,6 +25,7 @@ DELIVERED = "delivered"
 SUPPRESSED = "suppressed"
 DELIVERY_FAILED = "failed"
 SEVERITIES = ("info", "warning", "critical")
+CRITICALITIES = ("low", "medium", "high", "critical")
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,36 @@ class AlertEvent:
             "subject": self.subject,
             "target": self.target,
         }
+
+
+@dataclass(frozen=True)
+class AlertRoute:
+    """Which alerts one adapter receives: an empty ``owners`` or ``domains`` matches any, ``min_criticality`` a floor.
+
+    The owner, domain and criticality are read from the event's ``details``; an event that does not name one is
+    matched only by a route that does not filter on it.
+    """
+
+    adapter: str
+    owners: tuple[str, ...] = ()
+    domains: tuple[str, ...] = ()
+    min_criticality: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate the criticality floor."""
+        if self.min_criticality and self.min_criticality not in CRITICALITIES:
+            msg = f"route min_criticality must be one of {', '.join(CRITICALITIES)}, got {self.min_criticality!r}"
+            raise ValueError(msg)
+
+    def matches(self, alert: AlertEvent) -> bool:
+        """Tell whether ``alert`` is for this route."""
+        owner, domain = str(alert.details.get("owner", "")), str(alert.details.get("domain", ""))
+        level = str(alert.details.get("criticality", ""))
+        if (self.owners and owner not in self.owners) or (self.domains and domain not in self.domains):
+            return False
+        return not self.min_criticality or (
+            level in CRITICALITIES and CRITICALITIES.index(level) >= CRITICALITIES.index(self.min_criticality)
+        )
 
 
 def bound_payload(alert: AlertEvent, max_bytes: int, secrets: Sequence[str] = ()) -> dict[str, Any]:
@@ -198,8 +229,13 @@ class AlertNotifier:
         secrets: Sequence[str] = (),
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
+        routes: Sequence[AlertRoute] = (),
     ) -> None:
-        """Configure delivery; ``max_payload_bytes`` must be at least 256."""
+        """Configure delivery; ``max_payload_bytes`` must be at least 256.
+
+        An adapter named by at least one of ``routes`` receives only the alerts one of its routes matches; adapters
+        without a route receive every alert.
+        """
         if max_payload_bytes < MIN_PAYLOAD_BYTES or max_attempts < 1 or dedup_window_seconds < 0:
             msg = f"notifier needs max_payload_bytes >= {MIN_PAYLOAD_BYTES}, max_attempts >= 1 and a window >= 0"
             raise ValueError(msg)
@@ -212,11 +248,16 @@ class AlertNotifier:
         self.secrets = tuple(secrets)
         self._sleep = sleep
         self._clock = clock
+        self.routes = tuple(routes)
         self.records: list[DeliveryRecord] = []
 
+    def _routed(self, adapter: NotificationAdapter, alert: AlertEvent) -> bool:
+        mine = [r for r in self.routes if r.adapter == adapter.name]
+        return not mine or any(r.matches(alert) for r in mine)
+
     def notify(self, alert: AlertEvent) -> tuple[DeliveryRecord, ...]:
-        """Deliver ``alert`` through every adapter and return (and keep) the records."""
-        out = tuple(self._one(adapter, alert) for adapter in self.adapters)
+        """Deliver ``alert`` through every adapter routed to it and return (and keep) the records."""
+        out = tuple(self._one(adapter, alert) for adapter in self.adapters if self._routed(adapter, alert))
         self.records.extend(out)
         return out
 
@@ -287,6 +328,7 @@ def notify_report(report: RunReport, notifier: AlertNotifier, *, run_id: str = "
 
 
 __all__ = [
-    "AlertEvent", "AlertNotifier", "AlertStore", "DeliveryRecord", "InMemoryAlertStore", "JsonFileAlertStore",
-    "NotificationAdapter", "alerts_from_report", "bound_payload", "classify_error", "notify_report",
+    "AlertEvent", "AlertNotifier", "AlertRoute", "AlertStore", "DeliveryRecord", "InMemoryAlertStore",
+    "JsonFileAlertStore", "NotificationAdapter", "alerts_from_report", "bound_payload", "classify_error",
+    "notify_report",
 ]  # fmt: skip
