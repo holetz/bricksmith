@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN
 from bricksmith.monitor.limits import COLORS, GREEN, INFORMATIONAL, NO_RULE, RED, YELLOW, Light, classify, rank
-from bricksmith.monitor.persistence import CRITICAL, PersistencePolicy, alert_spans
+from bricksmith.monitor.persistence import CRITICAL, OPEN, PersistencePolicy, alert_spans
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
 from bricksmith.monitor.stability.config import (
     DISTRIBUTION_METRICS,
@@ -421,8 +421,18 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     version: int,
     run_id: str = "",
     updated_at: str = "",
+    stored: Iterable[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
-    """Replay the status and trend series of every judged metric into alert rows (persistence and trend kinds)."""
+    """Replay the status and trend series of every judged metric into alert rows (persistence and trend kinds).
+
+    An alert still ``open`` in ``stored`` whose opening period left the window keeps its identity: the first
+    replayed span of its metric adopts the stored id, opening period, escalation and recurrence.
+    """
+    carried = {
+        (str(r["segment"]), str(r["column"]), str(r["metric"]), str(r["kind"])): r
+        for r in stored
+        if r.get("state") == OPEN and int(r.get("version") or 0) == version
+    }
     statuses: dict[Key, list[tuple[str, str]]] = {}
     trends: dict[Key, list[tuple[str, str]]] = {}
     values: dict[tuple[Key, str], float | None] = {}
@@ -443,7 +453,20 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
             (PERSISTENCE, statuses[key], persistence),
             (TREND, trends[key], trend_policy),
         ):
-            for span in alert_spans(series, policy):
+            first_period = min((p for p, _ in series), default="")
+            for number, span in enumerate(alert_spans(series, policy)):
+                old = carried.get((*key, kind)) if number == 0 else None
+                if old is not None and str(old["opened_period"]) > first_period:
+                    old = None
+                flagged = len(span.flagged)
+                if old is not None:
+                    span.opened = str(old["opened_period"])
+                    span.escalated = str(old.get("escalated_period") or "") or span.escalated
+                    span.recurrence = bool(old.get("recurrence")) or span.recurrence
+                    if str(old.get("severity")) == CRITICAL:
+                        span.severity = CRITICAL
+                    seen = str(old.get("last_period") or "")
+                    flagged = int(old.get("flagged_periods") or 0) + sum(1 for p in span.flagged if p > seen)
                 value = values.get((key, span.last_period))
                 segment, column, metric = key
                 subject = f"{metric} of {column}" if column else metric
@@ -461,7 +484,7 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
                         "severity_rank": 2 if span.severity == CRITICAL else 1, "state": span.state,
                         "opened_period": span.opened, "escalated_period": span.escalated,
                         "closed_period": span.closed, "last_period": span.last_period,
-                        "last_status": span.last_status, "last_value": value, "flagged_periods": len(span.flagged),
+                        "last_status": span.last_status, "last_value": value, "flagged_periods": flagged,
                         "recurrence": span.recurrence, "message": message, "run_id": run_id,
                         "updated_at": updated_at,
                     }
