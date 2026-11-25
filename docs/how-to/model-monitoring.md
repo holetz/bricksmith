@@ -111,7 +111,7 @@ on five families for that; a declaration without it keeps exactly the families a
 "credit": {
     "horizon": 12,  # periods the score's probability covers
     "label_horizon": 12,  # periods the calibration label covers (default: horizon)
-    "grades": ["A", "B", "C", "D"],  # best to worst (default: grade texts in order)
+    "grades": ["A", "B", "C", "D"],  # best to worst (default: see grade order below)
     "min_expected_events": 5,  # expected-events gate per grade (default 5)
     "correlation": 0.12,  # enables the correlation-adjusted binomial test
     "early_warning": [  # shorter horizons, each with its own label column and lag
@@ -144,6 +144,11 @@ per-grade results, so a small grade cannot hide behind a low row count, and a la
 is not judged by chance. `grade_inversions` counts the consecutive grades, best to worst, whose observed rate falls.
 It compares only the grades that pass the gate. Its details rows hold the calibration table of every grade: `count`,
 `mean_score` (mean expected probability) and `observed_rate`.
+
+**Grade order.** Grades run best to worst in the order `grades` declares. Grades it leaves out (all of them when
+`grades` is absent) follow, ordered by number when every such grade text is a finite number (`1`, `2`, …, `10`,
+`11`), else by text. Numeric grades where a larger number is a better grade, or labels such as `A1`..`A10`, declare
+`grades` to get the right order.
 
 **Horizons.** A label covering `k` periods compares with `1 - (1 - p)^(k/h)`, where `h` is `horizon`: a constant
 hazard spread over the horizon. Each early-warning horizon has its own label column and lag (default: its `periods`
