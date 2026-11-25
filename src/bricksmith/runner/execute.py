@@ -31,7 +31,9 @@ if TYPE_CHECKING:
     from bricksmith.context import ExecutionContext
     from bricksmith.features.record import EngineChoice
     from bricksmith.graph import TaskGraph
+    from bricksmith.monitor.stability.config import NotifyPolicy
     from bricksmith.ops.events import EventSink
+    from bricksmith.ops.notify import AlertNotifier
     from bricksmith.plan import Plan
     from bricksmith.runner.io import ExternalProvider, TableIO
 
@@ -72,6 +74,8 @@ class _Worker:
     externals: ExternalProvider | None = None
     events: RunEvents | None = None
     run_id: str = ""
+    notifier: AlertNotifier | None = None
+    notify: NotifyPolicy | None = None
 
     def __call__(self, entry: PlanEntry) -> TaskResult:
         result = self._execute(entry)
@@ -128,7 +132,7 @@ class _Worker:
         if any("stability" in t.options for t in entry.targets):
             from bricksmith.monitor.stability.hook import run_stability  # noqa: PLC0415 - only for declaring tasks
 
-            found, failure = run_stability(ctx, self.run_id)
+            found, failure = run_stability(ctx, self.run_id, self.notifier, self.notify)
             stability = tuple(o.to_dict() for o in found)
             reason = "stability check failed" if failure else ""
         if any("model_monitoring" in t.options for t in entry.targets):
@@ -204,6 +208,8 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
     externals: ExternalProvider | None = None,
     events: EventSink | None = None,
     run_id: str | None = None,
+    notifier: AlertNotifier | None = None,
+    notify: object = None,
 ) -> RunReport:
     """Execute a plan that passed :func:`validate_plan`; it is re-checked here for errors and grants.
 
@@ -215,6 +221,11 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
     With an ``events`` sink the run emits structured events (``run_started``, ``task_started``,
     ``task_retry``, ``task_finished``, ``run_finished``; see :mod:`bricksmith.ops`); the sink never
     changes the report, and its failures are ignored.
+
+    With a ``notifier`` the stability alerts that open, escalate or recur are delivered through it after the task's
+    rows are stored. ``notify`` is the project default policy (``True``, ``False`` or ``{on, min_severity}``) for
+    tasks whose ``stability`` declaration has no ``notify`` of its own; without it only declared tasks notify.
+    Delivery never fails a task and never changes the report.
     """
     if plan.errors:
         msg = "the plan has errors and cannot start: " + "; ".join(f"{i.code}: {i.message}" for i in plan.errors)
@@ -241,12 +252,18 @@ def run_plan(  # noqa: PLR0913 - one keyword per documented run setting
     granted = frozenset((g.object, op) for g in plan.grants for op in g.operations)
     worker = _Worker(
         Path(project_root), execution, table_io, granted, retry or RetryPolicy(), loader, sleep, externals, stream,
-        stream.run_id if stream else run_id or uuid.uuid4().hex,
+        stream.run_id if stream else run_id or uuid.uuid4().hex, notifier, _policy(notify),
     )  # fmt: skip
     _drive(worker, pending, results, {e.task_id for e in plan.entries}, limit, fail_fast=fail_fast)
     for entry in pending:
         results[entry.task_id] = TaskResult(entry.task_id, NOT_RUN, "run stopped after a failure")
     return _finish(plan, results, stream, dry_run=False, limit=limit)
+
+
+def _policy(notify: object) -> NotifyPolicy | None:
+    from bricksmith.monitor.stability.config import parse_notify  # noqa: PLC0415 - only with a project default
+
+    return None if notify is None else parse_notify(notify)
 
 
 def _finish(

@@ -56,6 +56,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Least-squares trend check; `false` disables it. |
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
 | `gate` | `{fail_on: [], on_error: "warn"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`. |
+| `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity}`. See [Notifications](#notifications). |
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
 | `refresh_periods` | `1` | The latest N periods are profiled again on every run (late or corrected data). |
 | `max_periods`, `max_segments` | `36`, `50` | Computation window and the most frequent segment values kept per segment set. |
@@ -88,6 +89,25 @@ columns and text with very many values are skipped. The reason for each skip is 
 
 Dry runs and failed tasks skip the check. Stability writes to a shared table are serialized per process and retried
 on concurrent-modification conflicts.
+
+## Notifications
+
+Stored alerts can also be delivered through an [`AlertNotifier`](operations.md). Pass the notifier to the run:
+
+```python
+run_plan(plan, ..., notifier=AlertNotifier([my_adapter]), notify=True)
+```
+
+`notify` on `run_plan` is the project default; a task's `stability.notify` replaces it (`false` turns it off for
+that task). Both take `true` (every transition), `false`, or `{on: [opened, escalated, recurred], min_severity:
+warning|critical}`. With a notifier but no `notify` anywhere, nothing is sent.
+
+Each alert that **opened**, **escalated** from warning to critical or **recurred** becomes one `statistical_alert`
+event whose dedup key is `stability:<dataset>:<alert_id>:<transition>`. Events are derived by comparing the replayed
+alerts with the ones stored before the run, so replaying unchanged data sends nothing, and a sliding window that
+drops the opening period of an open alert keeps its `alert_id` and sends nothing either. Delivery happens after the
+rows are stored, never raises, and cannot fail the task or change the gate; `bricksmith stability check` does not
+deliver.
 
 ## Metrics and default limits
 

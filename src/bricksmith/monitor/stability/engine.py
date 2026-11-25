@@ -17,7 +17,7 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
-from bricksmith.monitor.stability.config import FIXED, PREVIOUS, ROLLING
+from bricksmith.monitor.stability.config import ESCALATED, FIXED, OPENED, PREVIOUS, RECURRED, ROLLING
 from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.tables import ALERTS, BINNINGS, PROFILES, RESULTS, RUNS
@@ -25,7 +25,8 @@ from bricksmith.monitor.stability.tables import ALERTS, BINNINGS, PROFILES, RESU
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bricksmith.monitor.stability.config import StabilityConfig
+    from bricksmith.monitor.stability.config import NotifyPolicy, StabilityConfig
+    from bricksmith.ops.notify import AlertEvent
 
 PASSED = "passed"
 WARNED = "warned"
@@ -132,6 +133,7 @@ class CheckResult:
     outcome: Outcome
     skipped: dict[str, str] = field(default_factory=dict)
     binning: Reference | None = None
+    notifications: list[AlertEvent] = field(default_factory=list)
 
 
 def judgment_fingerprint(config: StabilityConfig) -> str:
@@ -294,6 +296,73 @@ def _superseded(
     ]
 
 
+def _transitions(row: Mapping[str, Any], before: Mapping[str, Any] | None) -> list[str]:
+    """Return the transitions an open alert row went through since ``before`` (its stored open row, if any)."""
+    if before is None:
+        return [RECURRED if row.get("recurrence") else OPENED]
+    found = []
+    if str(before.get("severity")) != CRITICAL and str(row["severity"]) == CRITICAL:
+        found.append(ESCALATED)
+    if row.get("recurrence") and not before.get("recurrence"):
+        found.append(RECURRED)
+    return found
+
+
+def alert_events(  # noqa: PLR0913 - one keyword per event field
+    fresh: Sequence[Mapping[str, Any]],
+    stored: Sequence[Mapping[str, Any]],
+    policy: NotifyPolicy | None,
+    *,
+    dataset: str,
+    target: str,
+    run_id: str,
+    occurred_at: str,
+) -> list[AlertEvent]:
+    """Return one event per alert that opened, escalated or recurred, against the stored open alerts.
+
+    An alert whose stored open row says the same thing yields nothing, so replays and sliding windows (a carried
+    alert keeps its id) stay silent. The key ``stability:<dataset>:<alert_id>:<transition>`` is stable across runs.
+    """
+    if policy is None or not policy.on:
+        return []
+    from bricksmith.ops.events import STATISTICAL_ALERT  # noqa: PLC0415 - keeps the engine import light
+    from bricksmith.ops.notify import AlertEvent  # noqa: PLC0415
+
+    before = {str(r["alert_id"]): r for r in stored if r.get("state") == OPEN}
+    events = []
+    for row in sorted(fresh, key=lambda r: str(r["alert_id"])):
+        if row["state"] != OPEN:
+            continue
+        for transition in _transitions(row, before.get(str(row["alert_id"]))):
+            severity = "critical" if row["severity"] == CRITICAL else "warning"
+            if not policy.wants(transition, severity):
+                continue
+            events.append(
+                AlertEvent(
+                    STATISTICAL_ALERT,
+                    dataset,
+                    f"{transition}: {row['message']}",
+                    severity,
+                    STATISTICAL_ALERT,
+                    target,
+                    run_id,
+                    occurred_at=occurred_at,
+                    key=f"stability:{dataset}:{row['alert_id']}:{transition}",
+                    details={
+                        "alert_id": row["alert_id"],
+                        "transition": transition,
+                        "kind": row["kind"],
+                        "metric": row["metric"],
+                        "column": row["column"],
+                        "segment": row["segment_label"],
+                        "opened_period": row["opened_period"],
+                        "last_period": row["last_period"],
+                    },
+                )
+            )
+    return events
+
+
 def check(  # noqa: PLR0913 - one keyword per documented input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -338,6 +407,10 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
         stored=stored_alerts,
     )  # fmt: skip
+    notifications = alert_events(
+        alert_rows, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
+        occurred_at=started,
+    )  # fmt: skip
     alert_rows += _superseded(stored_alerts, alert_rows, run_id, started)
     latest = window[-1]
     counts = counts_in(computed.results, latest)
@@ -360,7 +433,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         "judgment_fingerprint": judgment, "started_at": started, "finished_at": _now(),
     }  # fmt: skip
     tables = {BINNINGS: binning_rows, PROFILES: fresh, RESULTS: results, ALERTS: alert_rows, RUNS: [run_row]}
-    return CheckResult(tables, outcome, skipped, binning)
+    return CheckResult(tables, outcome, skipped, binning, notifications)
 
 
 def error_outcome(dataset: str, error: BaseException, output: str = "") -> Outcome:
@@ -378,6 +451,7 @@ __all__ = [
     "Outcome",
     "StabilityGateError",
     "Store",
+    "alert_events",
     "check",
     "error_outcome",
     "fit_range",
