@@ -28,7 +28,7 @@ from bricksmith.monitor.stability.config import (
     ROLLING,
     SCHEMA_METRICS,
 )
-from bricksmith.monitor.stability.metrics import Context, alerts, compute, counts_in
+from bricksmith.monitor.stability.metrics import Context, alerts, compute, counts_in, table_level
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
 from bricksmith.monitor.stability.schema import (
@@ -65,7 +65,7 @@ class StabilityGateError(MonitorError):
 class Store(Protocol):
     """Reads the rows already stored for a dataset in one stability table."""
 
-    def rows(
+    def rows(  # noqa: PLR0913 - one keyword per storage filter
         self,
         kind: str,
         dataset: str,
@@ -73,11 +73,13 @@ class Store(Protocol):
         version: int | None = None,
         periods: Collection[str] | None = None,
         states: Collection[str] | None = None,
+        columns: Collection[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return the rows of table ``kind`` whose ``dataset`` column equals ``dataset``.
 
-        ``version``, ``periods`` and ``states`` narrow the read to one binning version, a set of periods and a set of
-        alert states; a filter left ``None`` keeps every row. Implementations push them into the storage read.
+        ``version``, ``periods``, ``states`` and ``columns`` narrow the read to one binning version, a set of periods,
+        a set of alert states and a set of monitored columns; a filter left ``None`` keeps every row.
+        Implementations push them into the storage read.
         """
         ...
 
@@ -88,7 +90,7 @@ class MemoryStore:
 
     tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
-    def rows(
+    def rows(  # noqa: PLR0913 - one keyword per storage filter
         self,
         kind: str,
         dataset: str,
@@ -96,6 +98,7 @@ class MemoryStore:
         version: int | None = None,
         periods: Collection[str] | None = None,
         states: Collection[str] | None = None,
+        columns: Collection[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return the stored rows of ``dataset``, narrowed by the optional filters."""
         keep = {} if periods is None else dict.fromkeys(periods)
@@ -106,6 +109,7 @@ class MemoryStore:
             and (version is None or int(r.get("version") or 0) == version)
             and (periods is None or str(r.get("period")) in keep)
             and (states is None or r.get("state") in states)
+            and (columns is None or r.get("column") in columns)
         ]
 
 
@@ -376,12 +380,14 @@ def _superseded(  # noqa: PLR0913 - the rows to compare and where the replay sta
     version: int,
     start: str,
     rejudged: bool = False,
+    lineage: Collection[int] = (),
 ) -> list[dict[str, Any]]:
     """Return stored alerts that the replay no longer produces, marked ``superseded``.
 
     A ``closed`` alert of ``version`` is final when it opened at or before the window ``start`` (the replay can no
     longer re-judge its opening) or when the judgment is unchanged (``rejudged`` false): the window only slid past
-    the run that produced it. Either way it stays closed.
+    the run that produced it. Either way it stays closed. The table-level alerts of the other ``lineage`` versions
+    count as ``version``'s own.
     """
     ids = {r["alert_id"] for r in fresh}
     return [
@@ -391,7 +397,7 @@ def _superseded(  # noqa: PLR0913 - the rows to compare and where the replay sta
         and r.get("state") in (OPEN, CLOSED)
         and not (
             r.get("state") == CLOSED
-            and int(r.get("version") or 0) == version
+            and (int(r.get("version") or 0) == version or (table_level(r) and int(r.get("version") or 0) in lineage))
             and (not rejudged or str(r.get("opened_period") or "") <= start)
         )
     ]
@@ -525,6 +531,28 @@ def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one
     return snapshot_rows(first, new, run_id=run_id, published_at=now)
 
 
+def _lineage(
+    config: StabilityConfig, store: Store, periods: Sequence[str], *, dataset: str, version: int
+) -> tuple[list[int], list[dict[str, Any]]]:
+    """Return the earlier versions with the same period column, and their table-level profile rows.
+
+    Only one column is read per version (its first one: every row falls in a bin of each column). Periods older than
+    the horizon a single version would load (``max_periods`` and the baseline's reach, counted over the data's periods
+    and the earlier versions') are left out.
+    """
+    earlier = [r for r in store.rows(BINNINGS, dataset) if int(r["version"]) != version]
+    versions = sorted(int(r["version"]) for r in earlier if r.get("period_column") == config.period)
+    rows: list[dict[str, Any]] = []
+    for row in sorted(earlier, key=lambda r: int(r["version"])):
+        if int(row["version"]) not in versions:
+            continue
+        first = Reference.from_json(str(row["body"])).columns[0].column
+        rows += store.rows(PROFILES, dataset, version=int(row["version"]), columns=[first])
+    known = sorted({*periods, *(str(r["period"]) for r in rows)})
+    cutoff = known[max(0, len(known) - config.max_periods - _history_span(config))]
+    return versions, [r for r in rows if str(r["period"]) >= cutoff]
+
+
 def _schema_results(
     ctx: Context,
     current: tuple[str, Active, Schema, Sequence[str]],
@@ -599,9 +627,10 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         store, vanished, dataset=dataset, version=binning.version, weighted=bool(config.weight), run_id=run_id
     )
     profiles = [r for r in stored_profiles if r["period"] in keep] + fresh + emptied
+    lineage, earlier = _lineage(config, store, periods, dataset=dataset, version=binning.version)
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
-        emptied=vanished,
+        emptied=vanished, earlier=earlier,
     )  # fmt: skip
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
     computed.results += _schema_results(
@@ -630,14 +659,22 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     results = [r for r in computed.results if r["period"] in emitted or r["metric"] in SCHEMA_METRICS]
     alert_rows = alerts(
         computed.results, config, dataset=dataset, version=binning.version, run_id=run_id, updated_at=started,
-        stored=stored_alerts, periods=sorted({*periods, *vanished}), keep_inside=not rewrite_all,
+        stored=stored_alerts, periods=sorted({*periods, *vanished, *(str(r["period"]) for r in earlier)}),
+        keep_inside=not rewrite_all, lineage=lineage,
     )  # fmt: skip
     notifications = alert_events(
         alert_rows, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
         occurred_at=started,
     )  # fmt: skip
     alert_rows += _superseded(
-        stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
+        stored_alerts,
+        alert_rows,
+        run_id,
+        started,
+        version=binning.version,
+        start=window[0],
+        rejudged=rewrite_all,
+        lineage=lineage,
     )
     latest = max([window[-1], *vanished])
     counts = counts_in(computed.results, latest)
