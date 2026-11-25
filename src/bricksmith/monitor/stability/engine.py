@@ -51,6 +51,7 @@ from bricksmith.monitor.stability.incident import (
     digest_event,
     false_positive_rates,
 )
+from bricksmith.monitor.stability.marks import ACCEPTED, MarkSet, effective_marks, marks_digest
 from bricksmith.monitor.stability.metrics import Context, alerts, compute, counts_in, table_level, trend_value
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
@@ -70,6 +71,7 @@ from bricksmith.monitor.stability.tables import (
     ALERT_EVENTS,
     ALERTS,
     BINNINGS,
+    MARKS,
     PROFILES,
     RESULTS,
     RESULTS_HISTORY,
@@ -204,11 +206,14 @@ class CheckResult:
     incident: Incident | None = None
 
 
-def judgment_fingerprint(config: StabilityConfig, actions: Sequence[Mapping[str, Any]] = ()) -> str:
+def judgment_fingerprint(
+    config: StabilityConfig, actions: Sequence[Mapping[str, Any]] = (), marks: Sequence[Mapping[str, Any]] = ()
+) -> str:
     """Hash what decides colors and alerts (not bins): a change rewrites the results of the whole window.
 
     The human actions of the dataset are part of the judgment: their latest decision per alert enters the hash, so a
-    new decision re-judges the window and replays stay deterministic. Without actions the hash is the declaration's.
+    new decision re-judges the window and replays stay deterministic. So are the ``marks`` in force (the effective
+    ones, see :func:`window_marks`). Without actions or marks the hash is the declaration's.
     """
     data = config.to_dict()
     content = {k: data[k] for k in ("baseline", "column_limits", "limits", "min_rows", "persistence", "trend")}
@@ -223,7 +228,31 @@ def judgment_fingerprint(config: StabilityConfig, actions: Sequence[Mapping[str,
         content["actions"] = sorted(
             [a, str(r["action_id"]), str(r.get("valid_until") or "")] for a, r in decided.items()
         )
+    if marks:
+        content["marks"] = marks_digest(marks)
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
+
+def window_marks(  # noqa: PLR0913 - the run's periods and the store coordinates
+    config: StabilityConfig,
+    store: Store,
+    periods: Sequence[str],
+    loaded: Sequence[str],
+    window: Sequence[str],
+    *,
+    dataset: str,
+    as_of: str,
+) -> MarkSet:
+    """Return the marks in force on ``as_of`` for the periods a run reads: what it loads and the trend history before.
+
+    Marks of earlier periods are left out of the run (and of its fingerprint); an expired mark or an ``unmarked``
+    selector is not in force.
+    """
+    first = min(loaded, default="")
+    if config.trend is not None and window:
+        index = list(periods).index(window[0]) if window[0] in periods else 0
+        first = min(first, periods[max(0, index - config.trend.window)])
+    return MarkSet(tuple(effective_marks(store.rows(MARKS, dataset), as_of, dataset, since=first)))
 
 
 def _now() -> str:
@@ -476,23 +505,29 @@ def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
     *,
     dataset: str,
     version: int,
+    excluded: Collection[str] = (),
+    regimes: Collection[str] = (),
 ) -> dict[tuple[str, str, str], list[float]]:
     """Return the stored colored values of the periods before the window, per series.
 
     A series is read over the last ``trend.span`` periods. With a season it keeps one position per period (``NaN`` for
     a period left out of the history), so the phase of every value survives; ``per: business_day`` seeds ``row_count``
-    per business day, as the judgment sees it.
+    per business day, as the judgment sees it. Periods in ``excluded`` leave the history, and nothing before the latest
+    of ``regimes`` that precedes the window is read.
     """
     policy = config.trend
     if policy is None or not window:
         return {}
-    before = [p for p in periods if p < window[0]][-policy.span :]
+    restart = max((r for r in regimes if r < window[0]), default="")
+    before = [p for p in periods if restart <= p < window[0]][-policy.span :]
     if not before:
         return {}
     series: dict[tuple[str, str, str], dict[str, float]] = {}
     for row in store.rows(RESULTS, dataset, version=version, periods=before):
         value = row.get("value")
-        if not _trended(config, row) or value is None or not math.isfinite(float(value)):
+        if str(row["period"]) in excluded or not _trended(config, row):
+            continue
+        if value is None or not math.isfinite(float(value)):
             continue
         if not keeps(
             policy, str(row.get("status") or ""), str(row.get("trend_status") or ""), str(row.get("trend_model") or "")
@@ -555,13 +590,54 @@ def _red_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
 
 
 def _counts(results: Sequence[Mapping[str, Any]], periods: Collection[str]) -> dict[str, int]:
-    """Return how many results of ``periods`` together are red and yellow."""
+    """Return how many results of ``periods`` together are red and yellow; accepted results do not count."""
     total = {RED: 0, YELLOW: 0}
+    counted = [r for r in results if r.get("mark") != ACCEPTED]
     for period in periods:
-        found = counts_in(results, period)
+        found = counts_in(counted, period)
         total[RED] += found[RED]
         total[YELLOW] += found[YELLOW]
     return total
+
+
+def label_results(results: Sequence[dict[str, Any]], marks: MarkSet) -> None:
+    """Stamp ``mark`` and ``mark_reason`` on every result: the most specific mark in force, or empty."""
+    for row in results:
+        found = marks.of(row)
+        row["mark"], row["mark_reason"] = (found["mark"], found["reason"]) if found else ("", "")
+
+
+def _human_states(
+    alert_rows: Sequence[Mapping[str, Any]],
+    actions: Sequence[Mapping[str, Any]],
+    results: Sequence[Mapping[str, Any]],
+    as_of: str,
+) -> dict[str, str]:
+    """Return ``alert id -> accepted|closed`` for the alerts a human action or an ``accepted`` mark holds out."""
+    human = {
+        str(a["alert_id"]): a["state"]
+        for a in apply_actions(alert_rows, actions, as_of, "dataset")
+        if a["state"] in (STATE_ACCEPTED, STATE_CLOSED)
+    }
+    return human | _accepted_alerts(alert_rows, results, human)
+
+
+def _accepted_alerts(
+    alert_rows: Sequence[Mapping[str, Any]], results: Sequence[Mapping[str, Any]], human: Mapping[str, str]
+) -> dict[str, str]:
+    """Return the open alerts held out of the gate by an ``accepted`` mark on their series in their last period."""
+    accepted = {
+        (str(r["segment"]), str(r["column"]), str(r["metric"]), str(r["period"]))
+        for r in results
+        if r.get("mark") == ACCEPTED
+    }
+    return {
+        str(a["alert_id"]): STATE_ACCEPTED
+        for a in alert_rows
+        if a["state"] == OPEN
+        and str(a["alert_id"]) not in human
+        and (str(a["segment"]), str(a["column"]), str(a["metric"]), str(a["last_period"])) in accepted
+    }
 
 
 def _gate(config: StabilityConfig, red: int, yellow: int, open_alerts: int, critical: int) -> list[str]:
@@ -1004,14 +1080,10 @@ def _grouped(
 
 
 def _held(
-    alert_rows: list[dict[str, Any]], actions: list[dict[str, Any]], today: str
+    alert_rows: list[dict[str, Any]], actions: list[dict[str, Any]], results: Sequence[Mapping[str, Any]], today: str
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
-    """Return the alerts a human accepted or closed, and the rows with that state applied."""
-    human = {
-        str(a["alert_id"]): a["state"]
-        for a in apply_actions(alert_rows, actions, today, "dataset")
-        if a["state"] in (STATE_ACCEPTED, STATE_CLOSED)
-    }
+    """Return the alerts a human accepted or closed (by action or ``accepted`` mark), and the rows with it applied."""
+    human = _human_states(alert_rows, actions, results, today)
     return human, [{**r, "state": human[str(r["alert_id"])]} if str(r["alert_id"]) in human else r for r in alert_rows]
 
 
@@ -1039,7 +1111,7 @@ def _rewrites(previous: Sequence[Mapping[str, Any]], judgment: str) -> bool:
     return last is None or last.get("judgment_fingerprint") != judgment
 
 
-def check(  # noqa: PLR0913 - one keyword per documented input
+def check(  # noqa: PLR0913, PLR0915 - one keyword per documented input, one step per stage of the run
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
     store: Store,
@@ -1089,12 +1161,17 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         store, vanished, dataset=dataset, version=binning.version, weighted=bool(config.weight), run_id=run_id
     )
     profiles = [r for r in stored_profiles if r["period"] in keep] + fresh + emptied
+    marks = window_marks(config, store, periods, loaded, window, dataset=dataset, as_of=started[:10])
     lineage, earlier = _lineage(config, store, periods, dataset=dataset, version=binning.version)
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
         emptied=vanished, earlier=earlier, settling=settling, gap=_gap_of(cal),
-        trend_seed=_trend_seed(config, store, periods, window, dataset=dataset, version=binning.version),
+        trend_seed=_trend_seed(
+            config, store, periods, window, dataset=dataset, version=binning.version,
+            excluded=marks.excluded, regimes=marks.regimes,
+        ),
         score_seed=_score_seed(config, store, periods, window, dataset=dataset, version=binning.version),
+        excluded=marks.excluded, regimes=marks.regimes, invalid=marks.invalid,
         red_seed=_red_seed(config, store, periods, window, dataset=dataset, version=binning.version),
     )  # fmt: skip
     stored_alerts = store.rows(ALERTS, dataset, states=(OPEN, CLOSED))
@@ -1110,9 +1187,10 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         if config.revision
         else []
     )  # fmt: skip
+    label_results(computed.results, marks)
     fresh = _with_shares(fresh + emptied, computed)
     actions = store.rows(ACTIONS, dataset)
-    judgment = judgment_fingerprint(config, actions)
+    judgment = judgment_fingerprint(config, actions, marks.marks)
     rewrite_all = _rewrites(store.rows(RUNS, dataset, version=binning.version), judgment) or bool(redo)
     cadence_rows = (
         cadence_results(
@@ -1134,7 +1212,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         [window[-1], *vanished, *(r["period"] for r in cadence_rows if r["metric"] == PERIOD_LATE and r["value"])]
     )
     alert_rows, suppressed = _budgeted(alert_rows, stored_alerts, computed.results, config, latest)
-    human, held = _held(alert_rows, actions, started[:10])
+    human, held = _held(alert_rows, actions, computed.results, started[:10])
     notifications = alert_events(
         held, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
         occurred_at=started,
@@ -1179,6 +1257,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         RESULTS: results,
         ALERTS: alert_rows,
         ACTIONS: [],
+        MARKS: [],
         RUNS: [run_row],
         **({REVISIONS: revision_rows} if config.revision else {}),
     }
@@ -1213,4 +1292,5 @@ __all__ = [
     "fit_range",
     "judgment_fingerprint",
     "reprocessed_periods",
+    "window_marks",
 ]
