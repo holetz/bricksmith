@@ -200,6 +200,29 @@ def test_period_range_references_and_literal_version() -> None:
     assert {r["model_version"] for r in result.tables["results"]} == {"7"}
 
 
+def test_matured_results_carry_the_version_that_scored_the_measured_rows() -> None:
+    # Version 2 is released in 2025-08; with a two-period lag, 2025-08 and 2025-09 measure v1's rows.
+    result = run(predictions(), label_lag=2, model_version_column="version")
+    results = result.tables["results"]
+    for period in ("2025-08", "2025-09"):
+        gini = pick(results, metric="gini", segment="", monitoring_period=period)[0]
+        assert gini["data_period"] < "2025-08" and gini["model_version"] == "1"
+        psi = pick(results, metric="psi", segment="", monitoring_period=period)[0]
+        assert psi["data_period"] == period and psi["model_version"] == "2"
+    v2_gini = pick(results, metric="gini", model_version="2", segment="")
+    assert v2_gini == [] and result.tables["runs"][0]["model_version"] == "1,2"
+
+
+def test_a_lagged_period_scored_by_two_versions_is_stamped_with_both() -> None:
+    rows = predictions()
+    for i, row in enumerate(r for r in rows if r["month"] == "2025-07"):
+        row["version"] = "1" if i % 2 else "2"
+    results = run(rows, label_lag=1).tables["results"]
+    gini = pick(results, metric="gini", segment="", monitoring_period="2025-08")[0]
+    assert gini["data_period"] == "2025-07" and gini["model_version"] == "1,2"
+    assert len(pick(results, metric="gini", segment="", monitoring_period="2025-08")) == 1
+
+
 def test_errors_when_nothing_can_be_measured() -> None:
     with pytest.raises(MonitorError, match="development reference"):
         run(predictions(), references={"development": {"sample": "none"}})

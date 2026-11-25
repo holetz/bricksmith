@@ -1016,7 +1016,11 @@ def _measure_family(  # noqa: PLR0913, PLR0917 - one argument per thing the fami
     history: tuple[Sequence[str], Frame],
     out: _Window,
 ) -> None:
-    """Measure one family of one monitoring period; metrics sharing a data period are measured in one pass."""
+    """Measure one family of one monitoring period; metrics sharing a data period are measured in one pass.
+
+    A result is stamped with the model version of the rows it measured: a lagged data period carries the version
+    that scored it, which differs from the monitoring period's after a release.
+    """
     family, column = job
     period, version, frame = current
     observed, monitored = history
@@ -1026,17 +1030,21 @@ def _measure_family(  # noqa: PLR0913, PLR0917 - one argument per thing the fami
         by_data.setdefault(resolve_data_period(observed, period, lag), []).append((metric, lag))
     for lagged, metrics in by_data.items():
         names = {metric for metric, _ in metrics}
+        measured = version
         if lagged is None:
             items = [Item("", column, m, None, 0, "data_period_unavailable") for m in sorted(names)]
             failed = 0
         else:
             rows = frame if lagged == period else monitored.select(column=ctx.config.period, keep={lagged})
+            if lagged != period:
+                measured = _version(rows, ctx.config)
+                out.versions.update(measured.split(","))
             items, failed = measurer.run(family, column, rows, 1)
             items = [i for i in items if i.metric in names]
         out.errors += failed
         lags = dict(metrics)
         for item in items:
-            row = _result(ctx, item, family, version, (period, lagged or "", lags[item.metric]))
+            row = _result(ctx, item, family, measured, (period, lagged or "", lags[item.metric]))
             out.results.append(row)
             out.details += _detail_rows(row, item)
 

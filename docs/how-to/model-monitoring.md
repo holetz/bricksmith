@@ -263,6 +263,15 @@ period, so immature data is not shown as mature. Each result carries `lag` and `
 beside `data_period`, and series, alerts and reprocessing stay keyed on the monitoring period. See
 [decision 0018](../decisions/0018-model-monitoring-maturation-lags.md).
 
+Each result carries in `model_version` the version of the rows it measured. A lagged result is stamped with the
+version that scored its `data_period`, not the monitoring period's: with `label_lag: 3` and version 2 released in
+September, the matured Gini of September to November measures June to August and stays under version 1, and the
+version 2 series starts once version 2's own rows mature. A data period scored by several versions is measured once
+and stamped with all of them, sorted and joined by commas (`1,2`), as a mixed monitoring period is. Because trend,
+persistence and alert identities are keyed by version, those results join the series, alerts and actions of the
+version that produced them; alerts recorded before this rule under the newer version no longer match and close or
+expire by their own rules. The run's `model_version` lists every version its results carry.
+
 Each result also carries `development_value` and `out_of_time_value`: the same metric measured on the reference
 samples, so a dashboard can show how far production moved from development and out-of-time.
 
