@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 from typing import TYPE_CHECKING
 
 import pytest
 
+from bricksmith.cli.main import main
 from bricksmith.context import ExecutionContext
 from bricksmith.graph import load_graph
 from bricksmith.monitor.errors import MonitorError
@@ -216,3 +218,27 @@ def test_hook_writes_the_revisions_table_only_when_declared(tmp_path: Path) -> N
     assert changed and changed[0]["value"] == pytest.approx(0.5)
     again = io.tables["main.sales.stability_revisions"]
     assert isinstance(again, list) and len(again) == len(snapshot)
+
+
+def _cli_check(tmp_path: Path, rows: list[dict[str, object]], state: Path, *, revision: bool) -> dict:
+    data = tmp_path / "orders.jsonl"
+    data.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    config = tmp_path / "config.json"
+    declared = {"period": "month", "min_rows": 10, "refresh_periods": 2, "revision": revision}
+    config.write_text(json.dumps(declared), encoding="utf-8")
+    args = ["stability", "check", "--config", str(config), "--data", str(data), "--state", str(state)]
+    main([*args, "--dataset", "orders", "--json"])
+    return json.loads(state.read_text(encoding="utf-8"))
+
+
+def test_cli_state_keeps_the_revision_snapshot_while_revision_is_off(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    first = _cli_check(tmp_path, _rows(3), state, revision=True)
+    stored = first[REVISIONS]
+    assert {r["period"] for r in stored} == {"2026-01", "2026-02", "2026-03"}
+    off = _cli_check(tmp_path, _rows(3), state, revision=False)
+    assert off[REVISIONS] == stored  # a kind the run did not return is written back untouched
+    on = _cli_check(tmp_path, _rows(3, republished=True), state, revision=True)
+    assert on[REVISIONS] == stored  # the first publication survives, so the republished period is caught
+    changed = [r for r in on["results"] if r["metric"] == "revision_row_change" and r["period"] == "2026-03"]
+    assert changed and changed[0]["value"] == pytest.approx(0.5)

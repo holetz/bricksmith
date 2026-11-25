@@ -35,7 +35,8 @@ def _check(args: argparse.Namespace) -> int:
     dataset = args.dataset or config.dataset or args.table or Path(args.data).stem
     result = check(_data(args), config, MemoryStore(tables), dataset=dataset, run_id=args.run_id)
     if state is not None:
-        merged = {k: merge_rows(k, tables.get(k, []), result.tables[k]) for k in result.tables}
+        # A kind the run did not return (revisions while revision is off) is kept as loaded.
+        merged = {**tables, **{k: merge_rows(k, tables.get(k, []), rows) for k, rows in result.tables.items()}}
         plain = {k: [{c: _plain(v) for c, v in r.items()} for r in rows] for k, rows in merged.items()}
         state.write_text(json.dumps(plain, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     outcome = result.outcome
