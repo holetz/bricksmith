@@ -70,6 +70,7 @@ KEYS = frozenset({
     "output", "period", "columns", "exclude", "segments", "weight", "baseline", "fit_periods", "limits",
     "column_limits", "trend", "trend_metrics", "trend_directions", "persistence", "gate", "min_rows", "refresh_periods",
     "max_periods", "max_segments", "scope", "prefix", "inference", "dataset", "epsilon", "rules", "notify", "revision",
+    "history", "history_periods",
 })  # fmt: skip
 OPENED = "opened"
 ESCALATED = "escalated"
@@ -236,6 +237,8 @@ class StabilityConfig:
     rules: tuple[LimitRule, ...] = ()
     notify: NotifyPolicy | None = None
     revision: bool = False
+    history: bool = False
+    history_periods: int = 0
 
     @property
     def auto(self) -> bool:
@@ -296,6 +299,10 @@ class StabilityConfig:
             data["notify"] = self.notify.to_dict()
         if self.revision:
             data["revision"] = True
+        if self.history:
+            data["history"] = True
+            if self.history_periods:
+                data["history_periods"] = self.history_periods
         if self.trend_directions:
             data["trend_directions"] = dict(sorted(self.trend_directions.items()))
         return data
@@ -477,6 +484,18 @@ def _revision(value: object) -> bool:
     return value
 
 
+def _history(data: dict[str, Any]) -> tuple[bool, int]:
+    value = data.get("history")
+    if value is not None and not isinstance(value, bool):
+        msg = f"history must be true or false, got {value!r}"
+        raise _fail(msg)
+    periods = _int(data, "history_periods", 0, 0)
+    if periods and not value:
+        msg = "history_periods needs history: true"
+        raise _fail(msg)
+    return bool(value), periods
+
+
 def _trend_directions(value: object) -> dict[str, str]:
     if value is None:
         return {}
@@ -527,6 +546,7 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
     if not prefix.replace("_", "a").isalnum():
         msg = f"prefix must be letters, digits and underscores, got {prefix!r}"
         raise _fail(msg)
+    history, history_periods = _history(data)
     try:
         config = StabilityConfig(
             period=_name(data["period"], "period"),
@@ -556,6 +576,8 @@ def parse_config(data: object, root: Path | str | None = None) -> StabilityConfi
             notify=parse_notify(data.get("notify")),
             revision=_revision(data.get("revision")),
             trend_directions=_trend_directions(data.get("trend_directions")),
+            history=history,
+            history_periods=history_periods,
         )
     except (TypeError, ValueError) as error:
         msg = f"invalid value: {error}"
