@@ -22,7 +22,18 @@ from bricksmith.monitor.stability.config import ESCALATED, FIXED, OPENED, PREVIO
 from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
-from bricksmith.monitor.stability.tables import ACTIONS, ALERTS, BINNINGS, PROFILES, RESULTS, REVISIONS, RUNS
+from bricksmith.monitor.stability.tables import (
+    ACTIONS,
+    ALERT_EVENTS,
+    ALERTS,
+    BINNINGS,
+    PROFILES,
+    RESULTS,
+    RESULTS_HISTORY,
+    REVISIONS,
+    RUNS,
+    SCHEMAS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -480,6 +491,29 @@ def _emptied(  # noqa: PLR0913 - the store read and the zeroed fields
     ]
 
 
+def _history_rows(  # noqa: PLR0913 - the run's facts stamped on every row
+    results: Sequence[Mapping[str, Any]],
+    config: StabilityConfig,
+    periods: Sequence[str],
+    *,
+    judged_at: str,
+    judgment: str,
+    data_version: int | None,
+) -> list[dict[str, Any]]:
+    """Return the results this run emitted as history rows, limited to the latest ``history_periods`` periods."""
+    kept = set(sorted(set(periods))[-config.history_periods :]) if config.history_periods else set(periods)
+    return [
+        {
+            **{c: r.get(c) for c in SCHEMAS[RESULTS_HISTORY]},
+            "judged_at": judged_at,
+            "judgment_fingerprint": judgment,
+            "data_version": data_version,
+        }
+        for r in results
+        if r["period"] in kept
+    ]
+
+
 def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one snapshot
     computed: Any,  # noqa: ANN401 - the metrics.Computed being extended
     binning: Reference,
@@ -520,12 +554,14 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     now: str | None = None,
     reprocess: Sequence[str] = (),
     skip_unknown: bool = False,
+    data_version: int | None = None,
 ) -> CheckResult:
     """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write.
 
     ``reprocess`` names periods rewritten since their stored profile (a backfill or a correction): they are
     profiled again with the declared refresh range, the whole window is judged again and the alerts are replayed.
     An item is a period or a ``first..last`` range; ``skip_unknown`` drops what the data does not have.
+    ``data_version`` is the Delta version of the monitored table this run read, stored with the history rows.
     """
     started = now or _now()
     periods = _engine_periods(data, config.period)
@@ -630,6 +666,12 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     }
     if config.revision:
         tables[REVISIONS] = revision_rows
+    if config.history:
+        tables[RESULTS_HISTORY] = _history_rows(
+            results, config, sorted({*window, *vanished}), judged_at=started, judgment=judgment,
+            data_version=data_version,
+        )  # fmt: skip
+        tables[ALERT_EVENTS] = []
     return CheckResult(tables, outcome, skipped, binning, notifications)
 
 
