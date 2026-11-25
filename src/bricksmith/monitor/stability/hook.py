@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.adapter import is_rows
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.stability.config import StabilityConfig, parse_declarations
+from bricksmith.monitor.stability.config import NotifyPolicy, StabilityConfig, parse_declarations
 from bricksmith.monitor.stability.engine import (
     ERROR,
     MemoryStore,
@@ -29,6 +29,7 @@ from bricksmith.monitor.stability.tables import KINDS, SCHEMAS, merge_rows, tabl
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
+    from bricksmith.ops.notify import AlertNotifier
     from bricksmith.plan.model import PlanEntry, Target
     from bricksmith.runner.context import TaskContext
 
@@ -183,28 +184,51 @@ def _write(ctx: TaskContext, store: _IOStore, kind: str, rows: Sequence[Mapping[
                 return
 
 
-def _check_one(ctx: TaskContext, declaration: Declaration, run_id: str) -> Outcome:
+def _check_one(
+    ctx: TaskContext,
+    declaration: Declaration,
+    run_id: str,
+    notifier: AlertNotifier | None,
+    default: NotifyPolicy | None,
+) -> Outcome:
     data = ctx.io.read(declaration.physical)
     spark = None if is_rows(data) else getattr(ctx.io, "spark", None) or getattr(data, "sparkSession", None)
     store = _IOStore(ctx, declaration.tables, spark)
+    config = declaration.config
+    if notifier is None:
+        config = replace(config, notify=None)
+    elif config.notify is None:
+        config = replace(config, notify=default)
     result = check(
-        data, declaration.config, store, dataset=declaration.dataset, run_id=run_id, task_id=ctx.task_id,
+        data, config, store, dataset=declaration.dataset, run_id=run_id, task_id=ctx.task_id,
         physical=declaration.physical,
     )  # fmt: skip
     for kind in KINDS:
         if result.tables[kind] or not store.exists(kind):
             _write(ctx, store, kind, result.tables[kind])  # an empty write creates the table for dashboards
+    if notifier is not None:
+        for event in result.notifications:
+            notifier.notify(event)  # never raises: delivery cannot fail the task, and runs after the rows are stored
     outcome = result.outcome
     return Outcome(**{**outcome.to_dict(), "output": declaration.output})
 
 
-def run_stability(ctx: TaskContext, run_id: str) -> tuple[tuple[Outcome, ...], BaseException | None]:
-    """Check every declared output of the task; return the outcomes and the error that fails the task, if any."""
+def run_stability(
+    ctx: TaskContext,
+    run_id: str,
+    notifier: AlertNotifier | None = None,
+    notify: NotifyPolicy | None = None,
+) -> tuple[tuple[Outcome, ...], BaseException | None]:
+    """Check every declared output of the task; return the outcomes and the error that fails the task, if any.
+
+    With a ``notifier``, alerts that opened, escalated or recurred are delivered after the rows are written, under
+    the declaration's ``notify`` policy or, when it declares none, the project's ``notify`` default.
+    """
     outcomes: list[Outcome] = []
     failure: BaseException | None = None
     for declaration in declarations(ctx.entry):
         try:
-            outcome = _check_one(ctx, declaration, run_id)
+            outcome = _check_one(ctx, declaration, run_id, notifier, notify)
         except Exception as error:  # noqa: BLE001 - the error policy decides
             outcomes.append(error_outcome(declaration.dataset, error, declaration.output))
             if declaration.config.gate.on_error == "fail" and failure is None:

@@ -3,12 +3,24 @@
 
 from __future__ import annotations
 
+import textwrap
+from typing import TYPE_CHECKING, Any
+
 import pytest
 
+from bricksmith.context import ExecutionContext
+from bricksmith.graph import load_graph
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.stability.config import NotifyPolicy, parse_config, parse_notify
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, alert_events, check
 from bricksmith.monitor.stability.tables import merge_rows
+from bricksmith.ops.notify import AlertNotifier
+from bricksmith.plan import build_plan
+from bricksmith.runner import InMemoryTableIO, RunReport, apply_plan
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
 
 
 def test_policy_shapes() -> None:
@@ -106,3 +118,79 @@ def _alert(severity: str) -> dict[str, object]:
 
 def _ids() -> dict[str, str]:
     return {"dataset": "orders", "target": "t", "run_id": "r", "occurred_at": "2026-04-01T00:00:00+00:00"}
+
+
+TASKS = """
+from bricksmith.tasks import task
+
+@task(kind="table", outputs="orders", metadata={"stability": STABILITY})
+def orders(ctx):
+    drift = ctx.execution.parameters.get("drift") == "yes"
+    rows = []
+    for m in range(4):
+        for i in range(60):
+            late = drift and m == 3
+            rows.append({"month": f"2026-0{m + 1}", "amount": float(i % 20 + (40 if late else 0)), "id": i})
+    ctx.write("orders", rows)
+"""
+
+
+class Recorder:
+    name = "recorder"
+
+    def __init__(self, *, broken: bool = False) -> None:
+        self.payloads: list[Mapping[str, Any]] = []
+        self.broken = broken
+
+    def deliver(self, payload: Mapping[str, Any]) -> None:
+        self.payloads.append(payload)
+        if self.broken:
+            msg = "adapter down"
+            raise RuntimeError(msg)
+
+
+def _project(root: Path, **declared: object) -> Path:
+    stability = {"period": "month", "exclude": ["id"], "persistence": {"immediate_red": True}, **declared}
+    path = root / "catalogs/main/sales/orders.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(TASKS).replace("STABILITY", repr(stability)), encoding="utf-8")
+    return root
+
+
+def _plan_run(root: Path, io: InMemoryTableIO, drift: str, **options: object) -> RunReport:
+    context = ExecutionContext(environment="test", parameters={"drift": drift})
+    graph = load_graph(root, context=context)
+    return apply_plan(build_plan(graph), graph, project_root=root, execution=context, table_io=io, **options)  # type: ignore[arg-type]
+
+
+def test_run_delivers_once_and_replays_deliver_nothing(tmp_path: Path) -> None:
+    root, io, adapter = _project(tmp_path, notify=True), InMemoryTableIO(), Recorder()
+    notifier = AlertNotifier([adapter], dedup_window_seconds=0)
+    assert _plan_run(root, io, "no", notifier=notifier).ok
+    assert adapter.payloads == []
+    assert _plan_run(root, io, "yes", notifier=notifier).ok
+    sent = len(adapter.payloads)
+    assert sent >= 1 and all(p["kind"] == "statistical_alert" for p in adapter.payloads)
+    assert _plan_run(root, io, "yes", notifier=notifier).ok
+    assert len(adapter.payloads) == sent
+
+
+def test_project_default_and_task_override(tmp_path: Path) -> None:
+    adapter = Recorder()
+    notifier = AlertNotifier([adapter], dedup_window_seconds=0)
+    _plan_run(_project(tmp_path / "a"), InMemoryTableIO(), "yes", notifier=notifier)
+    assert adapter.payloads == []  # opt-in: neither the task nor the project asked
+    _plan_run(_project(tmp_path / "b"), InMemoryTableIO(), "yes", notifier=notifier, notify=True)
+    assert adapter.payloads
+    adapter.payloads.clear()
+    _plan_run(_project(tmp_path / "c", notify=False), InMemoryTableIO(), "yes", notifier=notifier, notify=True)
+    assert adapter.payloads == []
+    _plan_run(_project(tmp_path / "d", notify=True), InMemoryTableIO(), "yes")
+    assert adapter.payloads == []  # no notifier, nothing to deliver through
+
+
+def test_a_broken_adapter_never_fails_the_task(tmp_path: Path) -> None:
+    adapter = Recorder(broken=True)
+    notifier = AlertNotifier([adapter], max_attempts=1)
+    report = _plan_run(_project(tmp_path, notify=True), InMemoryTableIO(), "yes", notifier=notifier)
+    assert report.ok and adapter.payloads and notifier.records[0].status == "failed"
