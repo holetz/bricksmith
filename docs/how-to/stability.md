@@ -109,6 +109,27 @@ drops the opening period of an open alert keeps its `alert_id` and sends nothing
 rows are stored, never raises, and cannot fail the task or change the gate; `bricksmith stability check` does not
 deliver.
 
+## Revision reliability
+
+Re-published history (late loads, corrections) silently changes numbers that were already reported. Declare
+`revision: true` to compare each period with its **first publication**, the profile the monitor stored the first
+time it saw the period:
+
+```python
+metadata = {"stability": {"period": "month", "revision": True, "refresh_periods": 3}}
+```
+
+The first publication goes to one extra table, `stability_revisions`, written once per period and never rewritten.
+Periods that already had stored profiles when `revision` was switched on are snapshotted from those stored rows. At
+every run, each period of the window that was re-profiled is compared with its snapshot, per segment, and the results
+join `stability_results` with `baseline_kind = revision` and `baseline_label = first publication`. They are judged by
+`limits`, `column_limits`, rules, `min_rows`, persistence alerts and the gate exactly like the other metrics.
+
+A revision is visible only while the period is re-profiled. `refresh_periods` (default 1) must cover how far back
+history can be republished, or a late change to an older period goes unseen. Snapshots belong to one binning
+version, so a refit compares from its own first observation. The check reads stored profiles, not the Delta history
+of the table, so it works on every engine.
+
 ## Metrics and default limits
 
 | Metric | Per | Value | Default limits |
@@ -120,6 +141,9 @@ deliver.
 | `row_count` | table | rows in the period | none |
 | `volume_change` | table | rows / mean baseline rows per period − 1 | both: 0.20 / 0.50 |
 | `weight_change` | table | same, with the weight column | both: 0.20 / 0.50 |
+| `revision_row_change` | table | rows now / rows at first publication − 1 (only with `revision`) | both: 0.01 / 0.05 |
+| `revision_psi` | column | PSI of the period's bin shares against its first publication | higher: 0.05 / 0.10 |
+| `revision_mean_shift` | numeric column | (mean − first-publication mean) / first-publication std | both: 0.10 / 0.25 |
 
 Bounds are inclusive. With `higher`, a value up to `green` is green, up to `red` is yellow, and above `red` is red.
 `lower` mirrors this, and `both` judges the distance from `center`. Values that cannot be judged get an explicit
@@ -189,6 +213,7 @@ which reports never use.
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
 | `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
+| `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
 | `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at |
 
 Table-level metrics use column `""`, and the whole population uses segment `""` (label `(all)`). Segment keys are
@@ -245,5 +270,6 @@ fails with `stability_gate`, and `sales_report` is blocked.
 - Results compare periods within one binning version. Changing the bin-relevant configuration fits a new version in
   the next run, which profiles and judges every period of the window at once (the first run of a version is not quiet,
   and the gate can fail in it). Alerts of the previous version are marked `superseded`.
-- Not yet covered: notification delivery, reading rules from a Delta table and revision reliability. They are
-  captured as follow-up specifications.
+- Revision reliability compares stored profiles, not rows: it says that a period changed and by how much, not which
+  keys changed, and it does not read the Delta history of the table.
+- Not yet covered: reading rules from a Delta table. It is captured as a follow-up specification.

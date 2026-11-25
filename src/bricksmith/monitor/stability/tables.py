@@ -22,7 +22,10 @@ PROFILES = "profiles"
 RESULTS = "results"
 ALERTS = "alerts"
 RUNS = "runs"
+REVISIONS = "revisions"
 KINDS = (BINNINGS, PROFILES, RESULTS, ALERTS, RUNS)
+#: The tables a declaration can have: the revisions table exists only with ``revision`` on.
+ALL_KINDS = (*KINDS, REVISIONS)
 SCHEMAS: dict[str, dict[str, str]] = {
     BINNINGS: {
         "dataset": "STRING", "version": "INT", "config_fingerprint": "STRING", "fingerprint": "STRING",
@@ -52,6 +55,12 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "flagged_periods": "INT", "recurrence": "BOOLEAN", "message": "STRING", "run_id": "STRING",
         "updated_at": "STRING",
     },
+    REVISIONS: {
+        "dataset": "STRING", "version": "INT", "period": "STRING", "period_date": "DATE", "segment": "STRING",
+        "segment_label": "STRING", "column": "STRING", "bin": "STRING", "bin_order": "INT", "bin_label": "STRING",
+        "count": "BIGINT", "weight": "DOUBLE", "value_sum": "DOUBLE", "value_sum_sq": "DOUBLE", "run_id": "STRING",
+        "published_at": "STRING",
+    },
     RUNS: {
         "run_id": "STRING", "dataset": "STRING", "task_id": "STRING", "physical": "STRING", "version": "INT",
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
@@ -65,6 +74,7 @@ KEYS: dict[str, tuple[str, ...]] = {
     RESULTS: ("dataset", "version", "period", "segment", "column", "metric"),
     ALERTS: ("dataset", "alert_id"),
     RUNS: ("run_id", "dataset"),
+    REVISIONS: ("dataset", "version", "period", "segment", "column", "bin"),
 }
 _SCOPE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
 _PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
@@ -172,11 +182,13 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
 
 __all__ = [
     "ALERTS",
+    "ALL_KINDS",
     "BINNINGS",
     "KEYS",
     "KINDS",
     "PROFILES",
     "RESULTS",
+    "REVISIONS",
     "RUNS",
     "SCHEMAS",
     "key_of",

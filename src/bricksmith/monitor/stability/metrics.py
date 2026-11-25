@@ -407,6 +407,14 @@ def _psi(
     return sum(t["contribution"] for t in terms.values())
 
 
+#: The building blocks the revision metrics reuse, so both judge and write results the same way.
+Context = _Context
+result_row = _result
+judge = _judge
+column_stats = _stats
+mean_shift = _shift
+
+
 def alert_id(dataset: str, version: int, key: Key, kind: str, opened: str) -> str:
     """Return the stable identity of an alert (replays of the same history produce the same id)."""
     text = "|".join((dataset, str(version), *key, kind, opened))
@@ -506,12 +514,17 @@ __all__ = [
     "TABLE",
     "TREND",
     "Computed",
+    "Context",
     "History",
     "alert_id",
     "alerts",
     "baseline_periods",
+    "column_stats",
     "compute",
     "counts_in",
     "index_profiles",
+    "judge",
+    "mean_shift",
     "rank",
+    "result_row",
 ]

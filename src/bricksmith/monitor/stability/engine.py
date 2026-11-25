@@ -20,7 +20,8 @@ from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.stability.config import ESCALATED, FIXED, OPENED, PREVIOUS, RECURRED, ROLLING
 from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
-from bricksmith.monitor.stability.tables import ALERTS, BINNINGS, PROFILES, RESULTS, RUNS
+from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
+from bricksmith.monitor.stability.tables import ALERTS, BINNINGS, PROFILES, RESULTS, REVISIONS, RUNS
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -141,8 +142,9 @@ def judgment_fingerprint(config: StabilityConfig) -> str:
     data = config.to_dict()
     content = {k: data[k] for k in ("baseline", "column_limits", "limits", "min_rows", "persistence", "trend")}
     content |= {"epsilon": config.epsilon, "trend_metrics": data["trend_metrics"], "weight": config.weight}
-    if "rules" in data:
-        content["rules"] = data["rules"]
+    for optional in ("rules", "revision"):
+        if optional in data:
+            content[optional] = data[optional]
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
@@ -363,6 +365,32 @@ def alert_events(  # noqa: PLR0913 - one keyword per event field
     return events
 
 
+def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one snapshot
+    computed: Any,  # noqa: ANN401 - the metrics.Computed being extended
+    binning: Reference,
+    config: StabilityConfig,
+    store: Store,
+    history: tuple[Sequence[str], Sequence[str]],
+    profiles: tuple[Sequence[dict[str, Any]], Sequence[dict[str, Any]], Sequence[dict[str, Any]]],
+    *,
+    dataset: str,
+    run_id: str,
+    now: str,
+) -> list[dict[str, Any]]:
+    """Add the revision results to ``computed`` and return the first-publication rows of periods not seen before."""
+    window, loaded = history
+    stored, fresh, current = profiles
+    snapshots = store.rows(REVISIONS, dataset, version=binning.version, periods=loaded)
+    computed.results += revision_results(
+        binning, current, snapshots, config, dataset=dataset, window=window, run_id=run_id, computed_at=now
+    )
+    seen = {str(r["period"]) for r in snapshots}
+    stored_periods = {str(r["period"]) for r in stored}
+    new = [p for p in loaded if p not in seen]
+    first = [r for r in stored if r["period"] in new] + [r for r in fresh if r["period"] not in stored_periods]
+    return snapshot_rows(first, new, run_id=run_id, published_at=now)
+
+
 def check(  # noqa: PLR0913 - one keyword per documented input
     data: Any,  # noqa: ANN401 - rows or DataFrame
     config: StabilityConfig,
@@ -391,6 +419,14 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     keep = set(loaded) - set(todo)
     profiles = [r for r in stored_profiles if r["period"] in keep] + fresh
     computed = compute(binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started)
+    revision_rows = (
+        _revisions(
+            computed, binning, config, store, (window, loaded), (stored_profiles, fresh, profiles),
+            dataset=dataset, run_id=run_id, now=started,
+        )
+        if config.revision
+        else []
+    )  # fmt: skip
     for row in fresh:
         share, base, contribution = computed.shares.get(
             (row["period"], row["segment"], row["column"], row["bin"]), (None, None, None)
@@ -433,6 +469,8 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         "judgment_fingerprint": judgment, "started_at": started, "finished_at": _now(),
     }  # fmt: skip
     tables = {BINNINGS: binning_rows, PROFILES: fresh, RESULTS: results, ALERTS: alert_rows, RUNS: [run_row]}
+    if config.revision:
+        tables[REVISIONS] = revision_rows
     return CheckResult(tables, outcome, skipped, binning, notifications)
 
 

@@ -24,7 +24,15 @@ from bricksmith.monitor.stability.engine import (
     check,
     error_outcome,
 )
-from bricksmith.monitor.stability.tables import KINDS, SCHEMAS, merge_rows, table_name, to_frame, write_options
+from bricksmith.monitor.stability.tables import (
+    ALL_KINDS,
+    KINDS,
+    SCHEMAS,
+    merge_rows,
+    table_name,
+    to_frame,
+    write_options,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -71,7 +79,7 @@ def resolve(value: object, outputs: Mapping[str, str]) -> tuple[Declaration, ...
         if scope == physical:
             msg = f"stability: {physical!r} has no schema; declare scope as catalog.schema"
             raise MonitorError(msg)
-        tables = {kind: table_name(scope, config.prefix, kind) for kind in KINDS}
+        tables = {kind: table_name(scope, config.prefix, kind) for kind in (ALL_KINDS if config.revision else KINDS)}
         found.append(Declaration(config, names[0], physical, tables))
     return tuple(found)
 
@@ -203,7 +211,7 @@ def _check_one(
         data, config, store, dataset=declaration.dataset, run_id=run_id, task_id=ctx.task_id,
         physical=declaration.physical,
     )  # fmt: skip
-    for kind in KINDS:
+    for kind in declaration.tables:
         if result.tables[kind] or not store.exists(kind):
             _write(ctx, store, kind, result.tables[kind])  # an empty write creates the table for dashboards
     if notifier is not None:
