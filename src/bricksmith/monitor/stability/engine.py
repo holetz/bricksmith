@@ -25,9 +25,11 @@ from bricksmith.monitor.stability.config import (
     FIXED,
     OPENED,
     PREVIOUS,
+    PSI,
     RECURRED,
     REMINDED,
     ROLLING,
+    VOLUME_CHANGE,
 )
 from bricksmith.monitor.stability.incident import (
     Incident,
@@ -39,7 +41,19 @@ from bricksmith.monitor.stability.incident import (
 from bricksmith.monitor.stability.metrics import alerts, compute, counts_in
 from bricksmith.monitor.stability.profile import fit_periods_of, fit_rows_binning, periods_of_rows, profile_rows
 from bricksmith.monitor.stability.revision import revision_results, snapshot_rows
-from bricksmith.monitor.stability.tables import ACTIONS, ALERTS, BINNINGS, PROFILES, RESULTS, REVISIONS, RUNS
+from bricksmith.monitor.stability.tables import (
+    ACTIONS,
+    ALERT_EVENTS,
+    ALERTS,
+    BINNINGS,
+    PROFILES,
+    RESULTS,
+    RESULTS_HISTORY,
+    REVISIONS,
+    RUNS,
+    SCHEMAS,
+)
+from bricksmith.monitor.trend import keeps
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -373,9 +387,33 @@ def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
             continue
         if value is None or not math.isfinite(float(value)):
             continue
+        if not keeps(policy, str(row.get("status") or ""), str(row.get("trend_status") or "")):
+            continue
         key = (str(row.get("segment") or ""), str(row.get("column") or ""), str(row["metric"]))
         series.setdefault(key, []).append((str(row["period"]), float(value)))
     return {key: [v for _, v in sorted(points)] for key, points in series.items()}
+
+
+def _red_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
+    config: StabilityConfig,
+    store: Store,
+    periods: Sequence[str],
+    window: Sequence[str],
+    *,
+    dataset: str,
+    version: int,
+) -> dict[str, set[str]]:
+    """Return, per segment, the stored periods before the window whose ``volume_change`` or ``psi`` was red."""
+    if config.baseline.exclude != "red" or config.baseline.kind == FIXED or not window:
+        return {}
+    before = [p for p in periods if p < window[0]][-_history_span(config) :]
+    if not before:
+        return {}
+    found: dict[str, set[str]] = {}
+    for row in store.rows(RESULTS, dataset, version=version, periods=before):
+        if row.get("status") == RED and row.get("metric") in (VOLUME_CHANGE, PSI):
+            found.setdefault(str(row.get("segment") or ""), set()).add(str(row["period"]))
+    return found
 
 
 def _counts(results: Sequence[Mapping[str, Any]], periods: Collection[str]) -> dict[str, int]:
@@ -549,6 +587,115 @@ def _emptied(  # noqa: PLR0913 - the store read and the zeroed fields
     ]
 
 
+def _history_rows(  # noqa: PLR0913 - the run's facts stamped on every row
+    results: Sequence[Mapping[str, Any]],
+    config: StabilityConfig,
+    periods: Sequence[str],
+    *,
+    judged_at: str,
+    judgment: str,
+    data_version: int | None,
+) -> list[dict[str, Any]]:
+    """Return the results this run emitted as history rows, limited to the latest ``history_periods`` periods."""
+    kept = set(sorted(set(periods))[-config.history_periods :]) if config.history_periods else set(periods)
+    return [
+        {
+            **{c: r.get(c) for c in SCHEMAS[RESULTS_HISTORY]},
+            "judged_at": judged_at,
+            "judgment_fingerprint": judgment,
+            "data_version": data_version,
+        }
+        for r in results
+        if r["period"] in kept
+    ]
+
+
+def _event_row(kind: str, alert: Mapping[str, Any], run_id: str, occurred_at: str, **extra: str) -> dict[str, Any]:
+    state = str(alert.get("state") or "")
+    period = alert.get("closed_period") if state == CLOSED else alert.get("last_period")
+    row = {
+        "dataset": alert.get("dataset"), "alert_id": alert["alert_id"], "event": kind, "run_id": run_id,
+        "period": period or "", "severity": alert.get("severity") or "", "state": state, "resolution": "",
+        "action_id": "", "message": alert.get("message") or "", "occurred_at": occurred_at,
+    }  # fmt: skip
+    return {**row, **extra}
+
+
+def _alert_event_rows(  # noqa: PLR0913 - the alert sets compared and the run's identity
+    fresh: Sequence[Mapping[str, Any]],
+    stored: Sequence[Mapping[str, Any]],
+    superseded: Sequence[Mapping[str, Any]],
+    actions: Sequence[Mapping[str, Any]],
+    recorded: Collection[str],
+    *,
+    run_id: str,
+    occurred_at: str,
+) -> list[dict[str, Any]]:
+    """Return one row per alert transition of this run, and per human action not recorded before.
+
+    Transitions compare the automatic alert rows with the stored ones: ``opened`` (no stored open row),
+    ``escalated`` (became critical), ``closed`` (an open alert now closed) and ``superseded`` (a stored alert the
+    replay no longer produces). An action yields ``action_applied`` once, keyed by its ``action_id``.
+    """
+    before = {str(r["alert_id"]): r for r in stored if r.get("state") == OPEN}
+    events: list[dict[str, Any]] = []
+    for row in sorted(fresh, key=lambda r: str(r["alert_id"])):
+        prior = before.get(str(row["alert_id"]))
+        if row["state"] == OPEN:
+            if prior is None:
+                events.append(_event_row(OPENED, row, run_id, occurred_at))
+            elif str(prior.get("severity")) != CRITICAL and str(row["severity"]) == CRITICAL:
+                events.append(_event_row(ESCALATED, row, run_id, occurred_at))
+        elif row["state"] == CLOSED and prior is not None:
+            events.append(_event_row(CLOSED, row, run_id, occurred_at))
+    events += [
+        _event_row(SUPERSEDED, r, run_id, occurred_at) for r in sorted(superseded, key=lambda r: str(r["alert_id"]))
+    ]
+    known = {str(r["alert_id"]): r for r in [*stored, *fresh]}
+    for action in sorted(actions, key=lambda a: str(a["action_id"])):
+        if str(action["action_id"]) in recorded:
+            continue
+        alert = {**known.get(str(action["alert_id"]), {}), "alert_id": action["alert_id"], "dataset": action["dataset"]}
+        events.append(
+            _event_row(
+                "action_applied",
+                {**alert, "state": action["action"], "message": action.get("reason") or ""},
+                run_id,
+                occurred_at,
+                resolution=str(action.get("resolution") or ""),
+                action_id=str(action["action_id"]),
+            )
+        )
+    return events
+
+
+def _history_tables(  # noqa: PLR0913, PLR0917 - the run's rows and the facts stamped on the history
+    config: StabilityConfig,
+    store: Store,
+    results: Sequence[Mapping[str, Any]],
+    judged: tuple[Sequence[str], Sequence[Mapping[str, Any]], Sequence[Mapping[str, Any]]],
+    superseded: Sequence[Mapping[str, Any]],
+    actions: Sequence[Mapping[str, Any]],
+    *,
+    dataset: str,
+    run_id: str,
+    judged_at: str,
+    judgment: str,
+    data_version: int | None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return the ``history`` tables of one run: its emitted results and its alert transitions."""
+    periods, fresh, stored = judged
+    recorded = {str(r["action_id"]) for r in store.rows(ALERT_EVENTS, dataset) if r.get("action_id")}
+    return {
+        RESULTS_HISTORY: _history_rows(
+            results, config, periods, judged_at=judged_at, judgment=judgment, data_version=data_version
+        ),
+        ALERT_EVENTS: _alert_event_rows(
+            fresh, stored, superseded, actions, recorded, run_id=run_id, occurred_at=judged_at
+        ),
+    }
+
+
 def _revisions(  # noqa: PLR0913, PLR0917 - the inputs of one comparison and one snapshot
     computed: Any,  # noqa: ANN401 - the metrics.Computed being extended
     binning: Reference,
@@ -615,6 +762,30 @@ def _grouped(
     return incident, notifications, rates
 
 
+def _human(
+    alert_rows: Sequence[dict[str, Any]], actions: Sequence[Mapping[str, Any]], started: str
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """Return the alert ids a person accepted or closed with their state, and the rows holding that state."""
+    human = {
+        str(a["alert_id"]): a["state"]
+        for a in apply_actions(alert_rows, actions, started[:10], "dataset")
+        if a["state"] in (STATE_ACCEPTED, STATE_CLOSED)
+    }
+    return human, [{**r, "state": human[str(r["alert_id"])]} if str(r["alert_id"]) in human else r for r in alert_rows]
+
+
+def _counted(
+    results: Sequence[Mapping[str, Any]],
+    config: StabilityConfig,
+    latest: str,
+    profiled: tuple[Sequence[str], Sequence[str], Sequence[str]],
+) -> tuple[set[str], dict[str, int]]:
+    """Return the judged periods (the latest, plus the profiled ones under ``gate.periods``) and their counts."""
+    todo, window, vanished = profiled
+    judged = {latest} | (set(todo) & set(window) | set(vanished) if config.gate.periods == "profiled" else set())
+    return judged, _counts(results, judged)
+
+
 def _tail(accepted: int, suppressed: int, reasons: Sequence[str], rates: Mapping[str, Mapping[str, Any]]) -> str:
     """Return what the run message appends: accepted alerts, the budget's suppressions, the gate and the rates."""
     found = [
@@ -640,12 +811,14 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     now: str | None = None,
     reprocess: Sequence[str] = (),
     skip_unknown: bool = False,
+    data_version: int | None = None,
 ) -> CheckResult:
     """Check ``data`` (rows or a DataFrame) against its stored history and return the rows to write.
 
     ``reprocess`` names periods rewritten since their stored profile (a backfill or a correction): they are
     profiled again with the declared refresh range, the whole window is judged again and the alerts are replayed.
     An item is a period or a ``first..last`` range; ``skip_unknown`` drops what the data does not have.
+    ``data_version`` is the Delta version of the monitored table this run read, stored with the history rows.
     """
     started = now or _now()
     periods = _engine_periods(data, config.period)
@@ -674,6 +847,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
         emptied=vanished,
         trend_seed=_trend_seed(config, store, periods, window, dataset=dataset, version=binning.version),
+        red_seed=_red_seed(config, store, periods, window, dataset=dataset, version=binning.version),
     )  # fmt: skip
     revision_rows = (
         _revisions(
@@ -703,21 +877,16 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     )  # fmt: skip
     latest = max([window[-1], *vanished])
     alert_rows, suppressed = _budgeted(alert_rows, stored_alerts, computed.results, config, latest)
-    human = {
-        str(a["alert_id"]): a["state"]
-        for a in apply_actions(alert_rows, actions, started[:10], "dataset")
-        if a["state"] in (STATE_ACCEPTED, STATE_CLOSED)
-    }
-    held = [{**r, "state": human[str(r["alert_id"])]} if str(r["alert_id"]) in human else r for r in alert_rows]
+    human, held = _human(alert_rows, actions, started)
     notifications = alert_events(
         held, stored_alerts, config.notify, dataset=dataset, target=physical or dataset, run_id=run_id,
         occurred_at=started,
     )  # fmt: skip
-    alert_rows += _superseded(
+    superseded = _superseded(
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
     )
-    judged = {latest} | (set(todo) & set(window) | set(vanished) if config.gate.periods == "profiled" else set())
-    counts = _counts(computed.results, judged)
+    alert_rows += superseded
+    judged, counts = _counted(computed.results, config, latest, (todo, window, vanished))
     open_rows = [r for r in alert_rows if r["state"] == OPEN and str(r["alert_id"]) not in human]
     accepted = sum(1 for r in alert_rows if r["state"] == OPEN and human.get(str(r["alert_id"])) == STATE_ACCEPTED)
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
@@ -755,6 +924,13 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     }
     if config.revision:
         tables[REVISIONS] = revision_rows
+    if config.history:
+        tables |= _history_tables(
+            config, store, results,
+            (sorted({*window, *vanished}), alert_rows[: len(alert_rows) - len(superseded)], stored_alerts),
+            superseded, actions, dataset=dataset, run_id=run_id, judged_at=started, judgment=judgment,
+            data_version=data_version,
+        )  # fmt: skip
     return CheckResult(tables, outcome, skipped, binning, notifications, incident)
 
 

@@ -40,7 +40,7 @@ from bricksmith.monitor.stability.config import (
 )
 from bricksmith.monitor.stability.profile import fit_periods_of, period_date, segment_label
 from bricksmith.monitor.stats import psi_terms
-from bricksmith.monitor.trend import trend_check
+from bricksmith.monitor.trend import keeps, trend_check
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -155,6 +155,8 @@ class _Context:
     run_id: str
     computed_at: str
     trend_history: dict[Key, list[float]] = field(default_factory=dict)
+    excluded: frozenset[str] = frozenset()
+    red_periods: dict[str, set[str]] = field(default_factory=dict)
 
 
 def _result(  # noqa: PLR0913 - one keyword per result field
@@ -212,7 +214,8 @@ def _trend(ctx: _Context, row: dict[str, Any], value: float | None, light: Light
     key = (row["segment"], row["column"], row["metric"])
     history = ctx.trend_history.setdefault(key, [])
     found = trend_check(history, value, policy, direction)
-    history.append(value)
+    if row["period"] not in ctx.excluded and keeps(policy, light.status, found.status):
+        history.append(value)
     row["trend_status"] = found.status
     row["trend_expected"] = _finite(found.expected)
     row["trend_deviation"] = _finite(found.deviation)
@@ -261,6 +264,8 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     computed_at: str = "",
     emptied: Collection[str] = (),
     trend_seed: Mapping[Key, Sequence[float]] | None = None,
+    excluded: Collection[str] = (),
+    red_seed: Mapping[str, Collection[str]] | None = None,
 ) -> Computed:
     """Compute the result rows of every period of ``window`` and ``emptied`` (in order) from the stored profiles.
 
@@ -269,9 +274,16 @@ def compute(  # noqa: PLR0913 - one keyword per result field
 
     ``trend_seed`` carries, per ``(segment, column, metric)``, the stored values of the periods just before the
     window, so a period at the start of a rewritten window is judged with the history it had the first time.
+
+    ``excluded`` lists periods kept out of every trend history and every ``previous``/``rolling`` baseline (the one
+    input a human mark of an anomalous period plugs into). With ``baseline.exclude = red`` a period whose
+    ``volume_change`` or ``psi`` was red in a segment is skipped for that segment too; ``red_seed`` carries, per
+    segment, the red periods already stored before the window.
     """
     history = index_profiles(binning, profiles)
-    ctx = _Context(config, binning, dataset, run_id, computed_at)
+    ctx = _Context(config, binning, dataset, run_id, computed_at, excluded=frozenset(excluded))
+    for segment_name, reds in (red_seed or {}).items():
+        ctx.red_periods[segment_name] = set(reds)
     for key, values in (trend_seed or {}).items():
         ctx.trend_history[key] = list(values)
     out = Computed()
@@ -280,10 +292,12 @@ def compute(  # noqa: PLR0913 - one keyword per result field
     eligible = [p for p in history.periods if p not in emptied]
     for period in in_window:
         ordered = sorted([*eligible, period]) if period in emptied else eligible
-        wanted = baseline_periods(config, binning, ordered, period)
         for segment in sorted(history.rows):
             if period not in history.rows[segment]:
                 continue
+            skip = _skipped(ctx, segment)
+            wanted = baseline_periods(config, binning, [p for p in ordered if p == period or p not in skip], period)
+            first = len(out.results)
             present = [p for p in wanted if p in history.rows[segment]]
             enough = len(present) >= (config.baseline.min_periods if config.baseline.kind == "rolling" else 1)
             usable = present if enough else []
@@ -293,7 +307,22 @@ def compute(  # noqa: PLR0913 - one keyword per result field
                     ctx, out, history, (segment, spec.column), period, usable,
                     numeric=numeric[spec.column], in_baseline=period in wanted,
                 )  # fmt: skip
+            _mark_red(ctx, segment, period, out.results[first:])
     return out
+
+
+def _skipped(ctx: _Context, segment: str) -> set[str]:
+    """Return the periods a ``previous`` or ``rolling`` baseline of ``segment`` does not take."""
+    skip = set(ctx.excluded)
+    if ctx.config.baseline.exclude == "red":
+        skip |= ctx.red_periods.get(segment, set())
+    return skip
+
+
+def _mark_red(ctx: _Context, segment: str, period: str, results: Iterable[Mapping[str, Any]]) -> None:
+    """Remember ``period`` as red for ``segment`` when its ``volume_change`` or ``psi`` was red."""
+    if any(r["status"] == RED and r["metric"] in (VOLUME_CHANGE, PSI) for r in results):
+        ctx.red_periods.setdefault(segment, set()).add(period)
 
 
 def _table_results(  # noqa: PLR0913, PLR0917 - the period's full context
