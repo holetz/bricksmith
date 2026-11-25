@@ -47,7 +47,7 @@ declaration per output in a list, each with `output` naming it. The full list of
 |---|---|---|
 | `period` | required | Column whose text value is the period (`2026-01`, `2026-01-31`, `202601`...). Periods sort as text. |
 | `columns` | `"auto"` | `"auto"` infers bins from types; or a list of names; or a mapping name → bin configuration (as in `monitor fit`). |
-| `exclude` | `[]` | Columns never monitored. |
+| `exclude` | `[]` | A list of columns never monitored. A bare string is a plan error. |
 | `segments` | `[]` | Columns (or lists of columns) whose values are also checked separately. The whole table is always checked. |
 | `weight` | none | Numeric column: PSI uses weight shares, and `weight_change` is reported. |
 | `baseline` | `fixed` | `fixed` (`start`/`end`, default the periods the bins were fitted on), `previous` (`lag`), `rolling` (`periods`, `min_periods`). |
@@ -60,9 +60,22 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `min_rows` | `30` | Below this, distribution metrics are `insufficient_volume` (volume metrics still judge). |
 | `refresh_periods` | `1` | The latest N periods are profiled again on every run (late or corrected data). |
 | `max_periods`, `max_segments` | `36`, `50` | Computation window and the most frequent segment values kept per segment set, ranked over every period the run loads (see [Profiles](#what-happens-in-a-run)). |
-| `rules` | `[]` | [Limit rules](#limit-rules): an inline list, or the path of a TOML or JSON file, that picks limits or marks segments informational per dataset, column, segment, metric and date. |
+| `rules` | `[]` | [Limit rules](#limit-rules): an inline list, or the path of a TOML or JSON file, that picks limits or marks segments informational per dataset, column, segment, metric and date. A rule's `metric` must be a stability metric. |
 | `scope`, `prefix`, `dataset` | output's schema, `stability_`, output name | Where the tables live and how the dataset is named. |
+| `epsilon` | `1e-4` | Floor of a bin share in PSI and CSI. Must be a finite number greater than 0. |
 | `inference` | 10 bins, >20 distinct = numeric, 20 categories, >1000 text values skipped, exact-zero bin | Options of `"auto"`. |
+
+**Migration: stricter declaration checks.** Three declarations used to pass plan and misbehave at run time. They
+now fail plan with `invalid_stability`:
+
+- a rule whose `metric` is not a stability metric, inline or in a rules file (for example `"PSI"` or
+  `"mean_shfit"`). Such a rule never matched, so its limits never applied. The error lists the known metrics;
+- an `exclude` given as a string (`"exclude": "sale_id"`). It was read letter by letter, so the column was still
+  monitored. Write `"exclude": ["sale_id"]`;
+- an `epsilon` of `0`, a negative value or a non-finite one. With `0`, every PSI or CSI with an empty bin failed
+  at run time. Remove the key to use the default `1e-4`.
+
+Model monitoring applies the same `epsilon` bound.
 
 `"auto"` uses quantile bins (with a separate bin for exact zeros) for numeric columns with many distinct values.
 Other numeric, text and boolean columns are categorical. Dates, timestamps, binary and complex types, constant

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -394,6 +395,19 @@ def _optional(data: dict[str, Any], key: str) -> str:
     return "" if value in (None, "") else _name(value, key)
 
 
+def _epsilon(value: object) -> float:
+    number = math.nan
+    if isinstance(value, (int, float, str)) and not isinstance(value, bool):
+        try:
+            number = float(value)
+        except ValueError:
+            number = math.nan
+    if not math.isfinite(number) or number <= 0:
+        msg = f"epsilon must be a finite number > 0, got {value!r}"
+        raise _fail(msg)
+    return number
+
+
 def _int(data: dict[str, Any], key: str, default: int, minimum: int) -> int:
     value = data.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
@@ -675,7 +689,7 @@ def parse_config(data: object, root: Path | str | None = None) -> ModelMonitorCo
             calibration_bins=_int(data, "calibration_bins", 10, 1),
             scope=str(data.get("scope", "")),
             prefix=_prefix(data.get("prefix", "model_monitoring_")),
-            epsilon=float(data.get("epsilon", 1e-4)),
+            epsilon=_epsilon(data.get("epsilon", 1e-4)),
             rules=_rules(data.get("rules"), oot, root),
             credit=credit,
         )

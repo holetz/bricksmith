@@ -226,3 +226,14 @@ def test_credit_families_need_their_roles() -> None:
 def test_credit_errors(credit: dict, message: str) -> None:
     with pytest.raises(MonitorError, match=message):
         parse_config({**CREDIT_BASE, "credit": credit})
+
+
+@pytest.mark.parametrize("epsilon", [0, 0.0, -1e-4, float("nan"), float("inf"), "-1", True, "abc", None])
+def test_epsilon_must_be_finite_and_positive(epsilon: object) -> None:
+    with pytest.raises(MonitorError, match="model_monitoring: epsilon must be a finite number > 0"):
+        parse_config({**BASE, "epsilon": epsilon})
+
+
+def test_valid_epsilon_is_kept() -> None:
+    assert parse_config(BASE).epsilon == pytest.approx(1e-4)
+    assert parse_config({**BASE, "epsilon": 1e-6}).epsilon == pytest.approx(1e-6)
