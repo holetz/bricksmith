@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from bricksmith.monitor.bins import ABOVE, BELOW, NULL, UNSEEN
 from bricksmith.monitor.limits import COLORS, GREEN, INFORMATIONAL, NO_RULE, RED, YELLOW, Light, classify, rank
-from bricksmith.monitor.persistence import CRITICAL, OPEN, WARNING, AlertSpan, PersistencePolicy, alert_spans
+from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, WARNING, AlertSpan, PersistencePolicy, alert_spans
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
 from bricksmith.monitor.stability.config import (
     DISTRIBUTION_METRICS,
@@ -421,6 +421,32 @@ def alert_id(dataset: str, version: int, key: Key, kind: str, opened: str) -> st
     return hashlib.sha256(text.encode()).hexdigest()[:20]
 
 
+def _stored_by_key(
+    stored: Iterable[Mapping[str, Any]], version: int
+) -> tuple[dict[tuple[str, ...], Mapping[str, Any]], dict[tuple[str, ...], list[str]]]:
+    """Return the stored open alert and the stored close periods of ``version``, per (segment, column, metric, kind)."""
+    carried: dict[tuple[str, ...], Mapping[str, Any]] = {}
+    closes: dict[tuple[str, ...], list[str]] = {}
+    for r in stored:
+        if int(r.get("version") or 0) != version:
+            continue
+        key = (str(r["segment"]), str(r["column"]), str(r["metric"]), str(r["kind"]))
+        if r.get("state") == OPEN:
+            carried[key] = r
+        elif r.get("state") == CLOSED and r.get("closed_period"):
+            closes.setdefault(key, []).append(str(r["closed_period"]))
+    return carried, closes
+
+
+def _since_close(closes: Sequence[str], periods: Sequence[str], first: str) -> int | None:
+    """Return how many known ``periods`` lie between the last close before ``first`` and ``first``, or ``None``."""
+    before = [p for p in closes if p < first]
+    if not before:
+        return None
+    last = max(before)
+    return sum(1 for p in periods if last < p < first)
+
+
 def alerts(  # noqa: PLR0913 - one keyword per alert field
     results: Iterable[Mapping[str, Any]],
     config: StabilityConfig,
@@ -430,18 +456,17 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
     run_id: str = "",
     updated_at: str = "",
     stored: Iterable[Mapping[str, Any]] = (),
+    periods: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Replay the status and trend series of every judged metric into alert rows (persistence and trend kinds).
 
     An alert still ``open`` in ``stored`` whose opening period is at or before the window start is carried: the
     replay resumes it before the first status, so it keeps its id, opening period, escalation and recurrence,
-    and closes after ``close_after`` greens even when the window alone would not open it.
+    and closes after ``close_after`` greens even when the window alone would not open it. The last ``closed``
+    alert of the same key that closed before the window counts for recurrence: the distance is the number of
+    ``periods`` (the known periods of the data) between its close and the window.
     """
-    carried = {
-        (str(r["segment"]), str(r["column"]), str(r["metric"]), str(r["kind"])): r
-        for r in stored
-        if r.get("state") == OPEN and int(r.get("version") or 0) == version
-    }
+    carried, closes = _stored_by_key(stored, version)
     statuses: dict[Key, list[tuple[str, str]]] = {}
     trends: dict[Key, list[tuple[str, str]]] = {}
     values: dict[tuple[Key, str], float | None] = {}
@@ -466,6 +491,7 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
             stored_open = carried.get((*key, kind))
             if stored_open is not None and str(stored_open["opened_period"]) > first_period:
                 stored_open = None  # it opened inside the window, so the replay reproduces it
+            since_close = _since_close(closes.get((*key, kind), ()), periods, first_period)
             seed = None
             if stored_open is not None:
                 seed = AlertSpan(
@@ -474,7 +500,7 @@ def alerts(  # noqa: PLR0913 - one keyword per alert field
                     last_period=str(stored_open.get("last_period") or ""),
                     last_status=str(stored_open.get("last_status") or ""),
                 )
-            for number, span in enumerate(alert_spans(series, policy, carry=seed)):
+            for number, span in enumerate(alert_spans(series, policy, carry=seed, since_close=since_close)):
                 old = stored_open if number == 0 else None
                 flagged = len(span.flagged)
                 if old is not None:
