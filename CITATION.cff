@@ -1,0 +1,7 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "bricksmith"
+authors:
+  - name: "Israel Holetz"
+repository-code: "https://github.com/holetz/bricksmith"
+license: "MIT"
