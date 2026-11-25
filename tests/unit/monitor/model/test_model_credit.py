@@ -10,6 +10,7 @@ import pytest
 
 from bricksmith.monitor.credit import binomial_p, jeffreys_p, rescale
 from bricksmith.monitor.model.config import parse_config
+from bricksmith.monitor.model.credit import grade_order
 from bricksmith.monitor.model.engine import MemoryStore, check, frame_of, jobs_of
 
 DEV = ("2025-01", "2025-02", "2025-03")
@@ -228,3 +229,51 @@ def test_a_failing_credit_family_is_isolated() -> None:
     assert broken["value"] is None and broken["reason"].startswith("error: TypeError")
     assert find(tables["results"], "grade_oe", "2025-06", "grade=A")["light"] == "green"
     assert tables["runs"][0]["status"] == "partial"
+
+
+def numeric_grade_rows() -> list[dict]:
+    """Return rows of integer grades 1..11 whose probability and observed rate rise with the grade, every month."""
+    rows: list[dict[str, Any]] = []
+    for month in DEV + PROD:
+        for grade in range(1, 12):
+            pd, count = 0.01 * grade, 600
+            events = round(count * pd)
+            rows += [
+                {"month": month, "sample": "dev" if month in DEV else "prod", "score": pd, "grade": grade,
+                 "bad": int(i < events)}
+                for i in range(count)
+            ]  # fmt: skip
+    return rows
+
+
+def test_undeclared_numeric_grades_are_ordered_by_number() -> None:
+    tables = run_all(numeric_grade_rows(), credit={"min_expected_events": 5})
+    for period in PROD:
+        inversions = find(tables["results"], "grade_inversions", period, "grade")
+        assert inversions["value"] == 0 and inversions["light"] == "green"
+        details = sorted(
+            (d for d in tables["details"] if d["metric"] == "grade_inversions" and d["monitoring_period"] == period),
+            key=lambda d: d["bin_order"],
+        )
+        assert [d["bin"] for d in details] == [str(g) for g in range(1, 12)]
+
+
+@pytest.mark.parametrize(
+    ("present", "order"),
+    [
+        (["10", "2", "1.5", "-1", "1.0", "1"], ["-1", "1", "1.0", "1.5", "2", "10"]),
+        (["A", "10", "2"], ["10", "2", "A"]),
+        (["10", "2", "nan"], ["10", "2", "nan"]),
+        (["10", "inf", "2"], ["10", "2", "inf"]),
+    ],
+)
+def test_undeclared_grades_are_numeric_only_when_every_text_is_a_finite_number(
+    present: list[str], order: list[str]
+) -> None:
+    config = parse_config({**DECLARATION, "credit": {}})
+    assert grade_order(config, present) == order
+
+
+def test_declared_grades_come_first_and_the_rest_follow_by_number() -> None:
+    config = parse_config({**DECLARATION, "credit": {"grades": ["3"]}})
+    assert grade_order(config, ["10", "3", "2"]) == ["3", "2", "10"]
