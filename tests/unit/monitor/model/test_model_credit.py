@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from bricksmith.monitor.credit import binomial_p, jeffreys_p, rescale
+from bricksmith.monitor.model.alerts import replay_alerts
 from bricksmith.monitor.model.config import parse_config
 from bricksmith.monitor.model.credit import grade_order
 from bricksmith.monitor.model.engine import MemoryStore, check, frame_of, jobs_of
@@ -161,6 +162,42 @@ def test_few_expected_events_are_insufficient_volume_whatever_the_observed_count
     assert find(results, "grade_inversions", "2025-06", "grade")["value"] == 0  # D is not compared
     lowered = run(rows, credit={**DECLARATION["credit"], "min_expected_events": 0.05})
     assert find(lowered, "grade_oe", "2025-06", "grade=D")["light"] == "red"
+
+
+def _replayed(rows: list[dict], **changes: Any) -> tuple[list[dict], list[dict]]:  # noqa: ANN401
+    config = parse_config({**DECLARATION, **changes})
+    tables = check(rows, config, MemoryStore(), run_id="r1", now="t0").tables
+    return replay_alerts(tables["results"], tables["runs"], config=config, created_at="2025-07-01T00:00:00")
+
+
+def test_replay_with_a_config_keeps_the_expected_events_gate() -> None:
+    rows = predictions()
+    rows += [
+        {"month": "2025-06", "sample": "prod", "score": 0.001, "grade": "D", "bad": int(i < 50), "bad_3": 0,
+         "exclusion_first": None, "region": "n"}
+        for i in range(100)
+    ]  # fmt: skip
+    results, alerts = _replayed(rows)
+    for metric in ("grade_oe", "grade_jeffreys_p", "grade_binomial_p"):
+        row = find(results, metric, "2025-06", "grade=D")
+        assert row["light"] == "insufficient_volume" and row["reason"].startswith("expected events 0.1 < min 5")
+    assert not [a for a in alerts if "grade=D" in str(a.get("column"))]
+    lowered, _ = _replayed(rows, credit={**DECLARATION["credit"], "min_expected_events": 0.05})
+    assert find(lowered, "grade_oe", "2025-06", "grade=D")["light"] == "red"
+
+
+def test_replay_exempts_expected_event_results_from_min_rows() -> None:
+    rows = predictions()
+    rows += [
+        {"month": "2025-06", "sample": "prod", "score": 0.9, "grade": "E", "bad": 6, "bad_3": 0,
+         "exclusion_first": None, "region": "n"}
+        for _ in range(6)
+    ]  # fmt: skip
+    run_row = find(run(rows), "grade_oe", "2025-06", "grade=E")
+    replayed, _ = _replayed(rows)
+    row = find(replayed, "grade_oe", "2025-06", "grade=E")
+    assert row["rows"] == 6 < DECLARATION["min_rows"]
+    assert row["light"] == run_row["light"] != "insufficient_volume"
 
 
 def test_early_warning_reads_its_lag_label_and_rescaled_expectation() -> None:

@@ -95,6 +95,29 @@ WARNED = "warned"
 GATE_FAILED = "failed"
 ERROR = "error"
 VOLUME_METRICS = frozenset({"row_count", "volume_ratio"})
+#: Metrics a run measures with expected events: exempt from ``min_rows`` and gated by ``min_expected_events``.
+EXPECTED_METRICS = frozenset(
+    {"grade_oe", "grade_jeffreys_p", "grade_binomial_p", "grade_binomial_adjusted_p", "early_oe"}
+)
+#: Reason prefix of a result gated by its expected events: ``expected events <x> < min <y>``.
+EVENTS_GATE_PREFIX = "expected events "
+
+
+def events_gate_reason(expected: float, minimum: float) -> str:
+    """Return the reason of a result whose ``expected`` events fall below ``minimum``."""
+    return f"{EVENTS_GATE_PREFIX}{expected:.4g} < min {minimum:g}"
+
+
+def stored_expected_events(reason: str) -> float | None:
+    """Return the expected events a stored gate reason carries, or ``None`` when it is not such a reason."""
+    if not reason.startswith(EVENTS_GATE_PREFIX):
+        return None
+    try:
+        return float(reason[len(EVENTS_GATE_PREFIX) :].split(" ", 1)[0])
+    except ValueError:
+        return None
+
+
 #: Control-chart metrics centred on the median of the development per-period values (development only).
 DEVELOPMENT_CENTRED = frozenset({"bad_rate"})
 LIGHT = "light"
@@ -839,7 +862,7 @@ def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[st
     )
     events = config.credit_options.min_expected_events
     if item.expected is not None and item.value is not None and item.expected < events:
-        light = Light(INSUFFICIENT_VOLUME, f"expected events {item.expected:.4g} < min {events:g}")
+        light = Light(INSUFFICIENT_VOLUME, events_gate_reason(item.expected, events))
     if found.informational and light.status == NO_RULE:
         light = Light(INFORMATIONAL, INFORMATIONAL_REASON)
     return {
