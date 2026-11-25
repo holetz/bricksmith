@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from bricksmith.cli.main import main
 from bricksmith.monitor.stability import backtest, parse_config
 from bricksmith.monitor.stability.backtest import noise_estimate
+from bricksmith.monitor.stability.config import SHAPE_METRICS
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
 from bricksmith.monitor.stability.tables import merge_rows
 
@@ -29,6 +30,7 @@ DECLARED: dict[str, Any] = {
         "psi": {"green": 50.0, "red": 100.0},
         "mean_shift": {"green": 50.0, "red": 100.0},
         "unseen_rate_delta": {"green": 50.0, "red": 100.0},
+        **dict.fromkeys(SHAPE_METRICS),
     },
 }
 

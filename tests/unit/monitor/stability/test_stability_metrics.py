@@ -12,6 +12,7 @@ import pytest
 from bricksmith.monitor import MonitorError
 from bricksmith.monitor.bins import NULL, ZERO
 from bricksmith.monitor.stability import MemoryStore, check, parse_config, parse_declarations
+from bricksmith.monitor.stability.config import SHAPE_METRICS
 from bricksmith.monitor.stability.profile import (
     bin_labels,
     fit_rows_binning,
@@ -199,9 +200,10 @@ def test_incremental_runs_and_new_versions() -> None:
 
 def test_gate_conditions_and_messages() -> None:
     rows = rows_of({A: [1, 1, 2, 2], B: [1, 2, 2, 2]})
-    failed, _ = results_of(rows, config(baseline="previous", gate={"fail_on": ["red"]}))
+    quiet = {"limits": dict.fromkeys(SHAPE_METRICS)}  # the one red is the PSI's; the shape metrics are tested apart
+    failed, _ = results_of(rows, config(baseline="previous", gate={"fail_on": ["red"]}, **quiet))
     assert failed.outcome.failed and "gate failed on 1 red" in failed.outcome.message
-    passed, _ = results_of(rows, config(baseline="previous", gate={"fail_on": ["critical"]}))
+    passed, _ = results_of(rows, config(baseline="previous", gate={"fail_on": ["critical"]}, **quiet))
     assert not passed.outcome.failed and passed.outcome.status == "warned"
     with pytest.raises(MonitorError, match="no rows"):
         results_of([{"month": None, "x": 1}], config())
