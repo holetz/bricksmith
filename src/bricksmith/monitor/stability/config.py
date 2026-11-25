@@ -61,6 +61,7 @@ DEFAULT_TREND_DIRECTIONS: dict[str, str] = {ROW_COUNT: BOTH, MEAN: BOTH, NULL_RA
 FIXED = "fixed"
 PREVIOUS = "previous"
 ROLLING = "rolling"
+BASELINE_EXCLUDES = ("red", "none")
 BASELINES = (FIXED, PREVIOUS, ROLLING)
 GATE_CONDITIONS = ("red", "yellow", "critical", "alert")
 GATE_PERIODS = ("latest", "profiled")
@@ -96,9 +97,13 @@ class Baseline:
     lag: int = 1
     periods: int = 3
     min_periods: int = 1
+    exclude: str = "none"
 
     def __post_init__(self) -> None:
         """Validate the kind and its parameters."""
+        if self.exclude not in BASELINE_EXCLUDES:
+            msg = f"baseline exclude must be one of {', '.join(BASELINE_EXCLUDES)}, got {self.exclude!r}"
+            raise _fail(msg)
         if self.kind not in BASELINES:
             msg = f"baseline kind must be one of {', '.join(BASELINES)}, got {self.kind!r}"
             raise _fail(msg)
@@ -120,6 +125,7 @@ class Baseline:
         """Return the serializable form."""
         return {
             "end": self.end,
+            "exclude": self.exclude,
             "kind": self.kind,
             "lag": self.lag,
             "min_periods": self.min_periods,
@@ -419,8 +425,11 @@ def _baseline(value: object) -> Baseline:
         return Baseline()
     if isinstance(value, str):
         return Baseline(kind=value)
-    if not isinstance(value, dict) or set(value) - {"kind", "start", "end", "lag", "periods", "min_periods"}:
-        msg = f"baseline must be a kind or a mapping (kind, start, end, lag, periods, min_periods), got {value!r}"
+    if not isinstance(value, dict) or set(value) - {"kind", "start", "end", "lag", "periods", "min_periods", "exclude"}:
+        msg = (
+            "baseline must be a kind or a mapping (kind, start, end, lag, periods, min_periods, exclude), "
+            f"got {value!r}"
+        )
         raise _fail(msg)
     periods = int(value.get("periods", 3))
     return Baseline(
@@ -430,6 +439,7 @@ def _baseline(value: object) -> Baseline:
         lag=int(value.get("lag", 1)),
         periods=periods,
         min_periods=int(value.get("min_periods", 1)),
+        exclude=str(value.get("exclude", "none")),
     )
 
 
