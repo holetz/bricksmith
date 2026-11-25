@@ -75,6 +75,7 @@ def test_act_prints_the_row_and_the_insert_statement(capsys: pytest.CaptureFixtu
     assert main([*bare, "--action", "risk_accepted"]) != 0  # an acceptance needs its date
     assert main([*bare, "--action", "closed", "--valid-until", "2026-12-31"]) != 0
     assert main([*bare, "--action", "ignore"]) != 0
+    assert main([*bare, "--action", "closed", "--created-at", "not a time"]) != 0
     capsys.readouterr()
 
 
