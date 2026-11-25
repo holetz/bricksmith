@@ -305,6 +305,16 @@ def _plan_periods(
     return window, todo, loaded
 
 
+def _counts(results: Sequence[Mapping[str, Any]], periods: Collection[str]) -> dict[str, int]:
+    """Return how many results of ``periods`` together are red and yellow."""
+    total = {RED: 0, YELLOW: 0}
+    for period in periods:
+        found = counts_in(results, period)
+        total[RED] += found[RED]
+        total[YELLOW] += found[YELLOW]
+    return total
+
+
 def _gate(config: StabilityConfig, red: int, yellow: int, open_alerts: int, critical: int) -> list[str]:
     reasons = []
     for condition in config.gate.fail_on:
@@ -554,13 +564,17 @@ def check(  # noqa: PLR0913 - one keyword per documented input
         stored_alerts, alert_rows, run_id, started, version=binning.version, start=window[0], rejudged=rewrite_all
     )
     latest = max([window[-1], *vanished])
-    counts = counts_in(computed.results, latest)
+    judged = {latest} | (set(todo) & set(window) | set(vanished) if config.gate.periods == "profiled" else set())
+    counts = _counts(computed.results, judged)
     open_rows = [r for r in alert_rows if r["state"] == OPEN]
     critical = sum(1 for r in open_rows if r["severity"] == CRITICAL)
     reasons = _gate(config, counts[RED], counts[YELLOW], len(open_rows), critical)
     status = FAILED if reasons else WARNED if counts[RED] + counts[YELLOW] + len(open_rows) else PASSED
-    message = f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)" + (
-        f"; gate failed on {'; '.join(reasons)}" if reasons else ""
+    message = (
+        f"{dataset} {latest}: {counts[RED]} red, {counts[YELLOW]} yellow, {len(open_rows)} open alert(s)"
+        + (f" over {len(judged)} periods" if len(judged) > 1 else "")
+        + (f"; reprocessed {', '.join(redo)} ({len(todo)} periods profiled)" if redo else "")
+        + (f"; gate failed on {'; '.join(reasons)}" if reasons else "")
     )
     outcome = Outcome(
         dataset, status, binning.version, latest, len(todo), counts[RED], counts[YELLOW], len(open_rows), critical,

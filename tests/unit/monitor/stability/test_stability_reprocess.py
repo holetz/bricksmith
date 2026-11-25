@@ -90,3 +90,22 @@ def test_engine_reprocess_check_rejects_periods_outside_the_data_or_the_window()
         _check(_rows(), store, "r1", reprocess=["2027-01"])
     with pytest.raises(MonitorError, match="2026-01"):
         _check(_rows(), store, "r1", reprocess=["2026-01"], max_periods=2)
+
+
+def test_gate_latest_ignores_a_red_reprocessed_period_and_profiled_counts_it() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows(), store, "r1"))
+    latest = _check(_rows("2026-02"), store, "r2", reprocess=["2026-02"], gate={"fail_on": ["red"]})
+    assert latest.outcome.status != "failed" and latest.outcome.red == 0
+    profiled = _check(
+        _rows("2026-02"), store, "r3", reprocess=["2026-02"], gate={"fail_on": ["red"], "periods": "profiled"}
+    )
+    assert profiled.outcome.failed and profiled.outcome.red > 0
+    assert "reprocessed 2026-02" in profiled.outcome.message and "gate failed on" in profiled.outcome.message
+
+
+def test_gate_profiled_judges_only_the_periods_of_the_run() -> None:
+    store = MemoryStore()
+    _commit(store, _check(_rows("2026-02"), store, "r1"))  # first sight: every period is profiled
+    quiet = _check(_rows("2026-02"), store, "r2", gate={"fail_on": ["red"], "periods": "profiled"})
+    assert not quiet.outcome.failed  # 2026-02 is red in storage but was not profiled by this run
