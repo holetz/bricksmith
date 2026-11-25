@@ -24,9 +24,13 @@ ALERTS = "alerts"
 ACTIONS = "actions"
 RUNS = "runs"
 REVISIONS = "revisions"
+RESULTS_HISTORY = "results_history"
+ALERT_EVENTS = "alert_events"
 KINDS = (BINNINGS, PROFILES, RESULTS, ALERTS, ACTIONS, RUNS)
-#: The tables a declaration can have: the revisions table exists only with ``revision`` on.
-ALL_KINDS = (*KINDS, REVISIONS)
+#: The tables that exist only with ``history`` on: every judgment ever reported, and every alert transition.
+HISTORY_KINDS = (RESULTS_HISTORY, ALERT_EVENTS)
+#: The tables a declaration can have: ``revisions`` only with ``revision`` on, the history kinds with ``history``.
+ALL_KINDS = (*KINDS, REVISIONS, *HISTORY_KINDS)
 SCHEMAS: dict[str, dict[str, str]] = {
     BINNINGS: {
         "dataset": "STRING", "version": "INT", "config_fingerprint": "STRING", "fingerprint": "STRING",
@@ -68,6 +72,20 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "count": "BIGINT", "weight": "DOUBLE", "value_sum": "DOUBLE", "value_sum_sq": "DOUBLE", "run_id": "STRING",
         "published_at": "STRING",
     },
+    RESULTS_HISTORY: {
+        "dataset": "STRING", "version": "INT", "period": "STRING", "period_date": "DATE", "segment": "STRING",
+        "segment_label": "STRING", "column": "STRING", "metric": "STRING", "value": "DOUBLE", "current": "DOUBLE",
+        "baseline": "DOUBLE", "status": "STRING", "status_rank": "INT", "reason": "STRING",
+        "green_limit": "DOUBLE", "red_limit": "DOUBLE", "direction": "STRING", "rows": "BIGINT",
+        "baseline_kind": "STRING", "baseline_label": "STRING", "trend_status": "STRING", "rule_id": "STRING",
+        "rule_version": "INT", "run_id": "STRING", "judged_at": "STRING", "judgment_fingerprint": "STRING",
+        "data_version": "BIGINT",
+    },
+    ALERT_EVENTS: {
+        "dataset": "STRING", "alert_id": "STRING", "event": "STRING", "run_id": "STRING", "period": "STRING",
+        "severity": "STRING", "state": "STRING", "resolution": "STRING", "action_id": "STRING",
+        "message": "STRING", "occurred_at": "STRING",
+    },
     RUNS: {
         "run_id": "STRING", "dataset": "STRING", "task_id": "STRING", "physical": "STRING", "version": "INT",
         "latest_period": "STRING", "periods_profiled": "INT", "status": "STRING", "gate": "STRING",
@@ -84,7 +102,11 @@ KEYS: dict[str, tuple[str, ...]] = {
     ACTIONS: ("dataset", "action_id"),
     RUNS: ("run_id", "dataset"),
     REVISIONS: ("dataset", "version", "period", "segment", "column", "bin"),
+    RESULTS_HISTORY: ("dataset", "run_id", "version", "period", "segment", "column", "metric"),
+    ALERT_EVENTS: ("dataset", "alert_id", "event", "run_id", "action_id"),
 }
+_AS_OF = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?)?$")
+_AS_OF_KEY = ("dataset", "period", "segment", "column", "metric")
 _SCOPE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
 _PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
 
@@ -154,6 +176,56 @@ def table_name(scope: str, prefix: str, kind: str) -> str:
         msg = f"stability: scope must be catalog.schema (plain names) and prefix letters/digits/_; got {scope!r}"
         raise MonitorError(msg)
     return f"{scope}.{prefix}{kind}"
+
+
+def _as_of(value: str) -> str:
+    if not _AS_OF.match(value):
+        msg = f"stability: as_of must be an ISO date or UTC datetime (2026-03-31, 2026-03-31T12:00:00); got {value!r}"
+        raise MonitorError(msg)
+    return value
+
+
+def _published_by(judged_at: object, as_of: str) -> bool:
+    """Tell whether a judgment made at ``judged_at`` was already reported at ``as_of`` (a date covers its whole day)."""
+    text = str(judged_at or "")
+    return text[:10] <= as_of if len(as_of) == 10 else text <= as_of  # noqa: PLR2004 - an ISO date is ten characters
+
+
+def results_as_of(history: Sequence[Mapping[str, Any]], as_of: str) -> list[dict[str, Any]]:
+    """Return the judgments that stood at ``as_of``: per period, segment, column and metric, the latest one reported.
+
+    ``history`` holds ``results_history`` rows; ``as_of`` is an ISO date (the whole day counts) or a UTC datetime.
+    A result first judged after ``as_of`` is absent, as it was for whoever read the monitor then.
+    """
+    when = _as_of(as_of)
+    latest: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for row in history:
+        if not _published_by(row.get("judged_at"), when):
+            continue
+        key = tuple(row.get(c) for c in _AS_OF_KEY)
+        kept = latest.get(key)
+        if kept is None or (str(row.get("judged_at")), str(row.get("run_id"))) > (
+            str(kept.get("judged_at")),
+            str(kept.get("run_id")),
+        ):
+            latest[key] = dict(row)
+    return list(latest.values())
+
+
+def as_of_statement(scope: str, as_of: str, prefix: str = "stability_") -> str:
+    """Return the SQL that reads ``results_history`` as it stood at ``as_of`` (the as-of query, same rule as above).
+
+    A view cannot take a date, so this is generated on demand and meant to be run or wrapped by the reader.
+    """
+    when = _as_of(as_of)
+    history = table_name(scope, prefix, RESULTS_HISTORY)
+    stamp = "substr(judged_at, 1, 10)" if len(when) == 10 else "judged_at"  # noqa: PLR2004 - an ISO date
+    keys = ", ".join(f"`{c}`" for c in _AS_OF_KEY)
+    return (
+        f"SELECT * EXCEPT (rn) FROM (\n"
+        f"  SELECT h.*, row_number() OVER (PARTITION BY {keys}\n"
+        f"    ORDER BY judged_at DESC, run_id DESC) AS rn FROM {history} h WHERE {stamp} <= '{when}') WHERE rn = 1"
+    )
 
 
 def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
@@ -244,17 +316,22 @@ def view_statements(scope: str, prefix: str = "stability_") -> list[str]:
 __all__ = [
     "ACTIONS",
     "ALERTS",
+    "ALERT_EVENTS",
     "ALL_KINDS",
     "BINNINGS",
+    "HISTORY_KINDS",
     "KEYS",
     "KINDS",
     "PROFILES",
     "RESULTS",
+    "RESULTS_HISTORY",
     "REVISIONS",
     "RUNS",
     "SCHEMAS",
+    "as_of_statement",
     "key_of",
     "merge_rows",
+    "results_as_of",
     "table_name",
     "to_frame",
     "typed_row",
