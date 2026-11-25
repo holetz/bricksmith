@@ -425,6 +425,37 @@ A BI model on these tables works as a star:
   severity, PSI over time per column with `green_limit` and `red_limit` as reference lines, and the bin-share
   comparison of `share` against `baseline_share` with `contribution` explaining a PSI jump.
 
+## Backtest a change
+
+Changing limits, trend, baseline, rules or persistence re-judges the whole window on the next run and can fail the
+gate. `bricksmith stability backtest` replays a candidate declaration over the stored profiles first: the judgment is
+pure over them, so it reads no table and never writes (the stability tables, the state file and the store stay as
+they were).
+
+```bash
+bricksmith stability backtest --config candidate.json --dataset sales --state stability-state.json --json
+bricksmith stability backtest --config candidate.json --dataset sales --state stability-state.json \
+  --periods 2026-01..2026-03 --noise 200 --seed 7
+```
+
+It mirrors a real run: the window is the last `max_periods` stored periods, the trend is seeded with the stored
+values before it, the stored alerts are carried and the human actions are folded in. The report lists, per metric and
+series, the red and yellow counts and open alerts before (stored) and after (replayed); every result whose color or
+trend color would change; the alerts that would open or close; and the gate outcome per period (the candidate's gate
+applied to both sides). `--json` prints it whole, so a configuration change can be reviewed in a PR; the command
+exits 0 whatever the replay finds. Backtesting the current declaration reports zero differences, and tightening a
+limit reports exactly the new reds the next real run produces. `--periods` narrows what is reported, not what is
+replayed.
+
+A change that alters the bins (`columns`, `exclude`, `fit_periods`, `inference`, `period`, a fixed baseline range)
+needs a new fit: the report says `requires refit` and compares nothing, because the backtest never re-profiles.
+
+`--noise RUNS` adds a synthetic-noise estimate: each trended series is replaced, `RUNS` times, by independent
+Gaussian noise with its own length, mean and standard deviation, and the candidate trend check runs over it period by
+period. The report gives the share of judged periods flagged (yellow or red) and red, per series and overall, from a
+seeded generator (`--seed`), so a configuration can be sized against its false-alarm rate. The same replay is the
+`bricksmith.monitor.stability.backtest` API over any `Store`.
+
 ## Outside a project
 
 ```bash
