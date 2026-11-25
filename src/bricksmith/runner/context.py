@@ -8,7 +8,7 @@ from bricksmith.errors import AuthorizationError, ConfigError, ValidationError
 from bricksmith.tasks.declaration import DATA, EXTERNAL, TEMPORAL
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from bricksmith.context import ExecutionContext
     from bricksmith.plan import PlanEntry, Target
@@ -22,21 +22,27 @@ class TaskContext:
     task's own targets, only declared operations, and protected targets only when granted.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the run's bindings, the last one keyword-only
         self,
         entry: PlanEntry,
         execution: ExecutionContext,
         table_io: TableIO,
         granted: frozenset[tuple[str, str]] = frozenset(),
         externals: ExternalProvider | None = None,
+        *,
+        reprocess: Sequence[str] = (),
     ) -> None:
-        """Bind the entry, the execution context, the I/O backend, the granted pairs and optional external I/O."""
+        """Bind the entry, the execution context, the I/O backend, the granted pairs and optional external I/O.
+
+        ``reprocess`` lists the periods (or ``first..last`` ranges) this run rewrote, for the stability check.
+        """
         self.entry = entry
         self.execution = execution
         self.io = table_io
         self.writes: list[tuple[str, str]] = []
         self._granted = granted
         self._externals = externals
+        self.reprocess = tuple(reprocess)
 
     @property
     def task_id(self) -> str:

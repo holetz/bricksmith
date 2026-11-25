@@ -53,10 +53,10 @@ declaration per output in a list, each with `output` naming it. The full list of
 | `baseline` | `fixed` | `fixed` (`start`/`end`, default the periods the bins were fitted on), `previous` (`lag`), `rolling` (`periods`, `min_periods`). |
 | `fit_periods` | `1` | Earliest periods the bins are fitted on when no fixed range is given. |
 | `limits`, `column_limits` | see below | Per metric `{green, red, direction, center}` or `null` to disable; per column overrides. |
-| `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Least-squares trend check; `false` disables it. |
+| `trend`, `trend_metrics` | window 12, min 6 points, 2σ/3σ; `psi`, `volume_change` | Prediction-interval trend check (see the trend check under [Metrics and default limits](#metrics-and-default-limits)); `false` disables it. |
 | `trend_directions` | `row_count` and `mean` both, `null_rate` and `unseen_rate` higher | Per metric `higher`, `lower` or `both`: the direction of the trend check for a metric without limits. A limit's own direction wins. |
 | `persistence` | yellow 3, red 2, close after 3 greens, recurrence 12 | When an alert opens, escalates and closes; `immediate_red` opens on one red. |
-| `gate` | `{fail_on: [], on_error: "warn"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`. |
+| `gate` | `{fail_on: [], on_error: "warn", periods: "latest"}` | `fail_on` takes `red`, `yellow`, `critical`, `alert`; `on_error` takes `warn` or `fail`; `periods` takes `latest` or `profiled` (see [Backfills and reprocessing](#backfills-and-reprocessing)). |
 | `notify` | none | Delivers opened, escalated and recurred alerts through the run's notifier: `true`, `false` or `{on, min_severity}`. See [Notifications](#notifications). |
 | `cadence`, `expected_by` | `none`, `0` | Expected period cadence (`day`, `week`, `month`) and the whole days after a period ends by which its data is due. See [Cadence](#cadence-late-periods-and-gaps). |
 | `settle_periods`, `settle_days` | `0`, `0` | The latest N periods, or the periods ending within N days of `as_of`, are still receiving data: judged and shown, never a baseline, trend history, alert or gate input. `settle_days` needs a `cadence`. |
@@ -106,7 +106,7 @@ columns and text with very many values are skipped. The reason for each skip is 
 5. **Alerts.** Status histories are replayed into alerts. A replay produces the same `alert_id`, an open alert whose
    opening left the window, or opened inside it before the window's red run, is carried (see Persistence), a closed alert
    stays closed while the judgment is unchanged, and other stored alerts it no longer produces become `superseded`.
-6. **Gate.** The gate is evaluated on the latest period. A failing gate marks the task `failed` with error code
+6. **Gate.** The gate is evaluated on the latest period (or on every period profiled in the run with `gate.periods`). A failing gate marks the task `failed` with error code
    `stability_gate`, and its dependents become `blocked`. The output itself is already published: the gate protects
    downstream tasks, it does not roll back. The task result (`--json` reports and `task_finished` events) carries a
    `stability` summary, and the text summary prints one line per checked output.
@@ -158,6 +158,36 @@ alerts with the ones stored before the run, so replaying unchanged data sends no
 drops the opening period of an open alert keeps its `alert_id` and sends nothing either. Delivery happens after the
 rows are stored, never raises, and cannot fail the task or change the gate; `bricksmith stability check` does not
 deliver.
+
+## Backfills and reprocessing
+
+A backfill or a correction of an older period is invisible to a run: only periods without a stored profile and the
+latest `refresh_periods` are profiled, so the stored profile, results and alerts of the older period stay stale.
+Name the rewritten periods instead of raising `refresh_periods` for every run (which rescans the table each time):
+
+```bash
+bricksmith stability reprocess --config stability.json --table catalog.schema.sales --dataset sales \
+  --periods 2026-01..2026-03 --state stability-state.json   # a list (a,b) or an inclusive first..last range
+```
+
+`check(data, config, store, dataset=..., run_id=..., reprocess=["2026-01..2026-03"])` is the same input in the API.
+The named periods are profiled again together with the declared refresh range, the whole window is judged again
+and the alerts are replayed (an alert the new data no longer produces becomes `superseded`; notifications still
+fire only for real transitions). A period that is not in the data, or lies outside the `max_periods` window, is an
+error: the window bounds how much of the table a reprocess may rescan, and the run message reports how many periods
+were profiled. With `revision` on, each reprocessed period is compared with its first publication like any
+re-profiled period.
+
+When the runner rewrites a range, pass it to the run and every task that declares `stability` profiles again the
+periods it has (the ones it lacks are ignored, so one request can serve several datasets):
+
+```python
+run_plan(plan, project_root=root, execution=execution, table_io=io, reprocess=["2026-01..2026-03"])
+```
+
+`gate.periods: profiled` makes the gate count the red (and yellow) results of every period profiled in this run,
+not only the latest, so a reprocessed older period that turns red fails the task. The default `latest` is
+unchanged. `stability_runs.periods_reprocessed` records the reprocessed periods of a run (empty when none).
 
 ## Human actions
 
@@ -236,9 +266,28 @@ Bounds are inclusive. With `higher`, a value up to `green` is green, up to `red`
 state instead of a color: `no_data`, `insufficient_volume`, `no_baseline` or `no_rule`. Their rank is -1, so they
 never count as green.
 
-**Trend check.** An ordinary-least-squares line is fitted through the last `window` earlier values of the same
-series. The current residual is standardized by the residual standard deviation: beyond 2σ is yellow, beyond 3σ is
-red, and only the worse side counts.
+**Trend check.** The trend check fits a least-squares line through the last `window` colored values of a series (at least
+`min_points`) and extrapolates it one period. The current value is standardized by the **prediction standard error**
+`s * sqrt(1 + 1/k + (k - x̄)² / Sxx)`, which carries the uncertainty of the fitted line itself, and judged against
+**Student-t quantiles** with `k - 2` degrees of freedom. `yellow` and `red` stay sigma-equivalents (default 2 and 3):
+each is the normal tail probability it implies (about 95.4% and 99.7% two-sided), turned into the t quantile for the
+window at hand, so pure noise flags at the nominal rate for any window size.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `min_abs_change` | `0` | A departure at most this large (original scale) is never yellow or red. |
+| `min_rel_change` | `0.01` | A departure at most this fraction of the expected value is never yellow or red. |
+| `transform` | `none` | `log` fits `log1p` of the values, so multiplicative growth is a straight line. |
+
+A flat history has no spread: the deviation is stored empty (never infinite) and the point is red only when it
+exceeds the floor. The result also carries `trend_sigma` (the prediction standard error in the fitted scale) and
+`trend_lower` / `trend_upper` (the red-level interval, in the original scale) so a dashboard can draw the band.
+The trend history of a period at the start of a rewritten window is seeded from the stored results of the `window`
+periods before it, so a re-judged window gives the same trend status as the first judgment.
+
+**Migration note.** The trend judgment changed, so the judgment fingerprint changes: the first run after upgrading
+re-judges the whole window once, supersedes the alerts the old statistic opened, and adds the three band columns
+to `stability_results` through table evolution. Expect fewer `trend` alerts.
 
 The trend needs a direction but not traffic-light limits. A metric with limits is trended in the direction of its
 limits; any other metric in `trend_metrics` (`row_count`, `mean`, `null_rate`, `unseen_rate`) is trended in its
@@ -325,11 +374,11 @@ which reports never use.
 |---|---|---|
 | `stability_binnings` | dataset, version | config_fingerprint, fingerprint, period_column, fit_periods, fit_rows, columns, skipped, body |
 | `stability_profiles` | dataset, version, period, segment, column, bin | period_date, segment_label, bin_order, bin_label, count, weight, value_sum, value_sum_sq, share, baseline_share, contribution |
-| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation |
+| `stability_results` | dataset, version, period, segment, column, metric | period_date, segment_label, value, current, baseline, status, status_rank, reason, green_limit, red_limit, direction, rows, baseline_rows, in_baseline, baseline_kind, baseline_label, trend_status, trend_expected, trend_deviation, trend_sigma, trend_lower, trend_upper |
 | `stability_alerts` | dataset, alert_id | version, kind, metric, column, segment, severity, severity_rank, state, opened_period, escalated_period, closed_period, last_period, last_status, last_value, flagged_periods, recurrence, message |
 | `stability_actions` | dataset, action_id | alert_id, action, resolution, reason, author, valid_until, created_at; appended by people, only read by runs |
 | `stability_revisions` | dataset, version, period, segment, column, bin | only with `revision`: the profile columns of the first publication (count, weight, value_sum, value_sum_sq), run_id, published_at |
-| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at |
+| `stability_runs` | run_id, dataset | task_id, physical, version, latest_period, periods_profiled, status, gate, red, yellow, open_alerts, critical_alerts, message, judgment_fingerprint, started_at, finished_at, periods_reprocessed |
 
 Table-level metrics use column `""`, and the whole population uses segment `""` (label `(all)`). Segment keys are
 canonical text, `col=value,col2=value2`, with `(null)` for nulls. `period_date` is the first day the period

@@ -1,4 +1,4 @@
-"""The ``stability`` command group: ``check`` a table outside a project and print the dashboard ``views``."""
+"""The ``stability`` command group: ``check`` or ``reprocess`` a table outside a project and print the ``views``."""
 
 from __future__ import annotations
 
@@ -35,7 +35,16 @@ def _check(args: argparse.Namespace) -> int:
             raise UsageError(msg)
         tables = {k: list(v) for k, v in loaded.items() if k in ALL_KINDS}
     dataset = args.dataset or config.dataset or args.table or Path(args.data).stem
-    result = check(_data(args), config, MemoryStore(tables), dataset=dataset, run_id=args.run_id, as_of=args.as_of)
+    periods = [p.strip() for p in (getattr(args, "periods", None) or "").split(",") if p.strip()]
+    result = check(
+        _data(args),
+        config,
+        MemoryStore(tables),
+        dataset=dataset,
+        run_id=args.run_id,
+        as_of=getattr(args, "as_of", None),
+        reprocess=periods,
+    )
     if state is not None:
         # A kind the run did not return (revisions while revision is off) is kept as loaded.
         merged = {**tables, **{k: merge_rows(k, tables.get(k, []), rows) for k, rows in result.tables.items()}}
@@ -89,7 +98,7 @@ def _action(args: argparse.Namespace) -> int:
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``stability check|views|action``."""
+    """Register ``stability check|reprocess|views|action``."""
     group = subparsers.add_parser(
         "stability", help="check table stability by period and print dashboard views", parents=[global_parent()]
     )
@@ -104,6 +113,20 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     run.add_argument("--run-id", default="cli", help="run identity recorded on the rows")
     run.add_argument("--as-of", help="ISO date the declared cadence is judged at (default: today, UTC)")
     run.set_defaults(handler=_check)
+    redo = commands.add_parser(
+        "reprocess",
+        help="profile and judge again the periods of a backfill or correction (exit 4 when the gate fails)",
+        parents=[global_parent()],
+    )
+    redo.add_argument("--config", required=True, help="JSON file with a stability declaration (period, columns...)")
+    _source(redo)
+    redo.add_argument("--dataset", help="dataset name (default: the declaration's, the table or the file name)")
+    redo.add_argument(
+        "--periods", required=True, help="periods to profile again: a list (a,b) or a range (first..last)"
+    )
+    redo.add_argument("--state", help="local JSON file holding the stability tables; read, then updated")
+    redo.add_argument("--run-id", default="cli", help="run identity recorded on the rows")
+    redo.set_defaults(handler=_check)
     views = commands.add_parser("views", help="print CREATE VIEW statements for dashboards", parents=[global_parent()])
     views.add_argument("--scope", required=True, help="catalog.schema holding the stability tables")
     views.add_argument("--prefix", default="stability_", help="table name prefix (default stability_)")
