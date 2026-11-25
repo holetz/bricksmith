@@ -312,7 +312,10 @@ bricksmith model-monitoring views --scope main.monitoring
 - `<prefix>model_status`: one row per model, version and period with the worst light and red/yellow counts;
 - `<prefix>open_alerts`: the latest stored state of each alert, one row per alert id from the latest finished run that
   stored it, kept when that state is open (light alerts, and persistence and trend spans still open; a span a later run
-  closed, or a person closed or accepted, is not open);
+  closed, or a person closed or accepted, is not open). An alert is open only if the newest finished run covering its
+  monitoring period still stored it: when a rerun or replay of that period (corrected data, relaxed limits) stops
+  raising it, it leaves `open_alerts`, `open_alerts_by_severity` and `alert_recurrence`; a span that moved to a newer
+  period is listed once, in its latest state;
 - the [governance views](#alert-actions-and-governance-views): `<prefix>actions_latest`, `<prefix>acceptances`,
   `<prefix>coverage`, `<prefix>alert_response` and `<prefix>response_summary`.
 
