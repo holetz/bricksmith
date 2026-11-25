@@ -116,7 +116,7 @@ Re-published history (late loads, corrections) silently changes numbers that wer
 time it saw the period:
 
 ```python
-metadata={"stability": {"period": "month", "revision": True, "refresh_periods": 3}}
+metadata = {"stability": {"period": "month", "revision": True, "refresh_periods": 3}}
 ```
 
 The first publication goes to one extra table, `stability_revisions`, written once per period and never rewritten.
