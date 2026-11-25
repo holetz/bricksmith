@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from bricksmith.monitor.actions import STATE_ACCEPTED, STATE_CLOSED, apply_actions, latest_actions
 from bricksmith.monitor.adapter import is_rows
 from bricksmith.monitor.errors import MonitorError
-from bricksmith.monitor.limits import RED, YELLOW
+from bricksmith.monitor.limits import COLORS, RED, YELLOW
 from bricksmith.monitor.persistence import CLOSED, CRITICAL, OPEN, SUPERSEDED
 from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.stability.config import ESCALATED, FIXED, OPENED, PREVIOUS, RECURRED, ROLLING
@@ -326,6 +327,34 @@ def _plan_periods(
     return window, todo, loaded
 
 
+def _trend_seed(  # noqa: PLR0913 - the run's periods and the store coordinates
+    config: StabilityConfig,
+    store: Store,
+    periods: Sequence[str],
+    window: Sequence[str],
+    *,
+    dataset: str,
+    version: int,
+) -> dict[tuple[str, str, str], list[float]]:
+    """Return the stored colored values of the ``trend.window`` periods before the window, per series."""
+    policy = config.trend
+    if policy is None or not window:
+        return {}
+    before = [p for p in periods if p < window[0]][-policy.window :]
+    if not before:
+        return {}
+    series: dict[tuple[str, str, str], list[tuple[str, float]]] = {}
+    for row in store.rows(RESULTS, dataset, version=version, periods=before):
+        value = row.get("value")
+        if row.get("metric") not in config.trend_metrics or row.get("status") not in COLORS or not row.get("direction"):
+            continue
+        if value is None or not math.isfinite(float(value)):
+            continue
+        key = (str(row.get("segment") or ""), str(row.get("column") or ""), str(row["metric"]))
+        series.setdefault(key, []).append((str(row["period"]), float(value)))
+    return {key: [v for _, v in sorted(points)] for key, points in series.items()}
+
+
 def _counts(results: Sequence[Mapping[str, Any]], periods: Collection[str]) -> dict[str, int]:
     """Return how many results of ``periods`` together are red and yellow."""
     total = {RED: 0, YELLOW: 0}
@@ -553,6 +582,7 @@ def check(  # noqa: PLR0913 - one keyword per documented input
     computed = compute(
         binning, profiles, config, dataset=dataset, window=window, run_id=run_id, computed_at=started,
         emptied=vanished,
+        trend_seed=_trend_seed(config, store, periods, window, dataset=dataset, version=binning.version),
     )  # fmt: skip
     revision_rows = (
         _revisions(
