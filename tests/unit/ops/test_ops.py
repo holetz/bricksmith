@@ -793,15 +793,20 @@ _HUNTER_LIST = 'password: [\n  "hunter2"\n]\n'
         "secret=[a,\n" * 50,
         "password=[\n[\n[\n",
         "token=[ 'x\n" * 20,
-        'token=[ "x\n' * 20,
         "token=[\n" * 5 + "unclosed text\n" * 20,
     ],
-    ids=["five", "many", "items", "nested", "single-quote", "double-quote", "with-text"],
+    ids=["five", "many", "items", "nested", "single-quote", "with-text"],
 )
 def test_earlier_unclosed_brackets_do_not_unmask_a_later_secret_list(prefix: str) -> None:
     out = redact_text(prefix + _HUNTER_LIST + "x" * 20_000, limit=100_000)
     assert "hunter2" not in out
     assert "password: <redacted>" in out
+
+
+def test_earlier_unclosed_double_quote_brackets_still_mask_the_later_secret() -> None:
+    out = redact_text('token=[ "x\n' * 20 + _HUNTER_LIST + "x" * 20_000, limit=100_000)
+    assert "hunter2" not in out
+    assert out.startswith("token=<redacted>")
 
 
 def test_unclosed_prefix_reproduction_masks_the_later_list() -> None:
@@ -826,6 +831,15 @@ def test_bracket_masking_leaves_ordinary_text_unchanged() -> None:
         ('secrets: [\n  it\'s\n]\npassword: [\n  "h"\n]', "secrets: <redacted>\npassword: <redacted>"),
         ("secrets: [\n  'it''s',\n  \"it's\"\n]", "secrets: <redacted>"),
         ("'tis: 1\nsecrets: [\n  a,\n  b\n]", "'tis: 1\nsecrets: <redacted>"),
+        ('secrets: [\n  "a",\n  say "hi\n]', "secrets: <redacted>"),
+        ("secrets: [\n  `a`,\n  say `hi\n]", "secrets: <redacted>"),
+        ('password: [ "abc,\n ghi]', "password: <redacted>"),
+        ("password: [ `abc,\n ghi]", "password: <redacted>"),
+        ('secrets: [\n  2" pipe,\n  beta\n]', "secrets: <redacted>"),
+        (
+            'secrets: [\n  "it\'s",\n  `x`,\n  say "hi\n]\npassword: [\n  b\n]',
+            "secrets: <redacted>\npassword: <redacted>",
+        ),
     ],
 )
 def test_multiline_secret_lists_with_lone_quotes_are_masked_whole(text: str, expected: str) -> None:
@@ -840,6 +854,11 @@ def test_multiline_secret_lists_with_lone_quotes_are_masked_whole(text: str, exp
         "items = ['a', 'b']\nnote: 'quoted' and it's here",
         "tokenize: [it's,\n  not]\nthe dogs' bowl",
         "I can't say: 'maybe' [or\nnot]",
+        'say "hi [or\nnot] ok',
+        "run `ls [or\nnot] ok",
+        'names: [say "hi,\n ghi]',
+        "names: [`x,\n ghi]",
+        'a 2" pipe, b: "ok"',
     ],
 )
 def test_ordinary_apostrophe_text_is_returned_unchanged(text: str) -> None:
@@ -859,8 +878,27 @@ def test_secret_list_masking_leaves_following_apostrophe_prose_unchanged() -> No
         "token=[ james'\n[",
         "token=['\n",
         "secret=[ it's, 'x',\n",
+        'token=[ "x\n',
+        'token=[ say "hi,\n',
+        'token=["\n',
+        "token=[ `x\n",
+        "token=[ say `hi,\n",
+        "token=[`\n",
     ],
-    ids=["mid-word", "lone-leading", "mid-comma", "trailing", "bare", "mixed"],
+    ids=[
+        "mid-word",
+        "lone-leading",
+        "mid-comma",
+        "trailing",
+        "bare",
+        "mixed",
+        "dq",
+        "dq-mid",
+        "dq-bare",
+        "bt",
+        "bt-mid",
+        "bt-bare",
+    ],
 )
 def test_lone_apostrophe_list_scan_is_linear_in_time(unit: str) -> None:
     for size in (4_096, 65_536):

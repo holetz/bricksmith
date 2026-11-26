@@ -180,15 +180,13 @@ class _BracketScan:
     def _opens_quote(self, i: int) -> bool:
         """Whether the quote character at ``i`` can open a quoted region.
 
-        An apostrophe must not follow a letter or digit (``it's``, ``james'``) and a valid closer, an apostrophe not
-        directly followed by a letter or digit, must exist later: a lone apostrophe is prose, never a string that
-        swallows the rest of the input. Other quote characters always open.
+        An apostrophe must not follow a letter or digit (``it's``, ``james'``). Any quote character needs a valid
+        closer later (for an apostrophe, one not directly followed by a letter or digit): a lone quote is prose,
+        never a string that swallows the rest of the input.
         """
         text = self.text
         quote = text[i]
-        if quote != "'":
-            return True
-        if i > 0 and text[i - 1].isalnum():
+        if quote == "'" and i > 0 and text[i - 1].isalnum():
             return False
         last = self._last_closer.get(quote)
         if last is None:
