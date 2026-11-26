@@ -698,3 +698,26 @@ def test_url_credential_masking_with_many_urls_and_addresses_stays_bounded_in_ti
     redact_text("x://a:1/" * 40_000, limit=500_000)
     assert time.perf_counter() - started < 5
     assert "p@x" not in out
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("lowpass=100 highpass=200 bandpass=300 multipass=4", "lowpass=100 highpass=200 bandpass=300 multipass=4"),
+        ("clientsecrets=s3cretval", "clientsecrets=<redacted>"),
+        ("appsecrets: s3cretval", "appsecrets: <redacted>"),
+        (
+            "dbpass=a ldappass=b mypass=c smtppass=d",
+            "dbpass=<redacted> ldappass=<redacted> mypass=<redacted> smtppass=<redacted>",
+        ),
+        ("passwords=a secrets=b", "passwords=<redacted> secrets=<redacted>"),
+        ("apikeys=abc compass=n tokens=1 secretsmanager=1", "apikeys=<redacted> compass=n tokens=1 secretsmanager=1"),
+    ],
+)
+def test_pass_suffix_is_allow_listed_and_compound_plurals_are_masked(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
+def test_allow_listed_suffix_keeps_linear_time() -> None:
+    out = redact_text("dbpass=a lowpass=1 clientsecrets=b " * 20_000, limit=100_000)
+    assert "lowpass=1" in out
