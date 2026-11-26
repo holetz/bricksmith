@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 
 REDACTED = "<redacted>"
 MAX_TEXT = 500
-_MIN_ATS_FOR_PATH_ADDRESS = 2  # a path address needs an earlier "@" to separate
 _MAX_SCAN = 32_768  # patterns scan at most this many characters, whatever the limit
 _SENSITIVE_KEY = re.compile(
     r"pass|secret|token|api[_-]?key|credential|authorization|auth|private[_-]?key|cookie|dsn", re.IGNORECASE
@@ -60,6 +59,7 @@ _URL_USER = re.compile(r"://[^/\s:@]+:")
 _NON_SPACE = re.compile(r"\S+")
 _ADDRESS_TAIL = re.compile(r"[\w-]+(?:\.[\w-]+)+(?![\w@/:-]|\.\w)")
 _PORT = re.compile(r"\d{1,5}(?:[/?#]|$)")
+_HOST_AFTER_AT = re.compile(r"(?:\[[0-9A-Fa-f:.]++\]|[\w-]++(?:\.[\w-]++)*+)(?::\d{1,5}+)?+(?![\w@:-])")
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bdapi[0-9a-f]{12,}\b"), REDACTED),
     (re.compile(r"\b(?:eyJ[A-Za-z0-9_-]{8,}\.){1,2}[A-Za-z0-9_-]{8,}\b"), REDACTED),
@@ -278,23 +278,16 @@ def _mask_assignments(text: str) -> str:
     return "".join(out)
 
 
-def _after_host(rest: str, ats: list[int]) -> bool:
-    """Whether the last ``@`` sits in a path: an earlier ``@`` is followed by a host and then a ``/``, ``?`` or ``#`` before it."""
-    if len(ats) < _MIN_ATS_FOR_PATH_ADDRESS:
-        return False
-    prev, last = ats[-2], ats[-1]
-    sep = min((i for i in (rest.find(c, prev + 1, last) for c in "/?#") if i >= 0), default=-1)
-    return sep > prev + 1
-
-
 def _credential_separator(rest: str) -> int:
     """Index of the ``@`` that ends the password in ``rest``, or ``-1`` when the text holds no credential.
 
-    ``rest`` stops where the next URL starts. A leading ``1-5 digits`` followed by ``/``, ``?``, ``#`` or the end
-    is ``host:port``: only an ``@`` before the first ``?`` or ``#`` that is neither a path handle (``/@alice``)
-    nor the tail of a path address counts. Otherwise the separator is the last ``@``, skipping ``/@`` handles
-    once an earlier ``@`` exists and trailing addresses (``a@b.com``) once an earlier ``@`` exists and a ``/``, ``?`` or ``#`` precedes it, so a password
-    holding ``@``, ``?``, ``#`` or ``/`` is masked whole while a path or query address stays visible.
+    ``rest`` stops where the next URL starts. The separator is the rightmost ``@`` followed by a plausible host
+    (``name``, ``name.tld``, ``[v6]``, optionally ``:port``) and then a non-host character or the end, so everything
+    before it is the password, whatever ``@``, ``/``, ``?`` or ``#`` it holds. Where no ``@`` is followed by a
+    plausible host, the rightmost ``@`` still separates: ambiguity masks more, never less. A leading
+    ``1-5 digits`` then ``/``, ``?``, ``#`` or the end is ``host:port``: it holds a credential only when an ``@``
+    before the first ``?`` or ``#`` is neither a path handle (``/@alice``) nor the tail of a path address
+    (``a@b.com``), so a port URL with an address in its path stays visible.
     """
     port = _PORT.match(rest) is not None
     limit = len(rest)
@@ -303,11 +296,14 @@ def _credential_separator(rest: str) -> int:
     ats: list[int] = []
     at = rest.find("@", 0, limit)
     while at >= 0:
-        if not (at > 0 and rest[at - 1] == "/" and (port or ats)):
+        if not (port and at > 0 and rest[at - 1] == "/"):
             ats.append(at)
         at = rest.find("@", at + 1, limit)
-    while ats and _ADDRESS_TAIL.match(rest, ats[-1] + 1) and (port or _after_host(rest, ats)):
-        ats.pop()
+    if port and all(_ADDRESS_TAIL.match(rest, i + 1) for i in ats):
+        return -1
+    for at in reversed(ats):
+        if _HOST_AFTER_AT.match(rest, at + 1):
+            return at
     return ats[-1] if ats else -1
 
 
