@@ -536,6 +536,8 @@ def test_cli_report_diagnose_readiness_and_explain(
         ("https://u:pw@host:8080/api?e=a@b.com", "https://u:<redacted>@host:8080/api?e=a@b.com"),
         ("https://u:pw@host/users/@alice", "https://u:<redacted>@host/users/@alice"),
         ("https://user:p@ss/w@host/x", "https://user:<redacted>@host/x"),
+        ("postgresql://admin:p@ss@db.example.com", "postgresql://admin:<redacted>@db.example.com"),
+        ("smtp://user:P@ss.w0rd@mail.example.com", "smtp://user:<redacted>@mail.example.com"),
         ("https://user:1234@host/x", "https://user:<redacted>@host/x"),
         ("https://user:p?x@host/y", "https://user:<redacted>@host/y"),
         ("jdbc:x://h;user=a;password=abc def;db=1", "jdbc:x://h;user=a;password=<redacted>;db=1"),
