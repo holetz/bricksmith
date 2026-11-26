@@ -152,106 +152,71 @@ def _closes(text: str, i: int, quote: str) -> bool:
 
 
 def _quote_step(text: str, i: int, quote: str) -> tuple[int, str]:
-    """Advance one character through a quoted region: return the index of the character handled and the quote state."""
+    """Advance one character through a quoted region: return the index of the character handled and the quote state.
+
+    A quote region never crosses a newline: the line end closes it, and an escape never consumes a newline.
+    """
     ch = text[i]
-    if not quote:
-        return i, ch
-    if ch == "\\":
+    if ch in "\r\n":
+        return i, ""
+    if ch == "\\" and text[i + 1 : i + 2] not in {"\r", "\n"}:
         return i + 1, quote
     return i, "" if _closes(text, i, quote) else quote
 
 
-class _BracketScan:
-    """Resolve the ``]`` matching each ``[`` with one forward pass, sharing what a pass learns.
+def _bracket_ends(text: str) -> dict[int, int]:
+    """Map every ``[`` opened outside a quote to the index past its ``]``, or ``-1`` when it never closes.
 
-    A pass from a start resolves every bracket it opens outside quotes (a stack), caching each result; a cached
-    unclosed bracket ends the pass, a cached match is jumped. A start first seen inside a quoted region of an
-    earlier pass needs its own pass: only those rescans of already-scanned text draw from ``budget``, so early
-    unclosed brackets can never exhaust it.
+    One forward pass with a bracket stack: each character is visited once, so the cost is linear whatever the text
+    holds. A ``[`` inside a quote region has no entry (ambiguous: the caller treats it as unclosed).
     """
-
-    def __init__(self, text: str) -> None:
-        self.text = text
-        self.ends: dict[int, int] = {}
-        self.scanned = 0
-        self.budget = 4 * len(text) + 4096
-        self._last_closer: dict[str, int] = {}
-
-    def _opens_quote(self, i: int) -> bool:
-        """Whether the quote character at ``i`` can open a quoted region.
-
-        An apostrophe must not follow a letter or digit (``it's``, ``james'``). Any quote character needs a valid
-        closer later (for an apostrophe, one not directly followed by a letter or digit): a lone quote is prose,
-        never a string that swallows the rest of the input.
-        """
-        text = self.text
-        quote = text[i]
-        if quote == "'" and i > 0 and text[i - 1].isalnum():
-            return False
-        last = self._last_closer.get(quote)
-        if last is None:
-            last = text.rfind(quote)
-            while last >= 0 and not _closes(text, last, quote):
-                last = text.rfind(quote, 0, last)
-            self._last_closer[quote] = last
-        return i < last
-
-    def end(self, start: int) -> int:
-        """Index past the ``]`` matching the ``[`` at ``start``, or ``-1`` when it is unclosed or out of budget."""
-        if start in self.ends:
-            return self.ends[start]
-        rescan = start < self.scanned
-        if rescan and self.budget <= 0:
-            return -1
-        reached = self._pass(start)
-        if rescan:
-            self.budget -= reached - start
-        self.scanned = max(self.scanned, reached)
-        return self.ends[start]
-
-    def _pass(self, start: int) -> int:
-        text = self.text
-        n = len(text)
-        stack: list[int] = []
-        quote = ""
-        i = start
-        while i < n:
-            ch = text[i]
-            if quote or (ch in _PLAIN_QUOTES and self._opens_quote(i)):
-                i, quote = _quote_step(text, i, quote)
-            elif ch == "[":
-                known = self.ends.get(i)
-                if known is None:
-                    stack.append(i)
-                elif known < 0:
-                    break  # unclosed from here on, so every enclosing bracket is unclosed too
-                else:
-                    i = known
-                    continue
-            elif ch == "]" and stack:
-                self.ends[stack.pop()] = i + 1
-                if not stack:
-                    return i + 1
-            i += 1
-        for open_at in stack:
-            self.ends[open_at] = -1
-        return min(i, n)
+    ends: dict[int, int] = {}
+    stack: list[int] = []
+    quote = ""
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote:
+            i, quote = _quote_step(text, i, quote)
+        elif ch in _PLAIN_QUOTES and not (ch == "'" and i > 0 and text[i - 1].isalnum()):
+            quote = ch
+        elif ch == "[":
+            stack.append(i)
+        elif ch == "]" and stack:
+            ends[stack.pop()] = i + 1
+        i += 1
+    for open_at in stack:
+        ends[open_at] = -1
+    return ends
 
 
-def _bracketed_end(scan: _BracketScan, start: int) -> int:
-    """End of the bracketed value opening at ``start``: past its matching ``]``, even across lines.
+def _unclosed_end(text: str, start: int, key_start: int) -> int:
+    """End of an unresolved bracket under a secret key: its line plus the indented lines after it.
 
-    An unclosed ``[`` ends at the end of its first line.
+    The continuation stops at a blank line, a line indented at or left of the key's line, or the end of the text.
     """
-    end = scan.end(start)
-    return end if end >= 0 else _first_line_end(scan.text, start)
+    line_start = text.rfind("\n", 0, key_start) + 1
+    head = text[line_start:key_start]
+    indent = len(head) - len(head.lstrip())
+    end = _first_line_end(text, start)
+    while end < len(text) and text[end] in "\r\n":
+        pos = end + 1 if text[end] == "\n" or text[end + 1 : end + 2] != "\n" else end + 2
+        newline = text.find("\n", pos)
+        line = text[pos : len(text) if newline < 0 else newline]
+        if not line.strip() or len(line) - len(line.lstrip()) <= indent:
+            break
+        end = pos + len(line.rstrip())
+        if newline < 0:
+            break
+    return end
 
 
 def _mask_assignments(text: str) -> str:
     """Mask the value of every sensitive-looking ``key SEP value`` in one left-to-right sweep."""
     out: list[str] = []
     pos = 0
-    scan = _BracketScan(text)
+    ends = _bracket_ends(text)
     for match in _HEADER.finditer(text):
         if match.start() < pos:
             continue
@@ -266,7 +231,8 @@ def _mask_assignments(text: str) -> str:
             bare = _SEMICOLON_VALUE.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None
         elif text.startswith("[", i):
-            replacement = (REDACTED, _bracketed_end(scan, i))
+            closed = ends.get(i, -1)
+            replacement = (REDACTED, closed if closed >= 0 else _unclosed_end(text, i, match.start()))
         else:
             bare = _UNQUOTED.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None

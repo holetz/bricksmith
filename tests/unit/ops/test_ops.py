@@ -1063,3 +1063,66 @@ def test_url_userinfo_separator_scan_is_linear_at_4k_and_64k() -> None:
 
     assert run(4_000) < 5
     assert run(64_000) < 5
+
+
+_QUOTES = ['"', "'", "`"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'passwords: [\n  abc"def,\n  s3cr3t\n]\nname: "app"\n',
+        "passwords = [\n  'lone,\n  s3cr3t\n]\nINFO user='bob' done",
+        "token=[ 'a\n" * 10 + "password: [\n  hunter2,\n  s3cr3t\n]\n" + "x" * 3000 + " 'bob' ",
+    ],
+    ids=["double-quote", "single-quote", "repeated-prefix"],
+)
+def test_lone_quote_with_a_later_closer_never_unmasks_the_secret_list(text: str) -> None:
+    out = redact_text(text, limit=1_000_000)
+    assert "s3cr3t" not in out
+    assert "hunter2" not in out
+
+
+@pytest.mark.parametrize("quote", _QUOTES)
+@pytest.mark.parametrize("prefixes", [0, 1, 7])
+@pytest.mark.parametrize(
+    "closer", ["", 'name: "app"\n', "INFO user='bob' done\n", "run `ls`\n", "a b\n" * 3 + "'z' \"y\" `x`"]
+)
+def test_generated_quote_variants_close_the_secret_list_class(quote: str, prefixes: int, closer: str) -> None:
+    prefix = f"token=[ {quote}a\n" * prefixes
+    text = f"{prefix}password: [\n  {quote}lone,\n  s3cr3t\n]\n{closer}"
+    out = redact_text(text, limit=1_000_000)
+    assert "s3cr3t" not in out
+    assert "lone" not in out
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("password: [ 'x,\n  a\n  b\nname: 1\n", "password: <redacted>\nname: 1\n"),
+        ("  password: [ 'x,\n    a\n  b: 1\n", "  password: <redacted>\n  b: 1\n"),
+        ("password: [ 'x,\n  a\n\n  b\n", "password: <redacted>\n\n  b\n"),
+        ("password: [ 'x,\n  a", "password: <redacted>"),
+        ("password: [ 'x,\r\n  a\r\nname: 1\r\n", "password: <redacted>\r\nname: 1\r\n"),
+        ("password: [a, b]\n  note\n", "password: <redacted>\n  note\n"),
+        ("items: [ 'x,\n  a\n", "items: [ 'x,\n  a\n"),
+        ("x = 'q' and password: [a]\nname: 'z'\n", "x = 'q' and password: <redacted>\nname: 'z'\n"),
+    ],
+)
+def test_unresolved_secret_bracket_masks_only_its_indented_continuation(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
+@pytest.mark.parametrize("unit", ["token=[ 'a\n", 'token=[ "a\n', "token=[ `a\n", "token=['[' [\n", "token=[\\\n"])
+def test_secret_list_scan_is_one_linear_pass(unit: str) -> None:
+    def run(size: int) -> float:
+        text = unit * (size // len(unit)) + _HUNTER_LIST + "x" * 3000 + " 'bob' "
+        started = time.perf_counter()
+        out = redact_text(text, limit=1_000_000)
+        elapsed = time.perf_counter() - started
+        assert "hunter2" not in out
+        return elapsed
+
+    small, large = run(4_096), run(65_536)
+    assert large < 3.0
+    assert large < max(small, 0.01) * 16 * 4
