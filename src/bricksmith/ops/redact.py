@@ -146,6 +146,11 @@ def _first_line_end(text: str, start: int) -> int:
     return min(ends, default=len(text))
 
 
+def _closes(text: str, i: int, quote: str) -> bool:
+    """Whether the character at ``i`` closes a ``quote`` region: an apostrophe directly before a letter is prose (``it's``)."""
+    return text[i] == quote and (quote != "'" or not text[i + 1 : i + 2].isalnum())
+
+
 def _quote_step(text: str, i: int, quote: str) -> tuple[int, str]:
     """Advance one character through a quoted region: return the index of the character handled and the quote state."""
     ch = text[i]
@@ -153,7 +158,7 @@ def _quote_step(text: str, i: int, quote: str) -> tuple[int, str]:
         return i, ch
     if ch == "\\":
         return i + 1, quote
-    return i, "" if ch == quote else quote
+    return i, "" if _closes(text, i, quote) else quote
 
 
 class _BracketScan:
@@ -170,6 +175,26 @@ class _BracketScan:
         self.ends: dict[int, int] = {}
         self.scanned = 0
         self.budget = 4 * len(text) + 4096
+        self._last_closer: dict[str, int] = {}
+
+    def _opens_quote(self, i: int) -> bool:
+        """Whether the quote character at ``i`` can open a quoted region.
+
+        An apostrophe must not follow a letter or digit (``it's``, ``james'``). Any quote character needs a valid
+        closer later (for an apostrophe, one not directly followed by a letter or digit): a lone quote is prose,
+        never a string that swallows the rest of the input.
+        """
+        text = self.text
+        quote = text[i]
+        if quote == "'" and i > 0 and text[i - 1].isalnum():
+            return False
+        last = self._last_closer.get(quote)
+        if last is None:
+            last = text.rfind(quote)
+            while last >= 0 and not _closes(text, last, quote):
+                last = text.rfind(quote, 0, last)
+            self._last_closer[quote] = last
+        return i < last
 
     def end(self, start: int) -> int:
         """Index past the ``]`` matching the ``[`` at ``start``, or ``-1`` when it is unclosed or out of budget."""
@@ -192,7 +217,7 @@ class _BracketScan:
         i = start
         while i < n:
             ch = text[i]
-            if quote or ch in _PLAIN_QUOTES:
+            if quote or (ch in _PLAIN_QUOTES and self._opens_quote(i)):
                 i, quote = _quote_step(text, i, quote)
             elif ch == "[":
                 known = self.ends.get(i)
