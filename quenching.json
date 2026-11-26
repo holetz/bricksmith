@@ -1,0 +1,8 @@
+{
+  "specs": {
+    "card": {
+      "provider": "none",
+      "at": "capture"
+    }
+  }
+}
