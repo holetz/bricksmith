@@ -820,6 +820,21 @@ def test_bracket_scan_budget_is_not_exhausted_by_early_input_at_scale() -> None:
         assert "hunter2" not in out
 
 
+def test_bracket_scan_stays_bounded_in_time_including_quote_mismatched_brackets() -> None:
+    def run(n: int) -> float:
+        started = time.perf_counter()
+        redact_text("token=[\n" * n + _HUNTER_LIST, limit=1_000_000)
+        redact_text("token=['[\n" * n + _HUNTER_LIST, limit=1_000_000)
+        redact_text('token=["[\n' * n + _HUNTER_LIST, limit=1_000_000)
+        redact_text("token=[ 'a\n[ " * n + _HUNTER_LIST, limit=1_000_000)
+        redact_text("token=['[' [\n" * n + _HUNTER_LIST, limit=1_000_000)
+        return time.perf_counter() - started
+
+    small, large = run(500), run(8_000)
+    assert large < 5
+    assert large < max(small, 0.01) * 16 * 8
+
+
 @pytest.mark.parametrize(
     "key",
     [
