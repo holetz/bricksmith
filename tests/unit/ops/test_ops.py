@@ -662,3 +662,39 @@ def test_url_credential_masking_stays_bounded_in_time() -> None:
     redact_text("https://user:" + "@/" * 40_000 + "?x", limit=200_000)
     redact_text("https://user:12/" + "@" * 40_000, limit=200_000)
     assert time.perf_counter() - started < 5
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            '{"health":"http://host:8080/ok","db":"postgres://u:pw@db/x"}',
+            '{"health":"http://host:8080/ok","db":"postgres://u:<redacted>@db/x"}',
+        ),
+        ("http://h:80/,postgres://u:secret@db/x", "http://h:80/,postgres://u:<redacted>@db/x"),
+        ("https://user:1234/secret@host/x", "https://user:<redacted>@host/x"),
+        ("https://u:a@b?c@host/x", "https://u:<redacted>@host/x"),
+        ("https://user:p@ss?word@host/x", "https://user:<redacted>@host/x"),
+        ("https://u:pa/@host/x", "https://u:<redacted>@host/x"),
+        ("https://u:pw@host/api/users/bob@example.com", "https://u:<redacted>@host/api/users/bob@example.com"),
+        (
+            "https://u:pw@host:8080/api/users/bob@example.com",
+            "https://u:<redacted>@host:8080/api/users/bob@example.com",
+        ),
+        ("https://host:8080/api/users/bob@example.com", "https://host:8080/api/users/bob@example.com"),
+        ("https://u:pw@example.com", "https://u:<redacted>@example.com"),
+    ],
+)
+def test_url_credentials_are_masked_after_the_separator_rules(text: str, expected: str) -> None:
+    out = redact_text(text)
+    assert out == expected
+    assert redact_text(out) == expected
+
+
+def test_url_credential_masking_with_many_urls_and_addresses_stays_bounded_in_time() -> None:
+    started = time.perf_counter()
+    out = redact_text("http://h:80/,a://u:p@x.y/z " * 20_000, limit=1_000_000)
+    redact_text("https://u:" + "a@b.c" * 40_000, limit=300_000)
+    redact_text("x://a:1/" * 40_000, limit=500_000)
+    assert time.perf_counter() - started < 5
+    assert "p@x" not in out
