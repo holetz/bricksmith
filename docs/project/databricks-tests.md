@@ -20,6 +20,11 @@ environment for development, functional tests and rendered-project end-to-end te
 capability is available. Corporate Databricks is a supplementary environment for platform
 features that Free Edition cannot validate.
 
+Tests that need a local `SparkSession` (fixture `local_spark`) skip in the project environment, because
+Databricks Connect's `pyspark` refuses local sessions. `just local-spark` (`scripts/local_spark_check.py`, a CI
+job) runs them under `uv run --isolated --with pyspark==4.0.1` with `BRICKSMITH_REQUIRE_LOCAL_SPARK=true`, so a
+skip or an empty run fails; it needs Java 17.
+
 Free Edition currently provides serverless compute, permits at most five concurrent job tasks,
 restricts network access and has quota and administrative limits. Plan tiny synthetic runs with
 at most two concurrent tasks by default. See the
