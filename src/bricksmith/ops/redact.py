@@ -36,7 +36,9 @@ _UNQUOTED = re.compile(r"[^\s,;'\"&)]+")
 _SEMICOLON_VALUE = re.compile(r"[^;\r\n]+")
 _PLAIN_QUOTES = frozenset({'"', "'", "`"})
 _CURLY_CLOSERS = {"\u201c": "\u201d", "\u2018": "\u2019"}
-_URL_CREDENTIALS = re.compile(r"(://[^/\s:@]+:)(\S+)")
+_URL_USER = re.compile(r"://[^/\s:@]+:")
+_NON_SPACE = re.compile(r"\S+")
+_ADDRESS_TAIL = re.compile(r"[\w-]+(?:\.[\w-]+)+(?![\w@/:-]|\.\w)")
 _PORT = re.compile(r"\d{1,5}(?:[/?#]|$)")
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bdapi[0-9a-f]{12,}\b"), REDACTED),
@@ -149,28 +151,48 @@ def _mask_assignments(text: str) -> str:
 def _credential_separator(rest: str) -> int:
     """Index of the ``@`` that ends the password in ``rest``, or ``-1`` when the text holds no credential.
 
-    A leading ``1-5 digits`` followed by ``/``, ``?``, ``#`` or the end is ``host:port``. The separator is the
-    last ``@`` before the first ``?`` or ``#`` that does not directly follow a ``/`` (a path handle); a password
-    holding ``?`` or ``#`` falls back to the whole text, so it is masked rather than shown.
+    ``rest`` stops where the next URL starts. A leading ``1-5 digits`` followed by ``/``, ``?``, ``#`` or the end
+    is ``host:port``: only an ``@`` before the first ``?`` or ``#`` that is neither a path handle (``/@alice``)
+    nor the tail of a path address counts. Otherwise the separator is the last ``@``, skipping ``/@`` handles
+    once an earlier ``@`` exists and trailing addresses (``a@b.com``) once an earlier ``@`` exists, so a password
+    holding ``@``, ``?``, ``#`` or ``/`` is masked whole while a path or query address stays visible.
     """
-    if _PORT.match(rest):
-        return -1
-    for end in (min((i for i in (rest.find("?"), rest.find("#")) if i >= 0), default=len(rest)), len(rest)):
-        at = rest.rfind("@", 0, end)
-        while at > 0 and rest[at - 1] == "/":
-            at = rest.rfind("@", 0, at)
-        if at >= 0:
-            return at
-    return -1
+    port = _PORT.match(rest) is not None
+    limit = len(rest)
+    if port:
+        limit = min((i for i in (rest.find("?"), rest.find("#")) if i >= 0), default=limit)
+    ats: list[int] = []
+    at = rest.find("@", 0, limit)
+    while at >= 0:
+        if not (at > 0 and rest[at - 1] == "/" and (port or ats)):
+            ats.append(at)
+        at = rest.find("@", at + 1, limit)
+    while ats and _ADDRESS_TAIL.match(rest, ats[-1] + 1) and (port or len(ats) > 1):
+        ats.pop()
+    return ats[-1] if ats else -1
 
 
-def _mask_url_credentials(match: re.Match[str]) -> str:
+def _mask_url_credentials(text: str) -> str:
     """Keep the user and the host; mask the password, which may itself hold ``/`` or ``@``."""
-    rest = match.group(2)
-    at = _credential_separator(rest)
-    if at < 0:
-        return match.group(0)
-    return f"{match.group(1)}{REDACTED}{rest[at:]}"
+    out: list[str] = []
+    pos = 0
+    scan = 0
+    while match := _URL_USER.search(text, scan):
+        start = match.end()
+        nxt = text.find("://", start)
+        if nxt >= 0:
+            while nxt > start and (text[nxt - 1].isalnum() or text[nxt - 1] in "+.-"):
+                nxt -= 1
+        end = _NON_SPACE.match(text, start, len(text) if nxt < 0 else nxt)
+        stop = end.end() if end else start
+        at = _credential_separator(text[start:stop])
+        if at < 0:
+            scan = start  # not a credential: rescan the text it spans, a later URL may hold one
+            continue
+        out += (text[pos:start], REDACTED)
+        pos = scan = start + at
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def redact_text(text: str, secrets: Iterable[str] = (), limit: int = MAX_TEXT) -> str:
@@ -181,7 +203,7 @@ def redact_text(text: str, secrets: Iterable[str] = (), limit: int = MAX_TEXT) -
     window = max(limit, _MAX_SCAN)
     cut = len(out) > window
     out = out[:window]
-    out = _URL_CREDENTIALS.sub(_mask_url_credentials, _mask_assignments(_BEARER.sub(rf"\1 {REDACTED}", out)))
+    out = _mask_url_credentials(_mask_assignments(_BEARER.sub(rf"\1 {REDACTED}", out)))
     for pattern, replacement in _PATTERNS:
         out = pattern.sub(replacement, out)
     if cut or len(out) > limit:
