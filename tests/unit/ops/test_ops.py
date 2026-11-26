@@ -1198,3 +1198,65 @@ def test_url_userinfo_rightmost_separator_is_linear_at_4k_and_64k() -> None:
 
     assert run(4_000) < 5
     assert run(64_000) < 5
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "redis://:S3cretPw@cache.example.com:6379/0",
+            "redis://:<redacted>@cache.example.com:6379/0",
+        ),
+        ("REDIS_URL=redis://:S3cretPw@cache:6379/0", "REDIS_URL=redis://:<redacted>@cache:6379/0"),
+        ("rediss://:S3cretPw@cache:6380", "rediss://:<redacted>@cache:6380"),
+    ],
+)
+def test_url_empty_user_reviewer_reproductions_mask_the_password(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
+@pytest.mark.parametrize("host", ["cache", "cache.example.com", "10.0.0.5", "[::1]", "%2Fvar%2Frun%2Fredis"])
+@pytest.mark.parametrize("tail", ["", "/0", ":6379/0", "?ssl=true"])
+@pytest.mark.parametrize("password", ["Zq9", "Zq9@Kw7", "Zq9/Kw7", "Zq9!Kw7"])
+@pytest.mark.parametrize("user", ["", "bob"])
+def test_url_password_is_masked_for_empty_and_non_empty_user(user: str, password: str, tail: str, host: str) -> None:
+    out = redact_text(f"redis://{user}:{password}@{host}{tail} end")
+    assert out == f"redis://{user}:<redacted>@{host}{tail} end"
+    assert "Zq9" not in out
+    assert "Kw7" not in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "scheme://:8080",
+        "scheme://:8080/x",
+        "scheme://:8080?x=1",
+        "scheme://:8080#frag",
+        "scheme://:8080/users/@alice",
+        "scheme://:8080/a/b.c",
+        "tcp://::1",
+        "see redis://: and more",
+        "redis://cache:6379/0",
+    ],
+)
+def test_url_without_an_empty_user_credential_is_exactly_unchanged(text: str) -> None:
+    assert redact_text(text) == text
+
+
+def test_url_empty_user_scan_is_linear_at_4k_and_64k() -> None:
+    def run(n: int) -> float:
+        started = time.perf_counter()
+        for text in (
+            "redis://" + ":" * n,
+            "redis://:" * n,
+            "redis://:p" + "@a/" * n,
+            "redis://:" + "x" * n,
+            "redis://:8080" + "/x" * n,
+        ):
+            redact_text(text, limit=2_000_000)
+        return time.perf_counter() - started
+
+    small, large = run(4_000), run(64_000)
+    assert large < 5
+    assert large < max(small, 0.01) * 16 * 4
