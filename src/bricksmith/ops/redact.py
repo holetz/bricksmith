@@ -214,6 +214,15 @@ def _mask_assignments(text: str) -> str:
     return "".join(out)
 
 
+def _after_host(rest: str, ats: list[int]) -> bool:
+    """Whether the last ``@`` sits in a path: an earlier ``@`` is followed by a host and then a ``/``, ``?`` or ``#`` before it."""
+    if len(ats) < 2:  # noqa: PLR2004 - needs an earlier separator
+        return False
+    prev, last = ats[-2], ats[-1]
+    sep = min((i for i in (rest.find(c, prev + 1, last) for c in "/?#") if i >= 0), default=-1)
+    return sep > prev + 1
+
+
 def _credential_separator(rest: str) -> int:
     """Index of the ``@`` that ends the password in ``rest``, or ``-1`` when the text holds no credential.
 
@@ -233,8 +242,7 @@ def _credential_separator(rest: str) -> int:
         if not (at > 0 and rest[at - 1] == "/" and (port or ats)):
             ats.append(at)
         at = rest.find("@", at + 1, limit)
-    path = min((i for i in (rest.find("/"), rest.find("?"), rest.find("#")) if i >= 0), default=len(rest))
-    while ats and _ADDRESS_TAIL.match(rest, ats[-1] + 1) and (port or (len(ats) > 1 and ats[-1] > path)):
+    while ats and _ADDRESS_TAIL.match(rest, ats[-1] + 1) and (port or _after_host(rest, ats)):
         ats.pop()
     return ats[-1] if ats else -1
 

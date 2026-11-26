@@ -685,6 +685,19 @@ def test_url_credential_masking_stays_bounded_in_time() -> None:
         ),
         ("https://host:8080/api/users/bob@example.com", "https://host:8080/api/users/bob@example.com"),
         ("https://u:pw@example.com", "https://u:<redacted>@example.com"),
+        ("postgres://bob:p/ss@word@db.example.com", "postgres://bob:<redacted>@db.example.com"),
+        ("postgres://bob:p?ss@word@db.example.com", "postgres://bob:<redacted>@db.example.com"),
+        ("postgres://bob:p#ss@word@db.example.com", "postgres://bob:<redacted>@db.example.com"),
+        ("postgres://bob:a/b@c.d@e.f", "postgres://bob:<redacted>@e.f"),
+        ("postgres://bob:p/ss@word@db.example.com/x", "postgres://bob:<redacted>@db.example.com/x"),
+        (
+            "postgres://bob:p/ss@word@db.example.com/users/a@b.com",
+            "postgres://bob:<redacted>@db.example.com/users/a@b.com",
+        ),
+        ("postgres://bob:p/s/s@word@db.example.com", "postgres://bob:<redacted>@db.example.com"),
+        ("postgres://bob:p/ss@wo@rd@db.example.com", "postgres://bob:<redacted>@db.example.com"),
+        ("see postgres://bob:p/ss@word@db.example.com now", "see postgres://bob:<redacted>@db.example.com now"),
+        ("https://u:pw@host/a/bob@x.com", "https://u:<redacted>@host/a/bob@x.com"),
     ],
 )
 def test_url_credentials_are_masked_after_the_separator_rules(text: str, expected: str) -> None:
@@ -820,3 +833,14 @@ def test_whole_qualifier_pass_denylist_stays_linear() -> None:
         redact_text("firewallpass=a lowpass=b " * (size // 24), limit=500_000)
         timings.append(time.perf_counter() - started)
     assert timings[1] < 5.0
+
+
+def test_bare_host_url_password_with_slash_and_at_stays_bounded_in_time() -> None:
+    def run(n: int) -> float:
+        started = time.perf_counter()
+        redact_text("postgres://bob:p/ss" + "@w" * n + "@db.example.com", limit=1_000_000)
+        redact_text("postgres://bob:p/ss" + "@w.x" * n, limit=1_000_000)
+        return time.perf_counter() - started
+
+    assert run(4_000) < 5
+    assert run(64_000) < 5
