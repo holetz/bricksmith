@@ -23,7 +23,11 @@ features that Free Edition cannot validate.
 Tests that need a local `SparkSession` (fixture `local_spark`) skip in the project environment, because
 Databricks Connect's `pyspark` refuses local sessions. `just local-spark` (`scripts/local_spark_check.py`, a CI
 job) runs them under `uv run --isolated --with pyspark==4.0.1` with `BRICKSMITH_REQUIRE_LOCAL_SPARK=true`, so a
-skip or an empty run fails; it needs Java 17.
+skip or an empty run fails; it needs Java 17. The gate covers the stability engine too
+(`tests/unit/monitor/stability/test_stability_spark_parity.py`): `check` on rows and on a DataFrame must agree on
+`schema_change`, `missing_column`, the shape metrics and the key and distinct scans. The scans use
+`approx_count_distinct` (about 5% relative error), so they are compared within a tolerance. The remote Free Edition
+proof of those paths is **not run**: no free profile is configured on the build host.
 
 Free Edition currently provides serverless compute, permits at most five concurrent job tasks,
 restricts network access and has quota and administrative limits. Plan tiny synthetic runs with
