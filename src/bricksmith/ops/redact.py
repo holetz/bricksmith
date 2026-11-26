@@ -59,7 +59,6 @@ _URL_USER = re.compile(r"://[^/\s:@]+:")
 _NON_SPACE = re.compile(r"\S+")
 _ADDRESS_TAIL = re.compile(r"[\w-]+(?:\.[\w-]+)+(?![\w@/:-]|\.\w)")
 _PORT = re.compile(r"\d{1,5}(?:[/?#]|$)")
-_HOST_AFTER_AT = re.compile(r"(?:\[[0-9A-Fa-f:.]++\]|[\w-]++(?:\.[\w-]++)*+)(?::\d{1,5}+)?+(?![\w@:-])")
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bdapi[0-9a-f]{12,}\b"), REDACTED),
     (re.compile(r"\b(?:eyJ[A-Za-z0-9_-]{8,}\.){1,2}[A-Za-z0-9_-]{8,}\b"), REDACTED),
@@ -247,13 +246,12 @@ def _mask_assignments(text: str) -> str:
 def _credential_separator(rest: str) -> int:
     """Index of the ``@`` that ends the password in ``rest``, or ``-1`` when the text holds no credential.
 
-    ``rest`` stops where the next URL starts. The separator is the rightmost ``@`` followed by a plausible host
-    (``name``, ``name.tld``, ``[v6]``, optionally ``:port``) and then a non-host character or the end, so everything
-    before it is the password, whatever ``@``, ``/``, ``?`` or ``#`` it holds. Where no ``@`` is followed by a
-    plausible host, the rightmost ``@`` still separates: ambiguity masks more, never less. A leading
-    ``1-5 digits`` then ``/``, ``?``, ``#`` or the end is ``host:port``: it holds a credential only when an ``@``
-    before the first ``?`` or ``#`` is neither a path handle (``/@alice``) nor the tail of a path address
-    (``a@b.com``), so a port URL with an address in its path stays visible.
+    ``rest`` stops where the next URL starts. The separator is the rightmost ``@`` of the token, with no guess at
+    the shape of what follows, so everything before it is the password, whatever ``@``, ``/``, ``?`` or ``#`` it
+    holds: ambiguity masks more, never less. A leading ``1-5 digits`` then ``/``, ``?``, ``#`` or the end is
+    ``host:port``: it holds a credential only when an ``@`` before the first ``?`` or ``#`` is neither a path handle
+    (``/@alice``) nor the tail of a path address (``a@b.com``), so a port URL with an address in its path stays
+    visible.
     """
     port = _PORT.match(rest) is not None
     limit = len(rest)
@@ -267,9 +265,6 @@ def _credential_separator(rest: str) -> int:
         at = rest.find("@", at + 1, limit)
     if port and all(_ADDRESS_TAIL.match(rest, i + 1) for i in ats):
         return -1
-    for at in reversed(ats):
-        if _HOST_AFTER_AT.match(rest, at + 1):
-            return at
     return ats[-1] if ats else -1
 
 

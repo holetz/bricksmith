@@ -1126,3 +1126,75 @@ def test_secret_list_scan_is_one_linear_pass(unit: str) -> None:
     small, large = run(4_096), run(65_536)
     assert large < 3.0
     assert large < max(small, 0.01) * 16 * 4
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "postgresql://app:Pa@ss!@%2Fvar%2Frun%2Fpostgresql/app",
+            "postgresql://app:<redacted>@%2Fvar%2Frun%2Fpostgresql/app",
+        ),
+        (
+            "postgresql://admin:Adm1n@2024!@%2Fcloudsql%2Fproj%3Aregion%3Ainst/db",
+            "postgresql://admin:<redacted>@%2Fcloudsql%2Fproj%3Aregion%3Ainst/db",
+        ),
+        ("postgres://u:p@ss!w@[fe80::1%25eth0]:5432/db", "postgres://u:<redacted>@[fe80::1%25eth0]:5432/db"),
+        ("sftp://deploy:p@ss!@files.example.com:/srv/data", "sftp://deploy:<redacted>@files.example.com:/srv/data"),
+    ],
+)
+def test_url_userinfo_reviewer_reproductions_keep_no_password_tail(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
+_SEPARATOR_SYMBOLS = ["!", "$", "*", "%", "&", "+", "=", "~", "a", "7"]
+_HOST_KINDS = [
+    "db",
+    "db.example.com",
+    "10.0.0.5",
+    "[::1]",
+    "[fe80::1%25eth0]",
+    "%2Fvar%2Frun%2Fpostgresql",
+    "files.example.com:/srv/data",
+]
+
+
+@pytest.mark.parametrize("host", _HOST_KINDS)
+@pytest.mark.parametrize("tail", ["", "/app", ":5432/app", "?sslmode=require"])
+@pytest.mark.parametrize("symbol", _SEPARATOR_SYMBOLS)
+def test_url_password_with_at_then_symbol_is_masked_whole_for_every_host_kind(
+    symbol: str, tail: str, host: str
+) -> None:
+    out = redact_text(f"postgres://bob:Zq9@{symbol}Kw7@{host}{tail} end")
+    assert out == f"postgres://bob:<redacted>@{host}{tail} end"
+    assert "Zq9" not in out
+    assert "Kw7" not in out
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("https://u:pw@host/x?mail=a@b.com", "https://u:<redacted>@b.com"),
+        ("https://u:pw@host/users/@alice", "https://u:<redacted>@alice"),
+        ("https://u@host/x and https://v:q@h/y", "https://u@host/x and https://v:<redacted>@h/y"),
+        ("https://host:8080/api?e=a@b.com", "https://host:8080/api?e=a@b.com"),
+        ("postgres://u@db/x p@ss", "postgres://u@db/x p@ss"),
+        (
+            "see https://a.example.com/x@y then https://u:p@h/z",
+            "see https://a.example.com/x@y then https://u:<redacted>@h/z",
+        ),
+    ],
+)
+def test_url_userinfo_rightmost_separator_exact_outputs(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
+def test_url_userinfo_rightmost_separator_is_linear_at_4k_and_64k() -> None:
+    def run(n: int) -> float:
+        started = time.perf_counter()
+        for body in ("@%2F" * n, "@[::1%25z]" * n, "@h:/p" * n, "@!" * n):
+            redact_text("postgres://bob:p" + body, limit=2_000_000)
+        return time.perf_counter() - started
+
+    assert run(4_000) < 5
+    assert run(64_000) < 5
