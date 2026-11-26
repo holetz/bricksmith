@@ -277,8 +277,18 @@ def effective_limits(
     A PSI between two samples of the same population is about ``chi2(bins - 1) * (1/n + 1/m)``, so a limit below
     that is crossed by noise alone. The floor never lowers a declared limit.
     """
+    if config.psi_limits != SAMPLE_SIZE or metric not in PSI_METRICS:
+        return limits
+    return noise_floor(limits, sample)
+
+
+def noise_floor(limits: Limits | None, sample: Sample | None) -> Limits | None:
+    """Return ``limits`` raised to the sampling-noise floor of ``sample`` (any PSI-like index, whoever judges it).
+
+    The floor never lowers a declared limit and leaves non-``higher`` limits, missing samples and a single bin alone.
+    """
     if (
-        limits is None or sample is None or config.psi_limits != SAMPLE_SIZE or metric not in PSI_METRICS
+        limits is None or sample is None
         or limits.direction != HIGHER or sample.bins < 2 or sample.current <= 0 or sample.baseline <= 0  # noqa: PLR2004
     ):  # fmt: skip
         return limits

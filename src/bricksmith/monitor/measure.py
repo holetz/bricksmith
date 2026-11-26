@@ -136,6 +136,7 @@ def _unavailable(metric: str, subject: str, segment: str, reason: str, count: in
 def _distribution(reference: Reference, summary: Summary, segment: str) -> list[Measurement]:
     out: list[Measurement] = []
     epsilon = float(reference.metric_config["epsilon"])
+    smoothing = float(reference.metric_config.get("psi_smoothing", 0.0))
     for spec in reference.columns:
         name = "psi" if spec.column == reference.score else "csi"
         current = summary.bins[spec.column]
@@ -145,7 +146,7 @@ def _distribution(reference: Reference, summary: Summary, segment: str) -> list[
             if sum(spec.counts.values()) == 0:
                 out.append(_unavailable(name, spec.column, segment, "empty_reference", summary.n))
             else:
-                terms = stats.psi_terms(spec.counts, current, epsilon)
+                terms = stats.psi_terms(spec.counts, current, epsilon, smoothing)
                 value = sum(t["contribution"] for t in terms.values())
                 out.append(Measurement(name, spec.column, segment, value, count=summary.n, detail={"bins": terms}))
             outside = sum(current.get(b, 0) for b in (NULL, BELOW, ABOVE, UNSEEN))

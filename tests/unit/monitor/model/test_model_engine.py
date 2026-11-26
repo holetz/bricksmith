@@ -438,3 +438,38 @@ def test_an_accepted_light_alert_is_not_counted_by_the_red_gate() -> None:
     closed = [_act(a["alert_id"], "closed", "2026-01-01T00:00:00") for a in reds]
     still = run(rows, _stored(closed), run_id="r3", now=NOW, gate={"fail_on": ["red"]}, trend=None)
     assert still.outcome.status == "failed"  # closing a light alert is bookkeeping, not suppression
+
+
+def _small(**changes: Any) -> list[dict[str, Any]]:  # noqa: ANN401
+    results = run(predictions(per_month=40), **changes).tables["results"]
+    return pick(results, metric="csi", column="age", segment="n")
+
+
+def test_default_limits_and_gate_are_unchanged_without_the_sample_size_keys() -> None:
+    explicit = _small(psi_limits="fixed", min_rows_per_bin=0, psi_smoothing="epsilon")
+    default = _small()
+    assert default == explicit
+    assert {(r["green_limit"], r["red_limit"]) for r in default} == {(0.10, 0.25)}
+
+
+def test_sample_size_limits_raise_small_segment_csi_limits_and_store_them() -> None:
+    rows = _small(psi_limits="sample_size")
+    assert rows
+    for row in rows:
+        assert row["green_limit"] > 0.10
+        assert row["red_limit"] > 0.25
+        assert row["light"] != "red"  # the periods carry no real change
+
+
+def test_sample_size_limits_never_lower_a_declared_limit() -> None:
+    declared = {"csi": {"green": 5.0, "red": 9.0}}
+    rows = _small(psi_limits="sample_size", limits=declared)
+    assert {(r["green_limit"], r["red_limit"]) for r in rows} == {(5.0, 9.0)}
+
+
+def test_min_rows_per_bin_reports_insufficient_volume_and_laplace_changes_the_value() -> None:
+    gated = _small(min_rows_per_bin=1000)
+    assert gated
+    assert {r["light"] for r in gated} == {"insufficient_volume"}
+    plain, smooth = _small(), _small(psi_smoothing="laplace")
+    assert [r["value"] for r in plain] != [r["value"] for r in smooth]
