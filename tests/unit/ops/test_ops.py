@@ -718,6 +718,21 @@ def test_pass_suffix_is_allow_listed_and_compound_plurals_are_masked(text: str, 
     assert redact_text(text) == expected
 
 
+def test_open_pass_suffix_masks_keystore_and_database_credentials() -> None:
+    assert (
+        redact_text("keytool -storepass=changeit -keypass=hunter2")
+        == "keytool -storepass=<redacted> -keypass=<redacted>"
+    )
+    assert (
+        redact_text("postgrespass=hunter2 vaultpass=s3cr3t jdbcpass=x")
+        == "postgrespass=<redacted> vaultpass=<redacted> jdbcpass=<redacted>"
+    )
+    assert (
+        redact_text("bypass=1 surpass=2 trespass=3 impass=4 underpass=5")
+        == "bypass=1 surpass=2 trespass=3 impass=4 underpass=5"
+    )
+
+
 def test_allow_listed_suffix_keeps_linear_time() -> None:
     out = redact_text("dbpass=a lowpass=1 clientsecrets=b " * 20_000, limit=100_000)
     assert "lowpass=1" in out

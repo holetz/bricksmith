@@ -18,47 +18,28 @@ _SENSITIVE_KEY = re.compile(
 _ROW_KEYS = frozenset(
     {"row", "rows", "record", "records", "sample", "samples", "values", "data", "payload", "content", "body", "frame"}
 )
-# Lowercase qualifiers that make a concatenated ``<qualifier>pass`` a credential key (allow-list; ``lowpass``,
-# ``bandpass``, ``compass`` and ``bypass`` stay visible). Fixed-width lookbehinds keep the match linear.
-_PASS_QUALIFIERS = "|".join(
-    f"(?<={q})"
-    for q in (
-        "db",
-        "smtp",
-        "ldap",
-        "my",
-        "user",
-        "admin",
-        "root",
-        "ssh",
-        "ftp",
-        "sftp",
-        "sql",
-        "mysql",
-        "pg",
-        "redis",
-        "mongo",
-        "wifi",
-        "app",
-        "client",
-        "master",
-        "service",
-        "sys",
-        "login",
-        "mail",
-        "imap",
-        "pop",
-        "proxy",
-        "vpn",
-        "rdp",
-        "bind",
-        "sa",
-    )
+# Known non-secret words that end in ``pass`` (``lowpass``, ``bypass``, ``compass``...). Any other concatenated
+# ``<qualifier>pass`` (``storepass``, ``keypass``, ``postgrespass``) is a credential key: the suffix is open and
+# only these words are exempt, so unknown qualifiers fail closed. Fixed-width lookbehinds keep the match linear.
+_NON_SECRET_PASS_PREFIXES = (
+    "low",
+    "high",
+    "band",
+    "all",
+    "multi",
+    "com",
+    "by",
+    "over",
+    "sur",
+    "tres",
+    "under",
+    "im",
 )
+_OPEN_PASS = "(?<=[a-z])" + "".join(f"(?<!{w})" for w in _NON_SECRET_PASS_PREFIXES) + "pass"
 _KEYWORD = (
     r"(?:(?-i:(?<![a-z])|(?<=[a-z])(?=[A-Z]))"
     r"(?:pass(?:word|wd|phrase|code)?s?|secrets?|token|credentials?|authorization|(?:api[ _-]?|private[_-]?)key)"
-    rf"|(?:{_PASS_QUALIFIERS})pass"
+    rf"|{_OPEN_PASS}"
     r"|(?:secrets?|token)(?:[_-]?key)?|secretkeys?|passwords?|passwds?|passphrases?|apikeys?)(?-i:(?![a-z]))"
 )
 _SEP = r"[ \t]*(?:=>|:=|==|=|:)[ \t]*"
