@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 REDACTED = "<redacted>"
 MAX_TEXT = 500
+_MIN_ATS_FOR_PATH_ADDRESS = 2  # a path address needs an earlier "@" to separate
 _MAX_SCAN = 32_768  # patterns scan at most this many characters, whatever the limit
 _SENSITIVE_KEY = re.compile(
     r"pass|secret|token|api[_-]?key|credential|authorization|auth|private[_-]?key|cookie|dsn", re.IGNORECASE
@@ -216,7 +217,7 @@ def _mask_assignments(text: str) -> str:
 
 def _after_host(rest: str, ats: list[int]) -> bool:
     """Whether the last ``@`` sits in a path: an earlier ``@`` is followed by a host and then a ``/``, ``?`` or ``#`` before it."""
-    if len(ats) < 2:  # noqa: PLR2004 - needs an earlier separator
+    if len(ats) < _MIN_ATS_FOR_PATH_ADDRESS:
         return False
     prev, last = ats[-2], ats[-1]
     sep = min((i for i in (rest.find(c, prev + 1, last) for c in "/?#") if i >= 0), default=-1)

@@ -844,3 +844,20 @@ def test_bare_host_url_password_with_slash_and_at_stays_bounded_in_time() -> Non
 
     assert run(4_000) < 5
     assert run(64_000) < 5
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://example.com/users/a@b.com",
+        "https://example.com/p/ss@word",
+        "https://example.com?mail=a@b.com",
+        "https://example.com/a/@alice/x",
+        "https://example.com/a?x=1&y=p/q@r.s",
+        "https://user@example.com/a/b@c.com",
+        "ping me at a@b.com? or c@d.org/now",
+        "mail a@b.com/c@d.org today",
+    ],
+)
+def test_url_masking_does_not_over_redact_bare_host_paths_and_prose(text: str) -> None:
+    assert redact_text(text) == text
