@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import string
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,7 +38,7 @@ from bricksmith.mlops.lifecycle import (
     plan_rollback,
 )
 from bricksmith.mlops.meta import FILE, ModelMetadata, check_runtime, render_card
-from bricksmith.mlops.store import ModelStore, check_selector, registered_name
+from bricksmith.mlops.store import _ALIAS, TAG_HISTORY, ModelStore, check_selector, registered_name
 from bricksmith.mlops.tasks import parse_model_task
 from bricksmith.mlops.training import (
     evaluate_rows,
@@ -363,12 +365,18 @@ def test_register_names_and_resolves_explicit_versions_and_aliases(tmp_path: Pat
     assert store.aliases(NAME) == {"champion": 2}
 
 
+UC_REFUSED_TAG_KEY_CHARS = frozenset(".=><%&?\\")  # spec 80 corporate run: Unity Catalog refuses these in tag keys
+
+
 class UnityCatalogTracking(FakeTracking):
     """Unity Catalog behaviour: search results carry no tags (``tags`` is a raising method, as in the client),
     tag values are at most 256 characters and an object holds at most 50 tags."""
 
     @staticmethod
     def _check(tags: dict[str, str], key: str, value: str) -> None:
+        if set(key) & UC_REFUSED_TAG_KEY_CHARS:
+            msg = f"INVALID_PARAMETER_VALUE: tag key {key!r} holds a character Unity Catalog refuses"
+            raise ValueError(msg)
         if len(value) > 256:
             msg = f"INVALID_PARAMETER_VALUE: tag value exceeds the maximum length of 256 characters ({len(value)})"
             raise ValueError(msg)
@@ -411,6 +419,22 @@ def test_versions_read_tags_per_version_when_search_omits_them(tmp_path: Path) -
     assert store.resolve(NAME, "churn_v1", alias="champion").version == 1
     store.delete_model(NAME)
     assert store.registered(NAME) is None
+
+
+def test_alias_history_tag_keys_use_only_characters_unity_catalog_accepts(tmp_path: Path) -> None:
+    store, client = make_uc_store(tmp_path)
+    alphabet = string.ascii_letters + string.digits + "_-"
+    aliases = ["a" + char for char in alphabet] + ["a-b", "a_b-c-", "A" + "-" * 62]
+    keys: list[str] = []
+    for index, alias in enumerate(aliases):
+        model = f"main.sandbox.m{index}"  # one model per alias: Unity Catalog caps an object at 50 tags
+        client.create_registered_model(model)
+        assert _ALIAS.match(alias)
+        store.record_history(model, alias, {"from": None, "to": 1})  # the fake refuses a refused key
+        assert store.history(model, alias) == [{"from": None, "to": 1}]
+        keys += [k for k in client.models[model].tags if k.startswith(TAG_HISTORY)]
+    assert len(keys) == len(aliases)
+    assert all(re.fullmatch(r"[A-Za-z0-9_-]+", key) and not set(key) & UC_REFUSED_TAG_KEY_CHARS for key in keys)
 
 
 def test_lifecycle_events_and_alias_history_stay_within_unity_catalog_tag_limits(tmp_path: Path) -> None:
