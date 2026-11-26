@@ -146,49 +146,87 @@ def _first_line_end(text: str, start: int) -> int:
     return min(ends, default=len(text))
 
 
-def _matching_bracket(text: str, start: int) -> int:
-    """Index past the ``]`` matching the ``[`` at ``start``, or ``-1`` when the text never closes it."""
-    depth = 0
-    quote = ""
-    i = start
-    while i < len(text):
-        ch = text[i]
-        if quote:
-            if ch == "\\":
-                i += 1
-            elif ch == quote:
-                quote = ""
-        elif ch in _PLAIN_QUOTES:
-            quote = ch
-        elif ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                return i + 1
-        i += 1
-    return -1
+def _quote_step(text: str, i: int, quote: str) -> tuple[int, str]:
+    """Advance one character through a quoted region: return the index of the character handled and the quote state."""
+    ch = text[i]
+    if not quote:
+        return i, ch
+    if ch == "\\":
+        return i + 1, quote
+    return i, "" if ch == quote else quote
 
 
-def _bracketed_end(text: str, start: int, budget: list[int]) -> int:
+class _BracketScan:
+    """Resolve the ``]`` matching each ``[`` with one forward pass, sharing what a pass learns.
+
+    A pass from a start resolves every bracket it opens outside quotes (a stack), caching each result; a cached
+    unclosed bracket ends the pass, a cached match is jumped. A start first seen inside a quoted region of an
+    earlier pass needs its own pass: only those rescans of already-scanned text draw from ``budget``, so early
+    unclosed brackets can never exhaust it.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.ends: dict[int, int] = {}
+        self.scanned = 0
+        self.budget = 4 * len(text) + 4096
+
+    def end(self, start: int) -> int:
+        """Index past the ``]`` matching the ``[`` at ``start``, or ``-1`` when it is unclosed or out of budget."""
+        if start in self.ends:
+            return self.ends[start]
+        rescan = start < self.scanned
+        if rescan and self.budget <= 0:
+            return -1
+        reached = self._pass(start)
+        if rescan:
+            self.budget -= reached - start
+        self.scanned = max(self.scanned, reached)
+        return self.ends[start]
+
+    def _pass(self, start: int) -> int:
+        text = self.text
+        n = len(text)
+        stack: list[int] = []
+        quote = ""
+        i = start
+        while i < n:
+            ch = text[i]
+            if quote or ch in _PLAIN_QUOTES:
+                i, quote = _quote_step(text, i, quote)
+            elif ch == "[":
+                known = self.ends.get(i)
+                if known is None:
+                    stack.append(i)
+                elif known < 0:
+                    break  # unclosed from here on, so every enclosing bracket is unclosed too
+                else:
+                    i = known
+                    continue
+            elif ch == "]" and stack:
+                self.ends[stack.pop()] = i + 1
+                if not stack:
+                    return i + 1
+            i += 1
+        for open_at in stack:
+            self.ends[open_at] = -1
+        return min(i, n)
+
+
+def _bracketed_end(scan: _BracketScan, start: int) -> int:
     """End of the bracketed value opening at ``start``: past its matching ``]``, even across lines.
 
-    An unclosed ``[`` ends at the end of its first line. A scan that never closes is paid from ``budget`` (the
-    characters it may still rescan); once spent, brackets fall back to the first line, keeping the sweep linear.
+    An unclosed ``[`` ends at the end of its first line.
     """
-    if budget[0] > 0:
-        end = _matching_bracket(text, start)
-        if end >= 0:
-            return end
-        budget[0] -= len(text) - start
-    return _first_line_end(text, start)
+    end = scan.end(start)
+    return end if end >= 0 else _first_line_end(scan.text, start)
 
 
 def _mask_assignments(text: str) -> str:
     """Mask the value of every sensitive-looking ``key SEP value`` in one left-to-right sweep."""
     out: list[str] = []
     pos = 0
-    budget = [4 * len(text) + 4096]
+    scan = _BracketScan(text)
     for match in _HEADER.finditer(text):
         if match.start() < pos:
             continue
@@ -203,7 +241,7 @@ def _mask_assignments(text: str) -> str:
             bare = _SEMICOLON_VALUE.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None
         elif text.startswith("[", i):
-            replacement = (REDACTED, _bracketed_end(text, i, budget))
+            replacement = (REDACTED, _bracketed_end(scan, i))
         else:
             bare = _UNQUOTED.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None
