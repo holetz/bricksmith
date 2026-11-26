@@ -767,3 +767,56 @@ def test_bracketed_list_masking_keeps_linear_time() -> None:
 def test_multiline_bracketed_list_masking_keeps_linear_time() -> None:
     out = redact_text("secret=[\n  a,\n" * 20_000 + "password=[x, y] ok=1", limit=1_000_000)
     assert "x, y" not in out
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "firewallpass",
+        "simpass",
+        "callpass",
+        "smallpass",
+        "xlowpass",
+        "mybypass",
+        "dbcompass",
+        "tunderpass",
+        "ximpass",
+        "Firewallpass",
+    ],
+)
+def test_qualifier_ending_in_exempt_word_is_still_a_credential_key(key: str) -> None:
+    out = redact_text(f"{key}=hunter2 tail")
+    assert "hunter2" not in out
+    assert out == f"{key}=<redacted> tail"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "lowpass=1",
+        "highpass=1",
+        "bandpass=1",
+        "allpass=1",
+        "multipass=1",
+        "compass=1",
+        "bypass=1",
+        "overpass=1",
+        "surpass=1",
+        "trespass=1",
+        "underpass=1",
+        "impass=1",
+        "my_lowpass=1",
+        "cfg.bypass=1",
+    ],
+)
+def test_whole_word_exempt_pass_keys_stay_unmasked(text: str) -> None:
+    assert redact_text(text) == text
+
+
+def test_whole_qualifier_pass_denylist_stays_linear() -> None:
+    timings = []
+    for size in (4_000, 64_000):
+        started = time.perf_counter()
+        redact_text("firewallpass=a lowpass=b " * (size // 24), limit=500_000)
+        timings.append(time.perf_counter() - started)
+    assert timings[1] < 5.0
