@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import itertools
 import json
 import logging
 import textwrap
@@ -533,8 +534,8 @@ def test_cli_report_diagnose_readiness_and_explain(
         ("http://host:8080/path", "http://host:8080/path"),
         ("GET http://host:8080/api?email=bob@example.com 200", "GET http://host:8080/api?email=bob@example.com 200"),
         ("https://host:443/users/@alice", "https://host:443/users/@alice"),
-        ("https://u:pw@host:8080/api?e=a@b.com", "https://u:<redacted>@host:8080/api?e=a@b.com"),
-        ("https://u:pw@host/users/@alice", "https://u:<redacted>@host/users/@alice"),
+        ("https://u:pw@host:8080/api?e=a@b.com", "https://u:<redacted>@b.com"),
+        ("https://u:pw@host/users/@alice", "https://u:<redacted>@alice"),
         ("https://user:p@ss/w@host/x", "https://user:<redacted>@host/x"),
         ("postgresql://admin:p@ss@db.example.com", "postgresql://admin:<redacted>@db.example.com"),
         ("smtp://user:P@ss.w0rd@mail.example.com", "smtp://user:<redacted>@mail.example.com"),
@@ -678,11 +679,8 @@ def test_url_credential_masking_stays_bounded_in_time() -> None:
         ("https://u:a@b?c@host/x", "https://u:<redacted>@host/x"),
         ("https://user:p@ss?word@host/x", "https://user:<redacted>@host/x"),
         ("https://u:pa/@host/x", "https://u:<redacted>@host/x"),
-        ("https://u:pw@host/api/users/bob@example.com", "https://u:<redacted>@host/api/users/bob@example.com"),
-        (
-            "https://u:pw@host:8080/api/users/bob@example.com",
-            "https://u:<redacted>@host:8080/api/users/bob@example.com",
-        ),
+        ("https://u:pw@host/api/users/bob@example.com", "https://u:<redacted>@example.com"),
+        ("https://u:pw@host:8080/api/users/bob@example.com", "https://u:<redacted>@example.com"),
         ("https://host:8080/api/users/bob@example.com", "https://host:8080/api/users/bob@example.com"),
         ("https://u:pw@example.com", "https://u:<redacted>@example.com"),
         ("postgres://bob:p/ss@word@db.example.com", "postgres://bob:<redacted>@db.example.com"),
@@ -690,14 +688,19 @@ def test_url_credential_masking_stays_bounded_in_time() -> None:
         ("postgres://bob:p#ss@word@db.example.com", "postgres://bob:<redacted>@db.example.com"),
         ("postgres://bob:a/b@c.d@e.f", "postgres://bob:<redacted>@e.f"),
         ("postgres://bob:p/ss@word@db.example.com/x", "postgres://bob:<redacted>@db.example.com/x"),
-        (
-            "postgres://bob:p/ss@word@db.example.com/users/a@b.com",
-            "postgres://bob:<redacted>@db.example.com/users/a@b.com",
-        ),
+        ("postgres://bob:p/ss@word@db.example.com/users/a@b.com", "postgres://bob:<redacted>@b.com"),
         ("postgres://bob:p/s/s@word@db.example.com", "postgres://bob:<redacted>@db.example.com"),
         ("postgres://bob:p/ss@wo@rd@db.example.com", "postgres://bob:<redacted>@db.example.com"),
         ("see postgres://bob:p/ss@word@db.example.com now", "see postgres://bob:<redacted>@db.example.com now"),
-        ("https://u:pw@host/a/bob@x.com", "https://u:<redacted>@host/a/bob@x.com"),
+        ("https://u:pw@host/a/bob@x.com", "https://u:<redacted>@x.com"),
+        ("postgres://admin:p@ss/word@db.example.com", "postgres://admin:<redacted>@db.example.com"),
+        ("postgres://admin:p@ss?word@db.example.com", "postgres://admin:<redacted>@db.example.com"),
+        ("redis://u:x@y/z@cache.example.com", "redis://u:<redacted>@cache.example.com"),
+        ("postgres://u:p@ss#w@db.example.com:5432/x", "postgres://u:<redacted>@db.example.com:5432/x"),
+        ("redis://u:p@ss@[::1]:6379/0", "redis://u:<redacted>@[::1]:6379/0"),
+        ("x://u:pw@", "x://u:<redacted>@"),
+        ("x://u:5432/p@ss/w@h.example.com/x", "x://u:<redacted>@h.example.com/x"),
+        ('{"d":"postgres://u:p@ss/w@db.example.com"}', '{"d":"postgres://u:<redacted>@db.example.com"}'),
     ],
 )
 def test_url_credentials_are_masked_after_the_separator_rules(text: str, expected: str) -> None:
@@ -1009,3 +1012,54 @@ def test_bare_host_url_password_with_slash_and_at_stays_bounded_in_time() -> Non
 )
 def test_url_masking_does_not_over_redact_bare_host_paths_and_prose(text: str) -> None:
     assert redact_text(text) == text
+
+
+_PASSWORD_PARTS = ("@", "/", "?", "#")
+_ORDERED_PASSWORDS = [
+    "Zq9" + "Kw7".join(order)
+    for size in range(1, len(_PASSWORD_PARTS) + 1)
+    for order in itertools.permutations(_PASSWORD_PARTS, size)
+]
+
+
+@pytest.mark.parametrize("host", ["db", "db.example.com", "[::1]"])
+@pytest.mark.parametrize("tail", ["", "/x", "/x/y", ":5432", ":5432/x", "?sslmode=require", "#frag"])
+@pytest.mark.parametrize("password", _ORDERED_PASSWORDS)
+def test_url_password_is_masked_whole_for_every_ordering_of_separator_characters(
+    password: str, tail: str, host: str
+) -> None:
+    out = redact_text(f"postgres://bob:{password}@{host}{tail} end")
+    assert out == f"postgres://bob:<redacted>@{host}{tail} end"
+    assert "Zq9" not in out
+    assert "Kw7" not in out
+    assert redact_text(out) == out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://example.com/users/a@b.com",
+        "https://host:8080/api/users/bob@example.com",
+        "https://host:8080/api?email=a@b.com",
+        "https://host:443/users/@alice/x",
+        "ping me at a@b.com or c@d.org/now",
+        "postgres://u@db.example.com/x",
+        "see https://example.com:8080/a b@c.d",
+        "user:name@host is not a url",
+        "mailto:bob@example.com",
+    ],
+)
+def test_url_masking_leaves_text_without_a_url_credential_exactly_unchanged(text: str) -> None:
+    assert redact_text(text) == text
+
+
+def test_url_userinfo_separator_scan_is_linear_at_4k_and_64k() -> None:
+    def run(n: int) -> float:
+        started = time.perf_counter()
+        for body in ("@a/" * n, "@a.b" * n, "@" * n, "@w?#/" * n, "/" * n + "@h"):
+            redact_text("postgres://bob:p" + body, limit=2_000_000)
+            redact_text("postgres://bob:1234" + body, limit=2_000_000)
+        return time.perf_counter() - started
+
+    assert run(4_000) < 5
+    assert run(64_000) < 5
