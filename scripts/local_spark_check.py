@@ -16,7 +16,11 @@ import sys
 from bootstrap import ROOT
 
 PYSPARK = "pyspark==4.0.1"
-TESTS = ("tests/unit/monitor/test_spark_parity.py", "tests/unit/monitor/model/test_engine_parity.py")
+TESTS = (
+    "tests/unit/monitor/test_spark_parity.py",
+    "tests/unit/monitor/model/test_engine_parity.py",
+    "tests/unit/monitor/stability/test_stability_spark_parity.py",
+)
 
 
 def main(argv: list[str]) -> int:
