@@ -17,6 +17,8 @@ from bricksmith.monitor.bins import category_text, is_null
 from bricksmith.monitor.credit import adjusted_binomial_p, binomial_p, inversions, jeffreys_p
 from bricksmith.monitor.measure import OK
 from bricksmith.monitor.model.engine import Item
+from bricksmith.monitor.stability.config import LAPLACE
+from bricksmith.monitor.stability.metrics import LAPLACE_COUNT, Sample
 from bricksmith.monitor.stats import psi_terms
 
 if TYPE_CHECKING:
@@ -161,14 +163,15 @@ def exclusion_mix(config: ModelMonitorConfig, baseline: Mapping[str, Mapping[str
             reason = "empty_window" if not rows else "empty_reference"
             items.append(Item(name, column, "exclusion_psi", None, rows, reason))
             continue
-        terms = psi_terms(reference, current, config.epsilon)
+        terms = psi_terms(reference, current, config.epsilon, LAPLACE_COUNT if config.psi_smoothing == LAPLACE else 0.0)
         details: tuple[dict[str, Any], ...] = tuple(
             {"bin": key, "bin_order": i, "reference_share": t["reference"], "current_share": t["current"],
              "contribution": t["contribution"]}
             for i, (key, t) in enumerate(terms.items())
         )  # fmt: skip
+        sample = Sample(rows, sum(reference.values()), len(terms))
         items.append(Item(name, column, "exclusion_psi", sum(t["contribution"] for t in terms.values()), rows, "",
-                          details))  # fmt: skip
+                          details, sample=sample))  # fmt: skip
     return items
 
 

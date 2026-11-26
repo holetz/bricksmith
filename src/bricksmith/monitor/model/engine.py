@@ -35,6 +35,7 @@ from bricksmith.monitor.adapter import is_rows, measure
 from bricksmith.monitor.bins import BinSpec, category_text, count_bins, fit_bins, is_null
 from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import (
+    ABSOLUTE,
     COLORS,
     CONTROL,
     INFORMATIONAL,
@@ -82,6 +83,9 @@ from bricksmith.monitor.model.tables import (
 from bricksmith.monitor.persistence import CRITICAL, OPEN, PersistencePolicy, alert_spans
 from bricksmith.monitor.reference import Reference
 from bricksmith.monitor.rules import INFORMATIONAL_REASON
+from bricksmith.monitor.stability.config import LAPLACE, SAMPLE_SIZE
+from bricksmith.monitor.stability.metrics import LAPLACE_COUNT, noise_floor
+from bricksmith.monitor.stability.metrics import Sample as PsiSample
 from bricksmith.monitor.stability.profile import period_date, period_text
 from bricksmith.monitor.trend import keeps, remember, trend_check
 
@@ -96,6 +100,8 @@ WARNED = "warned"
 GATE_FAILED = "failed"
 ERROR = "error"
 VOLUME_METRICS = frozenset({"row_count", "volume_ratio"})
+#: Distribution indexes judged against the sampling-noise floor of their sample sizes (``psi_limits: sample_size``).
+PSI_METRICS = frozenset({"psi", "csi", "grade_psi", "exclusion_psi"})
 #: Metrics a run measures with expected events: exempt from ``min_rows`` and gated by ``min_expected_events``.
 EXPECTED_METRICS = frozenset(
     {"grade_oe", "grade_jeffreys_p", "grade_binomial_p", "grade_binomial_adjusted_p", "early_oe"}
@@ -224,6 +230,7 @@ class Item:
     reason: str = ""
     details: tuple[dict[str, Any], ...] = ()
     expected: float | None = None
+    sample: PsiSample | None = None
 
 
 class Frame(Protocol):
@@ -602,16 +609,29 @@ def _psi_details(spec: BinSpec, m: Measurement) -> tuple[dict[str, Any], ...]:
     )  # fmt: skip
 
 
-def _item(m: Measurement, metric: str, details: tuple[dict[str, Any], ...] = ()) -> Item:
+def _item(
+    m: Measurement, metric: str, details: tuple[dict[str, Any], ...] = (), sample: PsiSample | None = None
+) -> Item:
     value = m.value if m.status == OK else None
-    return Item(m.segment, m.subject, metric, value, m.count, "" if m.status == OK else m.reason, details)
+    return Item(
+        m.segment, m.subject, metric, value, m.count, "" if m.status == OK else m.reason, details, sample=sample
+    )
 
 
-def _distribution(binning: Reference, column: str, metric: str, frame: Frame, *, segmented: bool) -> list[Item]:
-    measurements = measure(_part(binning, [column], label=False), frame.data, segments=segmented)
+def _distribution(  # noqa: PLR0913 - the binning, the column, its metric, the rows and the declared smoothing
+    binning: Reference, column: str, metric: str, frame: Frame, *, segmented: bool, smoothing: str
+) -> list[Item]:
+    part = _part(binning, [column], label=False)
+    if smoothing == LAPLACE:
+        part = dataclasses.replace(part, metric_config={**part.metric_config, "psi_smoothing": LAPLACE_COUNT})
     spec = binning.column(column)
     wanted = "psi" if column == binning.score else "csi"
-    return [_item(m, metric, _psi_details(spec, m)) for m in measurements if m.metric == wanted]
+    reference_rows = sum(spec.counts.values())
+    return [
+        _item(m, metric, _psi_details(spec, m), PsiSample(m.count, reference_rows, len(m.detail.get("bins", {}))))
+        for m in measure(part, frame.data, segments=segmented)
+        if m.metric == wanted
+    ]
 
 
 def _ratio(m: Measurement) -> Item:
@@ -719,7 +739,9 @@ class _Measurer:
         if family in CREDIT_FAMILIES:
             return self._credit(family, column, frame)
         if family in _METRIC:
-            return _distribution(self.binning, column, _METRIC[family], frame, segmented=segmented)
+            return _distribution(
+                self.binning, column, _METRIC[family], frame, segmented=segmented, smoothing=self.config.psi_smoothing
+            )
         if family in LABEL_FAMILIES:
             return _labelled(self.binning, family, frame, segmented=segmented)
         if family == VOLUMETRY:
@@ -847,6 +869,10 @@ def _result(ctx: _Context, item: Item, family: str, version: str, when: tuple[st
     )
     limits = None if found.informational else config.limits_of(found, item.metric)
     minimum = 0 if item.metric in VOLUME_METRICS or item.expected is not None else config.min_rows
+    if item.metric in PSI_METRICS and item.sample is not None:
+        if config.psi_limits == SAMPLE_SIZE and limits is not None and limits.kind == ABSOLUTE:
+            limits = noise_floor(limits, item.sample)
+        minimum = max(minimum, math.ceil(config.min_rows_per_bin * item.sample.bins))
     key = (item.segment, item.column, item.metric)
     control = limits is not None and limits.kind == CONTROL
     mean, sd, points = ctx.control.get(key, (None, None, 0)) if control else (None, None, None)
