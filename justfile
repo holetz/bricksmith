@@ -20,6 +20,10 @@ check:
 test *args:
     uv run pytest {{args}}
 
+# The local-pyspark parity tests in an isolated classic-pyspark environment; fails on any skip.
+local-spark *args:
+    python3 scripts/local_spark_check.py {{args}}
+
 # Scan for identifiers that must never reach the repository.
 leak-check *args:
     python3 scripts/leak_check.py {{args}}

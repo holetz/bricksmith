@@ -41,6 +41,23 @@ jobs:
           path: src/bricksmith/features/_jars/bricksmith-kernel.jar
           if-no-files-found: error
 
+  # The tests that need a local SparkSession cannot run in the project environment (Databricks Connect refuses
+  # one), so they run here in an isolated classic-pyspark environment and fail when any is skipped.
+  local-spark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - name: Local-pyspark parity tests (a skip fails)
+        run: python3 scripts/local_spark_check.py
+
   checks:
     needs: kernel
     runs-on: ubuntu-latest
