@@ -721,3 +721,25 @@ def test_pass_suffix_is_allow_listed_and_compound_plurals_are_masked(text: str, 
 def test_allow_listed_suffix_keeps_linear_time() -> None:
     out = redact_text("dbpass=a lowpass=1 clientsecrets=b " * 20_000, limit=100_000)
     assert "lowpass=1" in out
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('passwords=["alpha", "beta"]', "passwords=<redacted>"),
+        ("secret=['alpha', 'beta'] next=1", "secret=<redacted> next=1"),
+        ('{"token": ["a", "b"], "ok": 1}', '{"token": <redacted>, "ok": 1}'),
+        ("secrets: [alpha, beta]", "secrets: <redacted>"),
+        ("password=[[a, b], [c]] tail", "password=<redacted> tail"),
+        ('password=["a]b", "c"] tail', "password=<redacted> tail"),
+        ("password=[a, b\nnext=1", "password=<redacted>\nnext=1"),
+        ("password=[a, b", "password=<redacted>"),
+    ],
+)
+def test_bracketed_list_values_under_secret_keys_are_masked_whole(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
+def test_bracketed_list_masking_keeps_linear_time() -> None:
+    out = redact_text("password=[a, [b, c], 'd'] ok=1 " * 20_000 + "secret=[" * 20_000, limit=100_000)
+    assert "ok=1" in out

@@ -157,6 +157,33 @@ def _block_scalar_end(text: str, start: int, key_start: int) -> int:
     return end
 
 
+def _bracketed_end(text: str, start: int) -> int:
+    """End of the bracketed value opening at ``start``: past its matching ``]``, else the end of the line."""
+    depth = 0
+    quote = ""
+    i = start
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in "\r\n":
+            return i
+        if quote:
+            if ch == "\\":
+                i += 1
+            elif ch == quote:
+                quote = ""
+        elif ch in _PLAIN_QUOTES:
+            quote = ch
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
 def _mask_assignments(text: str) -> str:
     """Mask the value of every sensitive-looking ``key SEP value`` in one left-to-right sweep."""
     out: list[str] = []
@@ -174,6 +201,8 @@ def _mask_assignments(text: str) -> str:
         elif _after_semicolon(text, match.start()):
             bare = _SEMICOLON_VALUE.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None
+        elif text.startswith("[", i):
+            replacement = (REDACTED, _bracketed_end(text, i))
         else:
             bare = _UNQUOTED.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None
