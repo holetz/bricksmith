@@ -201,7 +201,7 @@ def _credential_separator(rest: str) -> int:
     ``rest`` stops where the next URL starts. A leading ``1-5 digits`` followed by ``/``, ``?``, ``#`` or the end
     is ``host:port``: only an ``@`` before the first ``?`` or ``#`` that is neither a path handle (``/@alice``)
     nor the tail of a path address counts. Otherwise the separator is the last ``@``, skipping ``/@`` handles
-    once an earlier ``@`` exists and trailing addresses (``a@b.com``) once an earlier ``@`` exists, so a password
+    once an earlier ``@`` exists and trailing addresses (``a@b.com``) once an earlier ``@`` exists and a ``/``, ``?`` or ``#`` precedes it, so a password
     holding ``@``, ``?``, ``#`` or ``/`` is masked whole while a path or query address stays visible.
     """
     port = _PORT.match(rest) is not None
@@ -214,7 +214,8 @@ def _credential_separator(rest: str) -> int:
         if not (at > 0 and rest[at - 1] == "/" and (port or ats)):
             ats.append(at)
         at = rest.find("@", at + 1, limit)
-    while ats and _ADDRESS_TAIL.match(rest, ats[-1] + 1) and (port or len(ats) > 1):
+    path = min((i for i in (rest.find("/"), rest.find("?"), rest.find("#")) if i >= 0), default=len(rest))
+    while ats and _ADDRESS_TAIL.match(rest, ats[-1] + 1) and (port or (len(ats) > 1 and ats[-1] > path)):
         ats.pop()
     return ats[-1] if ats else -1
 
