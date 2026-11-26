@@ -751,6 +751,8 @@ def test_allow_listed_suffix_keeps_linear_time() -> None:
         ('password=["a]b", "c"] tail', "password=<redacted> tail"),
         ("password=[a, b\nnext=1", "password=<redacted>\nnext=1"),
         ("password=[a, b", "password=<redacted>"),
+        ('"passwords": [\n  "hunter2",\n  "swordfish"\n]', '"passwords": <redacted>'),
+        ("secrets: [\n  a,\n  [b, c],\n  'd]'\n] tail", "secrets: <redacted> tail"),
     ],
 )
 def test_bracketed_list_values_under_secret_keys_are_masked_whole(text: str, expected: str) -> None:
@@ -760,3 +762,8 @@ def test_bracketed_list_values_under_secret_keys_are_masked_whole(text: str, exp
 def test_bracketed_list_masking_keeps_linear_time() -> None:
     out = redact_text("password=[a, [b, c], 'd'] ok=1 " * 20_000 + "secret=[" * 20_000, limit=100_000)
     assert "ok=1" in out
+
+
+def test_multiline_bracketed_list_masking_keeps_linear_time() -> None:
+    out = redact_text("secret=[\n  a,\n" * 20_000 + "password=[x, y] ok=1", limit=1_000_000)
+    assert "x, y" not in out

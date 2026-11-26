@@ -138,16 +138,19 @@ def _block_scalar_end(text: str, start: int, key_start: int) -> int:
     return end
 
 
-def _bracketed_end(text: str, start: int) -> int:
-    """End of the bracketed value opening at ``start``: past its matching ``]``, else the end of the line."""
+def _first_line_end(text: str, start: int) -> int:
+    """Index of the first carriage return or line feed at or after ``start``, else the end of the text."""
+    ends = (found for found in (text.find("\r", start), text.find("\n", start)) if found >= 0)
+    return min(ends, default=len(text))
+
+
+def _matching_bracket(text: str, start: int) -> int:
+    """Index past the ``]`` matching the ``[`` at ``start``, or ``-1`` when the text never closes it."""
     depth = 0
     quote = ""
     i = start
-    n = len(text)
-    while i < n:
+    while i < len(text):
         ch = text[i]
-        if ch in "\r\n":
-            return i
         if quote:
             if ch == "\\":
                 i += 1
@@ -162,13 +165,28 @@ def _bracketed_end(text: str, start: int) -> int:
             if depth == 0:
                 return i + 1
         i += 1
-    return n
+    return -1
+
+
+def _bracketed_end(text: str, start: int, budget: list[int]) -> int:
+    """End of the bracketed value opening at ``start``: past its matching ``]``, even across lines.
+
+    An unclosed ``[`` ends at the end of its first line. A scan that never closes is paid from ``budget`` (the
+    characters it may still rescan); once spent, brackets fall back to the first line, keeping the sweep linear.
+    """
+    if budget[0] > 0:
+        end = _matching_bracket(text, start)
+        if end >= 0:
+            return end
+        budget[0] -= len(text) - start
+    return _first_line_end(text, start)
 
 
 def _mask_assignments(text: str) -> str:
     """Mask the value of every sensitive-looking ``key SEP value`` in one left-to-right sweep."""
     out: list[str] = []
     pos = 0
+    budget = [4 * len(text) + 4096]
     for match in _HEADER.finditer(text):
         if match.start() < pos:
             continue
@@ -183,7 +201,7 @@ def _mask_assignments(text: str) -> str:
             bare = _SEMICOLON_VALUE.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None
         elif text.startswith("[", i):
-            replacement = (REDACTED, _bracketed_end(text, i))
+            replacement = (REDACTED, _bracketed_end(text, i, budget))
         else:
             bare = _UNQUOTED.match(text, i)
             replacement = (REDACTED, bare.end()) if bare else None
