@@ -237,3 +237,24 @@ def test_epsilon_must_be_finite_and_positive(epsilon: object) -> None:
 def test_valid_epsilon_is_kept() -> None:
     assert parse_config(BASE).epsilon == pytest.approx(1e-4)
     assert parse_config({**BASE, "epsilon": 1e-6}).epsilon == pytest.approx(1e-6)
+
+
+def test_sample_size_keys_default_to_the_existing_behavior() -> None:
+    config = parse_config(BASE)
+    assert (config.psi_limits, config.min_rows_per_bin, config.psi_smoothing) == ("fixed", 0, "epsilon")
+    assert not {"psi_limits", "min_rows_per_bin", "psi_smoothing"} & set(config.to_dict())
+
+
+def test_sample_size_keys_are_kept_and_serialized() -> None:
+    declared = {"psi_limits": "sample_size", "min_rows_per_bin": 5, "psi_smoothing": "laplace"}
+    config = parse_config({**BASE, **declared})
+    assert (config.psi_limits, config.min_rows_per_bin, config.psi_smoothing) == ("sample_size", 5, "laplace")
+    assert declared.items() <= config.to_dict().items()
+
+
+@pytest.mark.parametrize(
+    "bad", [{"psi_limits": "loose"}, {"psi_smoothing": "none"}, {"min_rows_per_bin": -1}, {"min_rows_per_bin": 1.5}]
+)
+def test_sample_size_keys_are_validated(bad: dict) -> None:
+    with pytest.raises(MonitorError):
+        parse_config({**BASE, **bad})

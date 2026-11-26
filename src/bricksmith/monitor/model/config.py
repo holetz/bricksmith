@@ -19,6 +19,7 @@ from bricksmith.monitor.errors import MonitorError
 from bricksmith.monitor.limits import BOTH, CONTROL, HIGHER, KINDS, LOWER, RELATIVE, Limits
 from bricksmith.monitor.persistence import PersistencePolicy
 from bricksmith.monitor.rules import LimitRule, Resolution, parse_rules, resolve
+from bricksmith.monitor.stability.config import EPSILON_FLOOR, FIXED, PSI_LIMITS, PSI_SMOOTHINGS
 from bricksmith.monitor.trend import TrendPolicy
 
 if TYPE_CHECKING:
@@ -90,6 +91,7 @@ KEYS = frozenset({
     "sample", "references", "features", "feature_binning", "critical_fields", "metrics", "label_lag", "limits",
     "gate", "min_rows", "max_periods", "score_bins", "calibration_bins", "scope", "prefix", "epsilon", "trend",
     "trend_metrics", "persistence", "control_min_points", "lags", "rules", "credit",
+    "psi_limits", "min_rows_per_bin", "psi_smoothing",
 })  # fmt: skip
 
 
@@ -260,6 +262,9 @@ class ModelMonitorConfig:
     scope: str = ""
     prefix: str = "model_monitoring_"
     epsilon: float = 1e-4
+    psi_limits: str = FIXED
+    min_rows_per_bin: int = 0
+    psi_smoothing: str = EPSILON_FLOOR
     rules: tuple[LimitRule, ...] = ()
     credit: Credit | None = None
 
@@ -340,6 +345,12 @@ class ModelMonitorConfig:
     def to_dict(self) -> dict[str, Any]:
         """Return the serializable form (``rules`` and ``credit`` only when declared, so existing fingerprints stay)."""
         data = self._base_dict()
+        if self.psi_limits != FIXED:
+            data["psi_limits"] = self.psi_limits
+        if self.min_rows_per_bin:
+            data["min_rows_per_bin"] = self.min_rows_per_bin
+        if self.psi_smoothing != EPSILON_FLOOR:
+            data["psi_smoothing"] = self.psi_smoothing
         if self.rules:
             data["rules"] = [r.to_dict() for r in self.rules]
         if self.credit is not None:
@@ -414,6 +425,14 @@ def _int(data: dict[str, Any], key: str, default: int, minimum: int) -> int:
         msg = f"{key} must be an integer >= {minimum}, got {value!r}"
         raise _fail(msg)
     return value
+
+
+def _choice(data: dict[str, Any], key: str, default: str, allowed: tuple[str, ...]) -> str:
+    value = data.get(key, default)
+    if value not in allowed:
+        msg = f"{key} must be one of {', '.join(allowed)}, got {value!r}"
+        raise _fail(msg)
+    return str(value)
 
 
 def _sample(name: str, value: object, sample_column: str) -> Sample:
@@ -693,6 +712,9 @@ def parse_config(data: object, root: Path | str | None = None) -> ModelMonitorCo
             scope=str(data.get("scope", "")),
             prefix=_prefix(data.get("prefix", "model_monitoring_")),
             epsilon=_epsilon(data.get("epsilon", 1e-4)),
+            psi_limits=_choice(data, "psi_limits", FIXED, PSI_LIMITS),
+            min_rows_per_bin=_int(data, "min_rows_per_bin", 0, 0),
+            psi_smoothing=_choice(data, "psi_smoothing", EPSILON_FLOOR, PSI_SMOOTHINGS),
             rules=_rules(data.get("rules"), oot, root),
             credit=credit,
         )

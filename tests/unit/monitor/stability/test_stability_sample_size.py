@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from bricksmith.monitor.limits import GREEN, RED
+from bricksmith.monitor.limits import GREEN, RED, Limits
 from bricksmith.monitor.stability import MemoryStore, check, parse_config
-from bricksmith.monitor.stability.metrics import Sample, effective_limits
+from bricksmith.monitor.stability.metrics import Sample, effective_limits, noise_floor
 from bricksmith.monitor.stats import psi_terms
 
 if TYPE_CHECKING:
@@ -105,3 +105,16 @@ def test_results_store_the_effective_limits_and_report_insufficient_volume() -> 
     small = _rows("2026-01", 12) + _rows("2026-02", 12)
     assert _psi_row(_check(small))["status"] == "insufficient_volume"  # 12 rows over 3 bins: under 10 per bin
     assert _psi_row(_check(small, min_rows_per_bin=0))["status"] != "insufficient_volume"
+
+
+def test_noise_floor_raises_limits_and_never_lowers_them() -> None:
+    limits = Limits(0.10, 0.25, "higher")
+    small = noise_floor(limits, Sample(30, 90, BINS))
+    assert small is not None
+    assert small.green > 0.10
+    assert small.red > 0.25
+    large = noise_floor(limits, Sample(10**7, 10**7, BINS))
+    assert large == limits
+    assert noise_floor(limits, Sample(30, 90, 1)) == limits
+    assert noise_floor(limits, None) == limits
+    assert noise_floor(None, Sample(30, 90, BINS)) is None
