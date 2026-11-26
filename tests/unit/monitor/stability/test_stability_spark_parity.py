@@ -1,9 +1,10 @@
 """The Spark stability engine equals the pure engine on the schema, scan and shape metrics (local pyspark).
 
 Skipped where pyspark is missing or cannot start a local session (Databricks Connect refuses one); the local-Spark
-gate (``scripts/local_spark_check.py``) runs it with the skip turned into a failure. The key and distinct scan
-metrics use ``approx_count_distinct`` (a relative standard deviation of about 5%), so they are compared within a
-tolerance and every other metric exactly.
+gate (``scripts/local_spark_check.py``) runs it with the skip turned into a failure. The distinct scan metrics
+use ``approx_count_distinct`` (a relative standard deviation of about 5%), so their values are compared within a
+bound derived from the metric's limits; every metric, those included, must agree on status and reason, and every
+other value is compared exactly (the key count is exact on both engines).
 """
 
 from __future__ import annotations
@@ -11,14 +12,21 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from bricksmith.monitor.stability.config import StabilityConfig, parse_config
+from bricksmith.monitor.stability.config import SHAPE_LIMITS, StabilityConfig, parse_config
 from bricksmith.monitor.stability.engine import CheckResult, MemoryStore, check
 from bricksmith.monitor.stability.tables import merge_rows
 
 NOW = "2026-06-01T00:00:00+00:00"
 MONTHS = 4
-APPROXIMATE = {"duplicate_key_rate", "distinct_count", "distinct_change"}
-TOLERANCE = 0.12  # a few times the 5% relative standard deviation of approx_count_distinct
+APPROXIMATE = {"distinct_count", "distinct_change"}
+RELATIVE_SD = 0.05  # the relative standard deviation of approx_count_distinct
+UNLIMITED_BOUND = 3 * RELATIVE_SD  # distinct_count has no limits: three standard deviations, relative
+
+
+def _bound(metric: str) -> float:
+    """Return the value gap an approximate metric may show: its green limit, else three standard deviations."""
+    limits = SHAPE_LIMITS.get(metric)
+    return limits.green if limits is not None else UNLIMITED_BOUND
 
 
 def _rows(*, drop: tuple[str, ...] = (), extra: bool = False, shift: bool = False) -> list[dict[str, Any]]:
@@ -96,10 +104,11 @@ def _assert_equal(pure: dict[Any, dict[str, Any]], spark: dict[Any, dict[str, An
         got = spark[key]
         if key[3] in APPROXIMATE and None not in (got["value"], expected["value"]):
             low, high = sorted((float(got["value"]), float(expected["value"])))
-            assert high - low <= TOLERANCE * max(1.0, abs(high)), (key, got["value"], expected["value"])
-            continue
+            assert high - low <= _bound(key[3]) * max(1.0, abs(high)), (key, got["value"], expected["value"])
         assert got["status"] == expected["status"], key
         assert got.get("reason") == expected.get("reason"), key
+        if key[3] in APPROXIMATE:
+            continue
         if expected["value"] is None or got["value"] is None:
             assert got["value"] is expected["value"], key
         else:

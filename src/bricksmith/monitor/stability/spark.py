@@ -292,10 +292,10 @@ def profile_spark(  # noqa: PLR0913 - one keyword per profile field
 def _scan_spark(
     binning: Reference, scoped: DataFrame, config: StabilityConfig, *, dataset: str, run_id: str
 ) -> list[dict[str, Any]]:
-    """Return the ``~keys`` and ``~distinct:<column>`` rows of every period: one grouped aggregation, approximate.
+    """Return the ``~keys`` and ``~distinct:<column>`` rows of every period: one grouped aggregation.
 
-    Distinct counts use ``approx_count_distinct`` (a relative standard deviation of about 5%), so the duplicate
-    key rate of a Spark profile carries that error; the pure engine counts exactly.
+    The key count is exact, so the duplicate key rate equals the pure engine's. Column distinct counts use
+    ``approx_count_distinct`` (a relative standard deviation of about 5%); the pure engine counts exactly.
     """
     if not config.keys and not config.distinct:
         return []
@@ -303,7 +303,7 @@ def _scan_spark(
     aggs = [f.count(f.lit(1)).alias("rows")]
     if config.keys:
         parts = [f.coalesce(f.col(c).cast("string"), f.lit("\x00null")) for c in config.keys]
-        aggs.append(f.approx_count_distinct(f.concat_ws("\x1f", *parts)).alias("keys"))
+        aggs.append(f.countDistinct(f.concat_ws("\x1f", *parts)).alias("keys"))
     for i, column in enumerate(config.distinct):
         aggs += [f.count(f.col(column)).alias(f"n{i}"), f.approx_count_distinct(f.col(column)).alias(f"d{i}")]
     out: list[dict[str, Any]] = []
