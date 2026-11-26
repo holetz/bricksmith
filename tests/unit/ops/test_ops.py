@@ -782,6 +782,44 @@ def test_multiline_bracketed_list_masking_keeps_linear_time() -> None:
     assert "x, y" not in out
 
 
+_HUNTER_LIST = 'password: [\n  "hunter2"\n]\n'
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "token=[\n" * 5,
+        "token=[\n" * 500,
+        "secret=[a,\n" * 50,
+        "password=[\n[\n[\n",
+        "token=[ 'x\n" * 20,
+        'token=[ "x\n' * 20,
+        "token=[\n" * 5 + "unclosed text\n" * 20,
+    ],
+    ids=["five", "many", "items", "nested", "single-quote", "double-quote", "with-text"],
+)
+def test_earlier_unclosed_brackets_do_not_unmask_a_later_secret_list(prefix: str) -> None:
+    out = redact_text(prefix + _HUNTER_LIST + "x" * 20_000, limit=100_000)
+    assert "hunter2" not in out
+    assert "password: <redacted>" in out
+
+
+def test_unclosed_prefix_reproduction_masks_the_later_list() -> None:
+    out = redact_text("token=[\n" * 5 + 'password: [\n  "hunter2"\n]\n' + "x" * 20000)
+    assert "hunter2" not in out
+
+
+def test_bracket_masking_leaves_ordinary_text_unchanged() -> None:
+    text = "items = [1, 2, 3]\nnames: [alpha, beta]\nmatrix=[[1, 2],\n[3, 4]]\nnote: see [docs] and [more\nend"
+    assert redact_text(text) == text
+
+
+def test_bracket_scan_budget_is_not_exhausted_by_early_input_at_scale() -> None:
+    for size in (4_000, 64_000):
+        out = redact_text("token=[\n" * (size // 8) + _HUNTER_LIST, limit=1_000_000)
+        assert "hunter2" not in out
+
+
 @pytest.mark.parametrize(
     "key",
     [
