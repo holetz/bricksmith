@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 REDACTED = "<redacted>"
 MAX_TEXT = 500
+_MIN_ATS_FOR_PATH_ADDRESS = 2  # a path address needs an earlier "@" to separate
 _MAX_SCAN = 32_768  # patterns scan at most this many characters, whatever the limit
 _SENSITIVE_KEY = re.compile(
     r"pass|secret|token|api[_-]?key|credential|authorization|auth|private[_-]?key|cookie|dsn", re.IGNORECASE
@@ -214,6 +215,15 @@ def _mask_assignments(text: str) -> str:
     return "".join(out)
 
 
+def _after_host(rest: str, ats: list[int]) -> bool:
+    """Whether the last ``@`` sits in a path: an earlier ``@`` is followed by a host and then a ``/``, ``?`` or ``#`` before it."""
+    if len(ats) < _MIN_ATS_FOR_PATH_ADDRESS:
+        return False
+    prev, last = ats[-2], ats[-1]
+    sep = min((i for i in (rest.find(c, prev + 1, last) for c in "/?#") if i >= 0), default=-1)
+    return sep > prev + 1
+
+
 def _credential_separator(rest: str) -> int:
     """Index of the ``@`` that ends the password in ``rest``, or ``-1`` when the text holds no credential.
 
@@ -233,8 +243,7 @@ def _credential_separator(rest: str) -> int:
         if not (at > 0 and rest[at - 1] == "/" and (port or ats)):
             ats.append(at)
         at = rest.find("@", at + 1, limit)
-    path = min((i for i in (rest.find("/"), rest.find("?"), rest.find("#")) if i >= 0), default=len(rest))
-    while ats and _ADDRESS_TAIL.match(rest, ats[-1] + 1) and (port or (len(ats) > 1 and ats[-1] > path)):
+    while ats and _ADDRESS_TAIL.match(rest, ats[-1] + 1) and (port or _after_host(rest, ats)):
         ats.pop()
     return ats[-1] if ats else -1
 
