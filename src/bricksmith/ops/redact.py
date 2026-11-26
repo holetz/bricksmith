@@ -18,11 +18,48 @@ _SENSITIVE_KEY = re.compile(
 _ROW_KEYS = frozenset(
     {"row", "rows", "record", "records", "sample", "samples", "values", "data", "payload", "content", "body", "frame"}
 )
+# Lowercase qualifiers that make a concatenated ``<qualifier>pass`` a credential key (allow-list; ``lowpass``,
+# ``bandpass``, ``compass`` and ``bypass`` stay visible). Fixed-width lookbehinds keep the match linear.
+_PASS_QUALIFIERS = "|".join(
+    f"(?<={q})"
+    for q in (
+        "db",
+        "smtp",
+        "ldap",
+        "my",
+        "user",
+        "admin",
+        "root",
+        "ssh",
+        "ftp",
+        "sftp",
+        "sql",
+        "mysql",
+        "pg",
+        "redis",
+        "mongo",
+        "wifi",
+        "app",
+        "client",
+        "master",
+        "service",
+        "sys",
+        "login",
+        "mail",
+        "imap",
+        "pop",
+        "proxy",
+        "vpn",
+        "rdp",
+        "bind",
+        "sa",
+    )
+)
 _KEYWORD = (
     r"(?:(?-i:(?<![a-z])|(?<=[a-z])(?=[A-Z]))"
     r"(?:pass(?:word|wd|phrase|code)?s?|secrets?|token|credentials?|authorization|(?:api[ _-]?|private[_-]?)key)"
-    r"|(?<=[a-z])(?<!com)(?<!by)(?<!over)(?<!sur)(?<!tres)(?<!under)(?<!im)pass"
-    r"|(?:secret|token)(?:[_-]?key)?|secretkeys?|passwords?|passwds?|passphrases?|apikey)(?-i:(?![a-z]))"
+    rf"|(?:{_PASS_QUALIFIERS})pass"
+    r"|(?:secrets?|token)(?:[_-]?key)?|secretkeys?|passwords?|passwds?|passphrases?|apikeys?)(?-i:(?![a-z]))"
 )
 _SEP = r"[ \t]*(?:=>|:=|==|=|:)[ \t]*"
 _HEADER = re.compile(
