@@ -18,9 +18,10 @@ _SENSITIVE_KEY = re.compile(
 _ROW_KEYS = frozenset(
     {"row", "rows", "record", "records", "sample", "samples", "values", "data", "payload", "content", "body", "frame"}
 )
-# Known non-secret words that end in ``pass`` (``lowpass``, ``bypass``, ``compass``...). Any other concatenated
-# ``<qualifier>pass`` (``storepass``, ``keypass``, ``postgrespass``) is a credential key: the suffix is open and
-# only these words are exempt, so unknown qualifiers fail closed. Fixed-width lookbehinds keep the match linear.
+# Known non-secret words that are exactly ``<word>pass`` (``lowpass``, ``bypass``, ``compass``...). Any other
+# concatenated ``<qualifier>pass`` (``storepass``, ``keypass``, ``firewallpass``, ``callpass``) is a credential key:
+# the exemption needs the WHOLE letter run before ``pass`` to be one of these words, so a qualifier that merely ends
+# in one fails closed. Fixed-width lookbehinds anchored at a non-letter or the text start keep the match linear.
 _NON_SECRET_PASS_PREFIXES = (
     "low",
     "high",
@@ -35,7 +36,7 @@ _NON_SECRET_PASS_PREFIXES = (
     "under",
     "im",
 )
-_OPEN_PASS = "(?<=[a-z])" + "".join(f"(?<!{w})" for w in _NON_SECRET_PASS_PREFIXES) + "pass"
+_OPEN_PASS = "(?<=[a-z])" + "".join(f"(?<!^{w})(?<![^a-z]{w})" for w in _NON_SECRET_PASS_PREFIXES) + "pass"
 _KEYWORD = (
     r"(?:(?-i:(?<![a-z])|(?<=[a-z])(?=[A-Z]))"
     r"(?:pass(?:word|wd|phrase|code)?s?|secrets?|token|credentials?|authorization|(?:api[ _-]?|private[_-]?)key)"
