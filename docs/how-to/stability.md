@@ -169,7 +169,8 @@ floor never lowers a limit and applies to every limit source (defaults, `column_
 
 **Migration.** Existing declarations get the new defaults: small segments that used to turn red by noise are now
 green or `insufficient_volume`. To keep the previous behavior, declare `psi_limits: fixed` and
-`min_rows_per_bin: 0`. Model-monitoring CSI keeps its fixed limits.
+`min_rows_per_bin: 0`. [Model monitoring](model-monitoring.md) accepts the same three keys for its `psi`, `csi`, `grade_psi` and
+`exclusion_psi`, but keeps `fixed`, `0` and `epsilon` as its defaults, so its existing results do not change.
 
 ## What happens in a run
 

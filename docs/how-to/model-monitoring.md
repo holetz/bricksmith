@@ -75,6 +75,7 @@ def churn_scores(ctx):
 | `persistence` | When alerts open, escalate and close: `{"yellow", "red", "close_after", "immediate_red", "recurrence"}` (default 3, 2, 3, false, 12). |
 | `gate` | `fail_on` (`red`, `yellow`, `critical`, `alert`) and `on_error` (`warn`, the default, or `fail`). |
 | `min_rows`, `max_periods`, `score_bins`, `calibration_bins`, `epsilon` | Volume floor for a light, monitored periods kept (default 24), score bins (default 10), calibration bins, PSI smoothing (`epsilon`, default `1e-4`, a finite number greater than 0). |
+| `psi_limits`, `min_rows_per_bin`, `psi_smoothing` | Small-sample handling of `psi`, `csi`, `grade_psi` and `exclusion_psi`, with the same keys and meaning as in [stability](stability.md#small-samples-and-psi). `psi_limits: sample_size` raises the limits to the sampling-noise floor of the sample sizes and stores the limits that judged each row in `green_limit` and `red_limit`; `min_rows_per_bin` reports `insufficient_volume` below that many rows per bin; `psi_smoothing: laplace` adds one pseudo-count to every bin. Defaults here are `fixed`, `0` and `epsilon`, so existing declarations produce the same results. |
 | `scope`, `prefix` | Where the tables live (default: the output's schema) and their name prefix (default `model_monitoring_`). |
 | `credit` | Enables the [credit-model performance checks](#credit-model-performance-checks): probability horizons, grade order, the expected-events gate, early-warning labels and the exclusion column. |
 
