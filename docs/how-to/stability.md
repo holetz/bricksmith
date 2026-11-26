@@ -147,8 +147,8 @@ stability:
 - `distinct_count` (per `distinct` column, no limits) and `distinct_change` (`both: 0.20 / 0.50`): the distinct values
   against the mean of the baseline periods.
 
-The pure engine counts exactly; Spark uses `approx_count_distinct` (relative error around 5%), so keep `keys` limits
-above that noise. The statistics are stored as `profiles` rows whose `column` starts with `~` (`~keys`,
+Both engines count the `keys` exactly, so `duplicate_key_rate` agrees; Spark counts each `distinct` column with
+`approx_count_distinct` (relative error around 5%), so keep `distinct_change` limits above that noise. The statistics are stored as `profiles` rows whose `column` starts with `~` (`~keys`,
 `~distinct:<column>`) and cover the whole population (segment `(all)`) only. Like any metric they take `limits`,
 `column_limits`, `rules` and `trend_metrics`; set a limit to `null` to switch one off.
 
